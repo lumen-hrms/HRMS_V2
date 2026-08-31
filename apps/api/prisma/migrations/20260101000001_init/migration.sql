@@ -25,6 +25,7 @@ CREATE TABLE "platform"."tenants" (
     "name" TEXT NOT NULL,
     "subdomain" TEXT NOT NULL,
     "status" "platform"."TenantStatus" NOT NULL DEFAULT 'TRIAL',
+    "employee_count" INTEGER NOT NULL DEFAULT 0,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
 

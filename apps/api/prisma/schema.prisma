@@ -50,6 +50,10 @@ model Tenant {
   name          String
   subdomain     String       @unique
   status        TenantStatus @default(TRIAL)
+  // Denormalized headcount, refreshed by PlatformAdminService via the
+  // low-privilege hrms_app connection (never via the platform role, which
+  // has no grants on tenant tables) — see platform-admin.service.ts.
+  employeeCount Int          @default(0) @map("employee_count")
   createdAt     DateTime     @default(now()) @map("created_at")
   updatedAt     DateTime     @updatedAt @map("updated_at")
 
