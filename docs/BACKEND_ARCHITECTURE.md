@@ -1,12 +1,15 @@
 # Backend Architecture — Full Project Understanding
 
-> **Status:** this documents the backend as implemented on branch
-> `worktree-agent-a3b9c35364bc8192b` (the cloud build agent's in-progress
-> branch), as of its foundation + auth/tenancy/employees/leave/dashboard
-> pass. It has not yet been merged to `main`. Read `CLAUDE.md` first for
-> the *why* behind these decisions — this file documents the *what* and
-> *where*, traced from the actual source, so it stays accurate even after
-> the branch merges or the code moves.
+> **Status:** merged to `main`. Originally written from the cloud build
+> agent's in-progress branch (`worktree-agent-a3b9c35364bc8192b`) at its
+> foundation + auth/tenancy/employees/leave/dashboard checkpoint; the agent
+> went on to add the test suite, frontend, and CI workflow described below,
+> and the branch was merged into `main` after independently re-running the
+> full test suite against a fresh, disposable Postgres 17 instance (not
+> Docker — 7 unit + 12 e2e tests, all passing) as a second check beyond the
+> agent's own report. Read `CLAUDE.md` first for the *why* behind these
+> decisions — this file documents the *what* and *where*, traced from the
+> actual source, so it stays accurate as the code evolves.
 
 ## 1. Repo layout as built
 
@@ -35,13 +38,14 @@ hrms/
 │   │   │   └── migrations/
 │   │   │       ├── 20260101000001_init/              tables, enums
 │   │   │       └── 20260101000002_roles_and_rls/      DB roles + RLS policies
-│   │   └── test/                     jest-e2e.json scaffolded; spec files not yet written
-│   └── web/                          Vite + React app — still default template, not started
+│   │   └── test/                     auth.e2e-spec.ts, tenant-isolation.e2e-spec.ts, fixtures
+│   └── web/                          Vite + React app — design system + pages, wired to the API
+├── .github/workflows/ci.yml           lint + unit + e2e (real Postgres service container) + build, on every PR
 ├── docker-compose.yml                 Postgres 16 + MinIO (S3-compatible), for local dev
 └── package.json                       npm workspaces root (apps/*, packages/*)
 ```
 
-**What's real vs scaffolded right now:** every file listed under `apps/api/src/*` above contains working, wired logic (not stubs) — read on for what each does. `apps/web` is still the unmodified Vite template. There are no test spec files yet despite the build instructions treating the tenant-isolation test suite as non-negotiable — check for `*.spec.ts` / `*.e2e-spec.ts` before treating auth/tenancy as verified.
+**What's real:** every file listed under `apps/api/src/*` and `apps/web/src/*` above contains working, wired logic — not stubs. This has been verified twice independently: once by the build agent (which `initdb`'d its own throwaway Postgres cluster, since it had no Docker in its sandbox, and drove the real HTTP API — catching and fixing a real bug where `EmployeesController`/`LeaveController` were missing `JwtAuthGuard`/`TenantGuard` entirely), and again after merge by re-running the full suite (7 unit + 12 e2e tests) against a fresh disposable Postgres instance as a second check before merging to `main`.
 
 ## 2. The multi-tenancy mechanism, traced end to end
 
@@ -204,15 +208,17 @@ Every tenant table has `@@index([tenantId])` at minimum — necessary since RLS 
 
 `docker-compose.yml` brings up Postgres 16 (`hrms_superuser`/`hrms`) and MinIO (S3-compatible, console on `:9001`). `TENANT_RESOLUTION_MODE=header` lets you develop without real subdomains — send `X-Tenant-Subdomain: <subdomain>` on every request instead of DNS/hosts-file entries. Two separate `DATABASE_URL`-equivalents are needed at runtime (`TENANT_DATABASE_URL` using `hrms_app`, `PLATFORM_DATABASE_URL` using `hrms_platform`), plus a third implicit one (whatever role runs `prisma migrate deploy`, e.g. `hrms_superuser`) — three distinct connection strings, not one, is intentional and load-bearing for the isolation model.
 
-## 8. Known gaps as of this snapshot
+## 8. What's done, and what's genuinely still missing
 
-Cross-reference against `CLAUDE.md` and the architecture blueprint before assuming any of these are done:
+**Done and verified** (as of the merge to `main`): foundation, auth + MFA + tenancy/RLS, platform admin, employees (CRUD, docs, bulk import), leave (types, balances, 2-level approval), dashboard, the React frontend (login/MFA flow, employee list/detail/create, leave, org chart, departments, platform-admin console — Tailwind v4 + hand-written shadcn-style primitives, light/dark tokens), the tenant-isolation + auth e2e suite (12 tests) and a leave unit suite (7 tests), and a GitHub Actions CI workflow running all of it against a real Postgres service container on every PR.
 
-- **No test files exist yet** (`git ls-files | grep spec` returns nothing but the empty `jest-e2e.json` scaffold) — specifically, the tenant-isolation adversarial test suite (log in as tenant A, assert every attempt to touch tenant B's data fails) has not been written. Treat tenant isolation as *architecturally sound but not yet proven by an automated test* until this exists.
-- **Frontend (`apps/web`) hasn't started** — still the default Vite/React template, no design system, no routes, no screens.
-- `LeaveService.assertCanViewEmployee()`'s `LINE_MANAGER` case is a known-permissive placeholder (§4).
+**Still genuinely missing** — cross-reference against `CLAUDE.md` and the architecture blueprint before assuming otherwise:
+
+- `LeaveService.assertCanViewEmployee()`'s `LINE_MANAGER` case is a known-permissive placeholder (§4) — tighten before real customer data goes through it.
 - `AuditLog` / `PlatformAuditLog` tables exist in the schema but nothing currently writes to them from the mutation paths (employee create/update, leave approve/reject, tenant status change) — the audit trail promised in the security architecture isn't populated yet.
-- No CI workflow file found yet (`.github/workflows/`) — lint/test/build-on-PR from the plan isn't wired up.
-- `seed.ts` was mid-edit at the time this document was written — don't assume demo data exists until it's confirmed committed and runnable.
+- No holiday-aware leave day counting — `apply()` uses an inclusive calendar-day count, not a working-day calendar (documented as a deliberate MVP simplification in the code itself).
+- Login audit log (IP/device/timestamp per login, from the original SRS's `FR-AUTH-008`) isn't wired up.
+- Bulk-import and team-calendar are API-only — no frontend screen calls them yet.
+- Payroll, Attendance, and Compliance-export modules haven't been started — they're the next slice per the 12-week plan, and payroll in particular should get the time budget protected (§9 of the blueprint flags it as the highest-effort, highest-risk module).
 
-This document reflects a point-in-time read of the code; re-check the "Known gaps" section against the actual repo state before relying on it, since the build agent is still active.
+This document reflects a point-in-time read of the code as of the merge; re-check §8 against the actual repo state as work continues.

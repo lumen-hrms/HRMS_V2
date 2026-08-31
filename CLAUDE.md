@@ -103,14 +103,21 @@ Management, Helpdesk, AI HR Assistant, LMS, OKR, multi-region DR,
 Kubernetes/Kafka/Istio. Each has a "revisit when" trigger in the full
 blueprint — check there before reviving one.
 
-## V1 module scope (in progress)
+## V1 module scope
 
-Employee Master · Leave Management · role-aware Dashboard · Platform
-Admin console (tenant onboarding/enable-disable/metadata only) · Auth +
-RBAC + tenant isolation foundation. Payroll, Attendance, and Compliance
-exports are the next slice after this one — see the blueprint's 12-week
-plan for sequencing (payroll is the highest-effort, highest-risk module;
-protect its time budget over breadth elsewhere).
+**Done, merged to `main`, test-verified against real Postgres:** Auth +
+RBAC + tenant isolation (RLS), Platform Admin console (tenant
+onboarding/enable-disable/metadata only), Employee Master, Leave
+Management, role-aware Dashboard — backend and frontend both. See
+`docs/BACKEND_ARCHITECTURE.md` for the full traced reference and its §8
+for known gaps within these modules (line-manager leave-visibility scoping
+is a known-permissive placeholder; audit log tables exist but aren't
+written to yet).
+
+**Not started:** Payroll, Attendance, Compliance exports are the next
+slice — see the blueprint's 12-week plan for sequencing (payroll is the
+highest-effort, highest-risk module; protect its time budget over breadth
+elsewhere).
 
 ## Project structure
 
