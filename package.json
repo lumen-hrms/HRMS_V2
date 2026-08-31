@@ -1,19 +1,16 @@
 {
   "name": "hrms-platform",
   "private": true,
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ],
   "scripts": {
-    "dev:api": "npm run start:dev --workspace=apps/api",
-    "dev:web": "npm run dev --workspace=apps/web",
-    "build": "npm run build --workspace=apps/api && npm run build --workspace=apps/web",
-    "test:api": "npm run test --workspace=apps/api",
-    "test:api:e2e": "npm run test:e2e --workspace=apps/api",
-    "lint": "npm run lint --workspace=apps/api && npm run lint --workspace=apps/web",
-    "prisma:generate": "npm run prisma:generate --workspace=apps/api",
-    "prisma:migrate": "npm run prisma:migrate --workspace=apps/api",
-    "prisma:seed": "npm run prisma:seed --workspace=apps/api"
+    "install:all": "npm --prefix apps/api install && npm --prefix apps/web install",
+    "dev:api": "npm --prefix apps/api run start:dev",
+    "dev:web": "npm --prefix apps/web run dev",
+    "build": "npm --prefix apps/api run build && npm --prefix apps/web run build",
+    "test:api": "npm --prefix apps/api run test",
+    "test:api:e2e": "npm --prefix apps/api run test:e2e",
+    "lint": "npm --prefix apps/api run lint && npm --prefix apps/web run lint",
+    "prisma:generate": "npm --prefix apps/api run prisma:generate",
+    "prisma:migrate": "npm --prefix apps/api run prisma:migrate",
+    "prisma:seed": "npm --prefix apps/api run prisma:seed"
   }
 }

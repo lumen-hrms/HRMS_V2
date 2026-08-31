@@ -186,8 +186,12 @@ export class AuthService {
   }
 
   private async issueTokens(userId: string, tenantId: string, role: string, email: string) {
+    const employee = await this.tenantPrisma.client.employee.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
     const accessToken = this.jwt.sign(
-      { sub: userId, tenantId, role, email },
+      { sub: userId, tenantId, role, email, employeeId: employee?.id ?? null },
       {
         secret: this.config.get('jwt.accessSecret', { infer: true }),
         expiresIn: this.config.get('jwt.accessTtl', { infer: true }),
