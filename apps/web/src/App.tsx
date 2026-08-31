@@ -1,0 +1,51 @@
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { AuthProvider } from '@/context/auth-context';
+import { ThemeProvider } from '@/context/theme-context';
+import { ProtectedRoute } from '@/components/protected-route';
+import { AppLayout } from '@/components/app-layout';
+import { LoginPage } from '@/pages/login';
+import { DashboardPage } from '@/pages/dashboard';
+import { EmployeeListPage } from '@/pages/employees/list';
+import { EmployeeDetailPage } from '@/pages/employees/detail';
+import { EmployeeCreatePage } from '@/pages/employees/create';
+import { OrgChartPage } from '@/pages/org-chart';
+import { DepartmentsPage } from '@/pages/departments';
+import { LeavePage } from '@/pages/leave';
+import { PlatformAdminConsole } from '@/pages/platform-admin/console';
+
+export default function App() {
+  return (
+    <ThemeProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/platform-admin" element={<PlatformAdminConsole />} />
+          <Route
+            path="/*"
+            element={
+              <AuthProvider>
+                <Routes>
+                  <Route path="login" element={<LoginPage />} />
+                  <Route
+                    element={
+                      <ProtectedRoute>
+                        <AppLayout />
+                      </ProtectedRoute>
+                    }
+                  >
+                    <Route index element={<DashboardPage />} />
+                    <Route path="employees" element={<EmployeeListPage />} />
+                    <Route path="employees/new" element={<EmployeeCreatePage />} />
+                    <Route path="employees/:id" element={<EmployeeDetailPage />} />
+                    <Route path="org-chart" element={<OrgChartPage />} />
+                    <Route path="departments" element={<DepartmentsPage />} />
+                    <Route path="leave" element={<LeavePage />} />
+                  </Route>
+                </Routes>
+              </AuthProvider>
+            }
+          />
+        </Routes>
+      </BrowserRouter>
+    </ThemeProvider>
+  );
+}

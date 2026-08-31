@@ -1,0 +1,16 @@
+{
+  "name": "hrms-platform",
+  "private": true,
+  "scripts": {
+    "install:all": "npm --prefix apps/api install && npm --prefix apps/web install",
+    "dev:api": "npm --prefix apps/api run start:dev",
+    "dev:web": "npm --prefix apps/web run dev",
+    "build": "npm --prefix apps/api run build && npm --prefix apps/web run build",
+    "test:api": "npm --prefix apps/api run test",
+    "test:api:e2e": "npm --prefix apps/api run test:e2e",
+    "lint": "npm --prefix apps/api run lint && npm --prefix apps/web run lint",
+    "prisma:generate": "npm --prefix apps/api run prisma:generate",
+    "prisma:migrate": "npm --prefix apps/api run prisma:migrate",
+    "prisma:seed": "npm --prefix apps/api run prisma:seed"
+  }
+}

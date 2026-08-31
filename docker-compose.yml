@@ -1,0 +1,43 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hrms_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hrms_superuser
+      POSTGRES_PASSWORD: hrms_superuser_pw
+      POSTGRES_DB: hrms
+    ports:
+      - "5432:5432"
+    volumes:
+      - hrms_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hrms_superuser -d hrms"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: hrms_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: hrms_minio
+      MINIO_ROOT_PASSWORD: hrms_minio_pw
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - hrms_minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  hrms_pg_data:
+  hrms_minio_data:

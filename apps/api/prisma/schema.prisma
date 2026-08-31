@@ -1,0 +1,323 @@
+// HRMS Platform — Prisma schema
+//
+// Multi-tenancy model: SHARED database, SHARED schema (public), every
+// tenant-owned table carries a `tenantId` column and is protected by a
+// PostgreSQL Row-Level Security policy keyed off the session variable
+// `app.current_tenant_id` (set per-request by TenantGuard/PrismaService).
+//
+// Platform-operator data (the founder's own SaaS-admin console) lives in a
+// physically separate Postgres schema (`platform`) with its own DB role
+// that has zero grants on the tenant tables below. See:
+//   prisma/migrations/*_rls/migration.sql
+//   prisma/migrations/*_platform_role_isolation/migration.sql
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["public", "platform"]
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// PLATFORM SCHEMA — owned by the SaaS operator, never joined against
+// tenant business tables. The `platform` Postgres role can read/write here
+// and here only.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  TRIAL
+
+  @@schema("platform")
+}
+
+enum SubscriptionPlan {
+  TRIAL
+  STARTER
+  GROWTH
+  ENTERPRISE
+
+  @@schema("platform")
+}
+
+model Tenant {
+  id            String       @id @default(uuid()) @db.Uuid
+  name          String
+  subdomain     String       @unique
+  status        TenantStatus @default(TRIAL)
+  // Denormalized headcount, refreshed by PlatformAdminService via the
+  // low-privilege hrms_app connection (never via the platform role, which
+  // has no grants on tenant tables) — see platform-admin.service.ts.
+  employeeCount Int          @default(0) @map("employee_count")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  subscription  Subscription?
+
+  @@map("tenants")
+  @@schema("platform")
+}
+
+model Subscription {
+  id            String           @id @default(uuid()) @db.Uuid
+  tenantId      String           @unique @map("tenant_id") @db.Uuid
+  tenant        Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plan          SubscriptionPlan @default(TRIAL)
+  seats         Int              @default(50)
+  renewsAt      DateTime?        @map("renews_at")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+
+  @@map("subscriptions")
+  @@schema("platform")
+}
+
+model PlatformAdminUser {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  fullName     String    @map("full_name")
+  mfaSecret    String?   @map("mfa_secret")
+  mfaEnabled   Boolean   @default(false) @map("mfa_enabled")
+  failedLoginCount Int   @default(0) @map("failed_login_count")
+  lockedUntil  DateTime? @map("locked_until")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@map("platform_admin_users")
+  @@schema("platform")
+}
+
+model PlatformAuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorEmail  String   @map("actor_email")
+  action      String
+  targetType  String   @map("target_type")
+  targetId    String?  @map("target_id")
+  metadata    Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("platform_audit_log")
+  @@schema("platform")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// TENANT SCHEMA (public) — every model here carries tenantId and is
+// governed by an RLS policy. The `app` Postgres role used by the API for
+// tenant requests does NOT have BYPASSRLS.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  COMPANY_ADMIN
+  HR_MANAGER
+  LINE_MANAGER
+  EMPLOYEE
+  AUDITOR
+
+  @@schema("public")
+}
+
+enum EmploymentStatus {
+  ACTIVE
+  ON_LEAVE
+  SUSPENDED
+  RESIGNED
+  TERMINATED
+
+  @@schema("public")
+}
+
+enum LeaveRequestStatus {
+  PENDING_L1
+  PENDING_L2
+  APPROVED
+  REJECTED
+  CANCELLED
+
+  @@schema("public")
+}
+
+model User {
+  id                String    @id @default(uuid()) @db.Uuid
+  tenantId          String    @map("tenant_id") @db.Uuid
+  email             String
+  passwordHash      String    @map("password_hash")
+  role              UserRole
+  mfaSecret         String?   @map("mfa_secret")
+  mfaEnabled        Boolean   @default(false) @map("mfa_enabled")
+  failedLoginCount  Int       @default(0) @map("failed_login_count")
+  lockedUntil       DateTime? @map("locked_until")
+  isActive          Boolean   @default(true) @map("is_active")
+  refreshTokenHash  String?   @map("refresh_token_hash")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  employee          Employee?
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@map("users")
+  @@schema("public")
+}
+
+model Department {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  name        String
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  employees   Employee[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("departments")
+  @@schema("public")
+}
+
+model Employee {
+  id                  String           @id @default(uuid()) @db.Uuid
+  tenantId            String           @map("tenant_id") @db.Uuid
+  userId              String?          @unique @map("user_id") @db.Uuid
+  user                User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  employeeCode        String           @map("employee_code")
+  firstName           String           @map("first_name")
+  lastName            String           @map("last_name")
+  personalEmail       String?          @map("personal_email")
+  phone               String?
+  dateOfBirth         DateTime?        @map("date_of_birth")
+  gender              String?
+
+  departmentId        String?          @map("department_id") @db.Uuid
+  department          Department?      @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
+  designation         String?
+  dateOfJoining        DateTime?        @map("date_of_joining")
+  employmentStatus    EmploymentStatus @default(ACTIVE) @map("employment_status")
+
+  reportingManagerId  String?          @map("reporting_manager_id") @db.Uuid
+  reportingManager    Employee?        @relation("ManagerReports", fields: [reportingManagerId], references: [id], onDelete: SetNull)
+  directReports       Employee[]       @relation("ManagerReports")
+
+  createdAt           DateTime         @default(now()) @map("created_at")
+  updatedAt           DateTime         @updatedAt @map("updated_at")
+
+  leaveBalances       LeaveBalance[]
+  leaveRequestsAsApplicant LeaveRequest[] @relation("Applicant")
+  documents           Document[]
+
+  @@unique([tenantId, employeeCode])
+  @@index([tenantId])
+  @@index([tenantId, reportingManagerId])
+  @@map("employees")
+  @@schema("public")
+}
+
+model Document {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  employeeId   String   @map("employee_id") @db.Uuid
+  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  label        String
+  storageKey   String   @map("storage_key")
+  mimeType     String   @map("mime_type")
+  sizeBytes    Int      @map("size_bytes")
+  uploadedAt   DateTime @default(now()) @map("uploaded_at")
+
+  @@index([tenantId])
+  @@map("documents")
+  @@schema("public")
+}
+
+model LeaveType {
+  id                String   @id @default(uuid()) @db.Uuid
+  tenantId          String   @map("tenant_id") @db.Uuid
+  name              String
+  annualQuota       Decimal  @map("annual_quota") @db.Decimal(6, 2)
+  carryForwardCap   Decimal  @default(0) @map("carry_forward_cap") @db.Decimal(6, 2)
+  requiresApproval  Boolean  @default(true) @map("requires_approval")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  balances          LeaveBalance[]
+  requests          LeaveRequest[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("leave_types")
+  @@schema("public")
+}
+
+model LeaveBalance {
+  id           String    @id @default(uuid()) @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
+  employeeId   String    @map("employee_id") @db.Uuid
+  employee     Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveTypeId  String    @map("leave_type_id") @db.Uuid
+  leaveType    LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+
+  year         Int
+  accrued      Decimal   @default(0) @db.Decimal(6, 2)
+  used         Decimal   @default(0) @db.Decimal(6, 2)
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@unique([tenantId, employeeId, leaveTypeId, year])
+  @@index([tenantId])
+  @@map("leave_balances")
+  @@schema("public")
+}
+
+model LeaveRequest {
+  id              String              @id @default(uuid()) @db.Uuid
+  tenantId        String              @map("tenant_id") @db.Uuid
+
+  employeeId      String              @map("employee_id") @db.Uuid
+  employee        Employee            @relation("Applicant", fields: [employeeId], references: [id], onDelete: Cascade)
+
+  leaveTypeId     String              @map("leave_type_id") @db.Uuid
+  leaveType       LeaveType           @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+
+  startDate       DateTime            @map("start_date")
+  endDate         DateTime            @map("end_date")
+  days            Decimal             @db.Decimal(6, 2)
+  isLop           Boolean             @default(false) @map("is_lop")
+  reason          String?
+
+  status          LeaveRequestStatus  @default(PENDING_L1)
+
+  l1ApproverId    String?             @map("l1_approver_id") @db.Uuid
+  l1DecidedAt     DateTime?           @map("l1_decided_at")
+  l2ApproverId    String?             @map("l2_approver_id") @db.Uuid
+  l2DecidedAt     DateTime?           @map("l2_decided_at")
+
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@index([tenantId, employeeId])
+  @@map("leave_requests")
+  @@schema("public")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  action      String
+  targetType  String   @map("target_type")
+  targetId    String?  @map("target_id")
+  metadata    Json?
+  ipAddress   String?  @map("ip_address")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@map("audit_log")
+  @@schema("public")
+}
