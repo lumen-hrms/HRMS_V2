@@ -79,8 +79,33 @@ login — scan the QR code with any TOTP app (Google Authenticator, Authy,
 `oathtool`, etc).
 
 The platform-admin console is a separate route: http://localhost:5173/platform-admin,
-login `founder@hrms-platform.dev` / `Passw0rd!123` (also MFA-gated on first
-login).
+login `founder@hrms-platform.dev` / `Passw0rd!123`.
+
+### Seeded users (dev reference)
+
+Every account below is a real Firebase Auth user (see "Auth" above), created
+idempotently by `npm run prisma:seed`. All 14 tenant users + the platform
+admin share the same password — **dev-only, rotate before any real pilot
+use**, since it's printed in plaintext by the seed script.
+
+| Tenant (subdomain) | Email                  | Role           |
+| ------------------- | ----------------------- | -------------- |
+| — (platform admin)  | `founder@hrms-platform.dev` | Platform Admin |
+| Acme Hospitals (`acme`) | `admin@acme.test`    | Company Admin  |
+| Acme Hospitals (`acme`) | `hr@acme.test`       | HR Manager     |
+| Acme Hospitals (`acme`) | `manager@acme.test`  | Line Manager   |
+| Acme Hospitals (`acme`) | `employee@acme.test` | Employee       |
+| Acme Hospitals (`acme`) | `employee2@acme.test`| Employee       |
+| Acme Hospitals (`acme`) | `auditor@acme.test`  | Auditor        |
+| Beta Textiles (`beta`)  | `admin@beta.test`    | Company Admin  |
+| Beta Textiles (`beta`)  | `hr@beta.test`       | HR Manager     |
+| Beta Textiles (`beta`)  | `manager@beta.test`  | Line Manager   |
+| Beta Textiles (`beta`)  | `employee@beta.test` | Employee       |
+| Gamma Logistics (`gamma`) | `admin@gamma.test` | Company Admin  |
+| Gamma Logistics (`gamma`) | `hr@gamma.test`    | HR Manager     |
+| Gamma Logistics (`gamma`) | `employee@gamma.test` | Employee    |
+
+**Password for all 15 accounts above: `Passw0rd!123`**
 
 **Why a header instead of real subdomains locally?** `TENANT_RESOLUTION_MODE=header`
 in `.env` makes the API resolve the tenant from an `X-Tenant-Subdomain`

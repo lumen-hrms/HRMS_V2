@@ -94,6 +94,17 @@ async function seedTenant(name: string, subdomain: string, employees: SeedEmploy
     },
   });
 
+  // Resolve every Firebase account first — real network calls, kept outside
+  // the DB transaction below so they can't run into its timeout.
+  const firebaseUidByCode = new Map<string, string>();
+  for (const spec of employees) {
+    const firebaseUid = await upsertFirebaseUser(spec.loginEmail, DEMO_PASSWORD, {
+      tenantId: tenant.id,
+      role: spec.role,
+    });
+    firebaseUidByCode.set(spec.code, firebaseUid);
+  }
+
   await withTenant(tenant.id, async (tx) => {
     const deptNames = [...new Set(employees.map((e) => e.dept))];
     const deptByName = new Map<string, string>();
@@ -107,12 +118,13 @@ async function seedTenant(name: string, subdomain: string, employees: SeedEmploy
     }
 
     const idByCode = new Map<string, string>();
-    // Pass 1: create Firebase accounts + users + employees without manager links.
+    // Pass 1: create users + employees without manager links, using the
+    // Firebase uid resolved up front (see below) — external network calls
+    // must never happen inside this DB transaction, or a slow round-trip to
+    // a real Firebase project (unlike the near-instant local emulator) can
+    // outlast Prisma's interactive-transaction timeout.
     for (const spec of employees) {
-      const firebaseUid = await upsertFirebaseUser(spec.loginEmail, DEMO_PASSWORD, {
-        tenantId: tenant.id,
-        role: spec.role,
-      });
+      const firebaseUid = firebaseUidByCode.get(spec.code)!;
       const user = await tx.user.upsert({
         where: { tenantId_email: { tenantId: tenant.id, email: spec.loginEmail } },
         update: { firebaseUid },
