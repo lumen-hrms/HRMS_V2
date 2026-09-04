@@ -268,3 +268,35 @@
     font-weight: 600;
   }
 }
+
+/* Shared micro-interaction keyframes (Lumen design system — used by the
+ * Attendance clock-in card, the auth split-panel screens, and anything
+ * else that needs a spinner/shake/fade-in without redefining them). */
+@keyframes lumenSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes lumenShake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(3px); }
+}
+@keyframes lumenFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.lumen-auth-input:focus-visible {
+  border-color: var(--lumen-gold) !important;
+  box-shadow: 0 0 0 3px rgba(217, 146, 32, 0.16);
+}
+:root[data-theme='dark'] .lumen-auth-input:focus-visible {
+  box-shadow: 0 0 0 3px rgba(245, 181, 68, 0.25);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .lumen-auth-input:focus-visible {
+    box-shadow: 0 0 0 3px rgba(245, 181, 68, 0.25);
+  }
+}
