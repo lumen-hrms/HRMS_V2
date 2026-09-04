@@ -1,20 +1,9 @@
 import { IsEmail, IsIn, IsString, MinLength } from 'class-validator';
 
-export class PlatformLoginDto {
-  @IsEmail()
-  email!: string;
-
+export class PlatformSessionDto {
   @IsString()
-  password!: string;
-}
-
-export class PlatformMfaVerifyDto {
-  @IsString()
-  mfaChallengeToken!: string;
-
-  @IsString()
-  @MinLength(6)
-  code!: string;
+  @MinLength(1)
+  idToken!: string;
 }
 
 export class CreateTenantDto {

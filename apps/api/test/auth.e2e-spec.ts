@@ -1,27 +1,28 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
-import { authenticator } from 'otplib';
 import { createTestApp } from './utils/test-app';
 import {
   cleanupTenantFixture,
   createTenantFixture,
+  getIdTokenForEmail,
   superuserPrisma,
   TenantFixture,
 } from './utils/fixtures';
 
-describe('Auth: MFA + account lockout (e2e)', () => {
+/**
+ * MFA is gone (see CLAUDE.md / the Firebase migration plan) — Firebase's
+ * own ID token is the entire session artifact, so this suite is now just
+ * "does POST /auth/session correctly gate on token validity and account
+ * state." Tenant-crossing behavior is covered separately in
+ * tenant-isolation.e2e-spec.ts.
+ */
+describe('Auth: session exchange (e2e)', () => {
   let app: INestApplication;
   let tenant: TenantFixture;
 
   beforeAll(async () => {
     app = await createTestApp();
     tenant = await createTenantFixture('auth');
-    // Promote the fixture's "manager" account to HR_MANAGER so we can drive
-    // the MFA-required path end to end.
-    await superuserPrisma.user.updateMany({
-      where: { tenantId: tenant.tenantId, email: tenant.managerEmail },
-      data: { role: 'HR_MANAGER' },
-    });
   });
 
   afterAll(async () => {
@@ -32,76 +33,46 @@ describe('Auth: MFA + account lockout (e2e)', () => {
 
   const server = () => app.getHttpServer();
 
-  it('requires MFA enrollment on first login for an HR_MANAGER, then issues tokens after a valid TOTP code', async () => {
-    const loginRes = await request(server())
-      .post('/api/auth/login')
-      .set('X-Tenant-Subdomain', tenant.subdomain)
-      .send({ email: tenant.managerEmail, password: 'Test-Passw0rd!1' });
-
-    expect(loginRes.body.status).toBe('mfa_enrollment_required');
-    expect(typeof loginRes.body.qrCodeDataUrl).toBe('string');
-
-    const payload = JSON.parse(
-      Buffer.from(loginRes.body.mfaChallengeToken.split('.')[1], 'base64url').toString(),
-    );
-    const code = authenticator.generate(payload.secret);
-
-    const verifyRes = await request(server())
-      .post('/api/auth/mfa/enroll/verify')
-      .set('X-Tenant-Subdomain', tenant.subdomain)
-      .send({ mfaChallengeToken: loginRes.body.mfaChallengeToken, code });
-
-    expect(verifyRes.status).toBe(201);
-    expect(verifyRes.body.status).toBe('ok');
-    expect(typeof verifyRes.body.accessToken).toBe('string');
-
-    // Second login now takes the "already enrolled" MFA path.
-    const secondLogin = await request(server())
-      .post('/api/auth/login')
-      .set('X-Tenant-Subdomain', tenant.subdomain)
-      .send({ email: tenant.managerEmail, password: 'Test-Passw0rd!1' });
-    expect(secondLogin.body.status).toBe('mfa_required');
-
-    const secondCode = authenticator.generate(payload.secret);
-    const secondVerify = await request(server())
-      .post('/api/auth/mfa/verify')
-      .set('X-Tenant-Subdomain', tenant.subdomain)
-      .send({ mfaChallengeToken: secondLogin.body.mfaChallengeToken, code: secondCode });
-    expect(secondVerify.body.status).toBe('ok');
-  });
-
-  it('rejects a wrong TOTP code', async () => {
-    const loginRes = await request(server())
-      .post('/api/auth/login')
-      .set('X-Tenant-Subdomain', tenant.subdomain)
-      .send({ email: tenant.managerEmail, password: 'Test-Passw0rd!1' });
+  it('exchanges a valid Firebase ID token for an active session', async () => {
+    const idToken = await getIdTokenForEmail(tenant.adminEmail);
 
     const res = await request(server())
-      .post('/api/auth/mfa/verify')
+      .post('/api/auth/session')
       .set('X-Tenant-Subdomain', tenant.subdomain)
-      .send({ mfaChallengeToken: loginRes.body.mfaChallengeToken, code: '000000' });
-    expect(res.status).toBe(401);
+      .send({ idToken });
+
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe('ok');
+    expect(res.body.user.email).toBe(tenant.adminEmail);
+    expect(res.body.user.tenantId).toBe(tenant.tenantId);
   });
 
-  it('locks the account after 5 consecutive failed logins, and a correct password is still rejected during the cooldown', async () => {
-    for (let i = 0; i < 5; i++) {
-      await request(server())
-        .post('/api/auth/login')
-        .set('X-Tenant-Subdomain', tenant.subdomain)
-        .send({ email: tenant.employeeEmail, password: 'wrong-password' });
-    }
+  it('rejects an inactive account even with a valid token', async () => {
+    await superuserPrisma.user.updateMany({
+      where: { tenantId: tenant.tenantId, email: tenant.employeeEmail },
+      data: { isActive: false },
+    });
 
-    const lockedRes = await request(server())
-      .post('/api/auth/login')
+    const idToken = await getIdTokenForEmail(tenant.employeeEmail);
+    const res = await request(server())
+      .post('/api/auth/session')
       .set('X-Tenant-Subdomain', tenant.subdomain)
-      .send({ email: tenant.employeeEmail, password: 'wrong-password' });
-    expect(lockedRes.status).toBe(403);
-    expect(lockedRes.body.message).toMatch(/locked/i);
+      .send({ idToken });
 
-    const correctPasswordWhileLocked = await request(server())
-      .post('/api/auth/login')
+    expect(res.status).toBe(401);
+
+    await superuserPrisma.user.updateMany({
+      where: { tenantId: tenant.tenantId, email: tenant.employeeEmail },
+      data: { isActive: true },
+    });
+  });
+
+  it('rejects a tampered/garbage token', async () => {
+    const res = await request(server())
+      .post('/api/auth/session')
       .set('X-Tenant-Subdomain', tenant.subdomain)
-      .send({ email: tenant.employeeEmail, password: 'Test-Passw0rd!1' });
-    expect(correctPasswordWhileLocked.status).toBe(403);
+      .send({ idToken: 'not-a-real-token' });
+
+    expect(res.status).toBe(401);
   });
 });

@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import * as bcrypt from 'bcrypt';
+import * as admin from 'firebase-admin';
 
 /**
  * Connects as the migration/superuser role (DATABASE_URL) which owns every
@@ -12,6 +12,52 @@ import * as bcrypt from 'bcrypt';
 export const superuserPrisma = new PrismaClient();
 
 export const TEST_PASSWORD = 'Test-Passw0rd!1';
+
+if (!admin.apps.length) {
+  admin.initializeApp({ projectId: process.env.FIREBASE_PROJECT_ID ?? 'hrms-platform-dev' });
+}
+const firebaseAuth = admin.auth();
+
+/**
+ * Creates a real Firebase user against the Auth Emulator (FIREBASE_AUTH_
+ * EMULATOR_HOST must be set — see test/jest-e2e setup) with the given
+ * custom claims, so tests exercise the exact same `verifyIdToken` path
+ * production traffic does — no bcrypt/JWT test doubles.
+ */
+export async function createFirebaseTestUser(
+  email: string,
+  claims: Record<string, unknown>,
+  password = TEST_PASSWORD,
+): Promise<string> {
+  const created = await firebaseAuth.createUser({ email, password });
+  await firebaseAuth.setCustomUserClaims(created.uid, claims);
+  return created.uid;
+}
+
+/**
+ * Signs in against the Auth Emulator's REST endpoint to obtain a real,
+ * verifiable ID token — the Admin SDK can create/manage users but can't
+ * sign one in itself, so this is the emulator equivalent of what the
+ * Firebase Web SDK's `signInWithEmailAndPassword` does in the browser.
+ */
+export async function getIdTokenForEmail(email: string, password = TEST_PASSWORD): Promise<string> {
+  const host = process.env.FIREBASE_AUTH_EMULATOR_HOST;
+  if (!host) throw new Error('FIREBASE_AUTH_EMULATOR_HOST is not set — tests require the emulator');
+
+  const res = await fetch(
+    `http://${host}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, returnSecureToken: true }),
+    },
+  );
+  const body = await res.json();
+  if (!res.ok) {
+    throw new Error(`Emulator sign-in failed for ${email}: ${JSON.stringify(body)}`);
+  }
+  return body.idToken as string;
+}
 
 export interface TenantFixture {
   tenantId: string;
@@ -29,7 +75,6 @@ let counter = 0;
 export async function createTenantFixture(label: string): Promise<TenantFixture> {
   counter += 1;
   const subdomain = `e2e-${label}-${Date.now()}-${counter}`;
-  const passwordHash = await bcrypt.hash(TEST_PASSWORD, 12);
 
   const tenant = await superuserPrisma.tenant.create({
     data: {
@@ -44,22 +89,39 @@ export async function createTenantFixture(label: string): Promise<TenantFixture>
     data: { tenantId: tenant.id, name: 'Engineering' },
   });
 
-  const adminEmail = `admin@${subdomain}.test`;
-  const managerEmail = `manager@${subdomain}.test`;
-  const employeeEmail = `employee@${subdomain}.test`;
+  const adminEmail = `admin+${subdomain}@example.test`;
+  const managerEmail = `manager+${subdomain}@example.test`;
+  const employeeEmail = `employee+${subdomain}@example.test`;
 
-  // AUDITOR (not an MFA-required role) so the tenant-isolation suite can
-  // exercise "full tenant visibility" assertions without also having to
-  // drive the MFA enrollment flow — that's covered separately in
-  // auth.e2e-spec.ts using an HR_MANAGER account.
+  // AUDITOR/LINE_MANAGER/EMPLOYEE (none are MFA-relevant now that MFA is
+  // gone entirely) so the tenant-isolation suite can exercise "full tenant
+  // visibility" assertions with plain Firebase-emulator accounts.
+  const adminUid = await createFirebaseTestUser(adminEmail, {
+    tenantId: tenant.id,
+    role: 'AUDITOR',
+  });
+  const managerUid = await createFirebaseTestUser(managerEmail, {
+    tenantId: tenant.id,
+    role: 'LINE_MANAGER',
+  });
+  const employeeUid = await createFirebaseTestUser(employeeEmail, {
+    tenantId: tenant.id,
+    role: 'EMPLOYEE',
+  });
+
   const adminUser = await superuserPrisma.user.create({
-    data: { tenantId: tenant.id, email: adminEmail, passwordHash, role: 'AUDITOR' },
+    data: { tenantId: tenant.id, email: adminEmail, firebaseUid: adminUid, role: 'AUDITOR' },
   });
   const managerUser = await superuserPrisma.user.create({
-    data: { tenantId: tenant.id, email: managerEmail, passwordHash, role: 'LINE_MANAGER' },
+    data: {
+      tenantId: tenant.id,
+      email: managerEmail,
+      firebaseUid: managerUid,
+      role: 'LINE_MANAGER',
+    },
   });
   const employeeUser = await superuserPrisma.user.create({
-    data: { tenantId: tenant.id, email: employeeEmail, passwordHash, role: 'EMPLOYEE' },
+    data: { tenantId: tenant.id, email: employeeEmail, firebaseUid: employeeUid, role: 'EMPLOYEE' },
   });
 
   const adminEmployee = await superuserPrisma.employee.create({
@@ -112,6 +174,9 @@ export async function cleanupTenantFixture(tenantId: string) {
   // any `public` table (the two schemas are fully decoupled), so deleting
   // the tenant row does NOT cascade into tenant business data — clean up
   // both sides explicitly.
+  await superuserPrisma.regularizationRequest.deleteMany({ where: { tenantId } });
+  await superuserPrisma.attendanceBreak.deleteMany({ where: { tenantId } });
+  await superuserPrisma.attendanceRecord.deleteMany({ where: { tenantId } });
   await superuserPrisma.leaveRequest.deleteMany({ where: { tenantId } });
   await superuserPrisma.leaveBalance.deleteMany({ where: { tenantId } });
   await superuserPrisma.leaveType.deleteMany({ where: { tenantId } });

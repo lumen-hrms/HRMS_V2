@@ -5,9 +5,9 @@ import { createTestApp } from './utils/test-app';
 import {
   cleanupTenantFixture,
   createTenantFixture,
+  getIdTokenForEmail,
   superuserPrisma,
   TenantFixture,
-  TEST_PASSWORD,
 } from './utils/fixtures';
 
 /**
@@ -17,6 +17,11 @@ import {
  * "the API happens not to expose it", but "Postgres itself refuses the
  * query" for the platform role, and "RLS silently returns zero rows" for
  * cross-tenant access even when a request somehow reaches the query layer.
+ *
+ * Identity is Firebase Auth now (see fixtures.ts): every test signs in
+ * against the Firebase Auth Emulator to get a real, verifiable ID token —
+ * the same artifact `JwtAuthGuard`/`AuthService.session` verify in
+ * production — and sends it as `Authorization: Bearer <idToken>`.
  */
 describe('Tenant isolation (e2e)', () => {
   let app: INestApplication;
@@ -37,49 +42,49 @@ describe('Tenant isolation (e2e)', () => {
 
   const server = () => app.getHttpServer();
 
-  async function login(subdomain: string, email: string, password = TEST_PASSWORD) {
+  async function createSession(subdomain: string, email: string) {
+    const idToken = await getIdTokenForEmail(email);
     const res = await request(server())
-      .post('/api/auth/login')
+      .post('/api/auth/session')
       .set('X-Tenant-Subdomain', subdomain)
-      .send({ email, password });
-    return res;
+      .send({ idToken });
+    return { res, idToken };
   }
 
-  it('logs a tenant admin in and issues a real access token', async () => {
-    const res = await login(tenantA.subdomain, tenantA.adminEmail);
+  it('confirms a session for a tenant user signed in with Firebase', async () => {
+    const { res } = await createSession(tenantA.subdomain, tenantA.adminEmail);
     expect(res.status).toBe(201);
     expect(res.body.status).toBe('ok');
-    expect(typeof res.body.accessToken).toBe('string');
+    expect(res.body.user.tenantId).toBe(tenantA.tenantId);
   });
 
-  it('rejects login for a real email under the WRONG tenant subdomain', async () => {
-    // tenantA.adminEmail only exists in tenant A's users table; RLS means
-    // tenant B's connection literally cannot see that row to compare
-    // passwords against, regardless of the WHERE clause the app writes.
-    const res = await login(tenantB.subdomain, tenantA.adminEmail);
+  it('rejects session confirmation for a real account under the WRONG tenant subdomain', async () => {
+    // tenantA.adminEmail's Firebase account carries a tenantId custom claim
+    // for tenant A; presenting that (validly signed) token against tenant
+    // B's subdomain must be rejected by AuthService.session's tenantId
+    // cross-check, independent of Firebase's own (tenant-agnostic) sign-in.
+    const { res } = await createSession(tenantB.subdomain, tenantA.adminEmail);
     expect(res.status).toBe(401);
   });
 
   it("rejects a tenant A token replayed against tenant B's subdomain", async () => {
-    const loginRes = await login(tenantA.subdomain, tenantA.adminEmail);
-    const token = loginRes.body.accessToken as string;
+    const idToken = await getIdTokenForEmail(tenantA.adminEmail);
 
     const res = await request(server())
       .get('/api/dashboard')
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${idToken}`)
       .set('X-Tenant-Subdomain', tenantB.subdomain);
 
     expect(res.status).toBe(403);
   });
 
   it('never returns tenant B employees to a tenant A session, even by guessed ID', async () => {
-    const loginRes = await login(tenantA.subdomain, tenantA.adminEmail);
-    const token = loginRes.body.accessToken as string;
+    const idToken = await getIdTokenForEmail(tenantA.adminEmail);
 
     // Correctly scoped: tenant A can see its own employees.
     const ownList = await request(server())
       .get('/api/employees')
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${idToken}`)
       .set('X-Tenant-Subdomain', tenantA.subdomain);
     expect(ownList.status).toBe(200);
     const ids = ownList.body.map((e: any) => e.id);
@@ -91,18 +96,17 @@ describe('Tenant isolation (e2e)', () => {
     // out before it ever reaches the controller's "not found" branch.
     const directHit = await request(server())
       .get(`/api/employees/${tenantB.adminEmployeeId}`)
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${idToken}`)
       .set('X-Tenant-Subdomain', tenantA.subdomain);
     expect(directHit.status).toBe(404);
   });
 
   it('never returns tenant B leave balances to a tenant A session', async () => {
-    const loginRes = await login(tenantA.subdomain, tenantA.employeeEmail);
-    const token = loginRes.body.accessToken as string;
+    const idToken = await getIdTokenForEmail(tenantA.employeeEmail);
 
     const res = await request(server())
       .get(`/api/leave/balances/${tenantB.employeeEmployeeId}`)
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${idToken}`)
       .set('X-Tenant-Subdomain', tenantA.subdomain);
 
     // Service-layer scoping rejects it outright (EMPLOYEE can only view
@@ -112,8 +116,7 @@ describe('Tenant isolation (e2e)', () => {
   });
 
   it('blocks writes into tenant B via tenant A session (leave approval across tenants)', async () => {
-    const loginRes = await login(tenantA.subdomain, tenantA.managerEmail);
-    const token = loginRes.body.accessToken as string;
+    const idToken = await getIdTokenForEmail(tenantA.managerEmail);
 
     // Create a leave request that actually belongs to tenant B, using the
     // superuser fixture connection (arrange step, not part of what's under
@@ -135,7 +138,7 @@ describe('Tenant isolation (e2e)', () => {
 
     const res = await request(server())
       .post(`/api/leave/requests/${leaveRequest.id}/approve`)
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${idToken}`)
       .set('X-Tenant-Subdomain', tenantA.subdomain);
 
     // RLS makes the row invisible under tenant A's session, so Prisma's

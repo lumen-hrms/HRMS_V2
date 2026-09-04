@@ -52,7 +52,7 @@ export function EmployeeDetailPage() {
       const formData = new FormData();
       formData.append('file', file);
       const headers: Record<string, string> = {};
-      const token = getAccessToken();
+      const token = await getAccessToken();
       const subdomain = getTenantSubdomain();
       if (token) headers.Authorization = `Bearer ${token}`;
       if (subdomain) headers['X-Tenant-Subdomain'] = subdomain;
@@ -60,7 +60,6 @@ export function EmployeeDetailPage() {
         method: 'POST',
         headers,
         body: formData,
-        credentials: 'include',
       });
       if (!res.ok) throw new Error((await res.json()).message ?? 'Upload failed');
       load();

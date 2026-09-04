@@ -78,16 +78,12 @@ model Subscription {
 }
 
 model PlatformAdminUser {
-  id           String    @id @default(uuid()) @db.Uuid
-  email        String    @unique
-  passwordHash String    @map("password_hash")
-  fullName     String    @map("full_name")
-  mfaSecret    String?   @map("mfa_secret")
-  mfaEnabled   Boolean   @default(false) @map("mfa_enabled")
-  failedLoginCount Int   @default(0) @map("failed_login_count")
-  lockedUntil  DateTime? @map("locked_until")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  id          String   @id @default(uuid()) @db.Uuid
+  email       String   @unique
+  firebaseUid String   @unique @map("firebase_uid")
+  fullName    String   @map("full_name")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   @@map("platform_admin_users")
   @@schema("platform")
@@ -142,22 +138,60 @@ enum LeaveRequestStatus {
   @@schema("public")
 }
 
-model User {
-  id                String    @id @default(uuid()) @db.Uuid
-  tenantId          String    @map("tenant_id") @db.Uuid
-  email             String
-  passwordHash      String    @map("password_hash")
-  role              UserRole
-  mfaSecret         String?   @map("mfa_secret")
-  mfaEnabled        Boolean   @default(false) @map("mfa_enabled")
-  failedLoginCount  Int       @default(0) @map("failed_login_count")
-  lockedUntil       DateTime? @map("locked_until")
-  isActive          Boolean   @default(true) @map("is_active")
-  refreshTokenHash  String?   @map("refresh_token_hash")
-  createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt @map("updated_at")
+enum AttendanceStatus {
+  PRESENT
+  LATE
+  ON_LEAVE
+  WEEKLY_OFF
+  HOLIDAY
+  ABSENT
+  PENDING_REGULARIZATION
 
-  employee          Employee?
+  @@schema("public")
+}
+
+enum AttendanceSource {
+  WEB
+  // Schema-only placeholder — no code path writes this yet. Real biometric
+  // device integration (Hikvision/ZKTeco) is on CLAUDE.md's explicitly-
+  // deferred list; do not wire this up without discussing scope first.
+  BIOMETRIC
+
+  @@schema("public")
+}
+
+enum RegularizationReasonType {
+  MISSED_PUNCH_IN
+  MISSED_PUNCH_OUT
+  WRONG_PUNCH_TIME
+  FORGOT_TO_CLOCK_IN
+  FORGOT_TO_CLOCK_OUT
+  ON_DUTY_FIELD_WORK
+  OTHER
+
+  @@schema("public")
+}
+
+enum RegularizationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+
+  @@schema("public")
+}
+
+model User {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  email       String
+  firebaseUid String   @unique @map("firebase_uid")
+  role        UserRole
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  employee    Employee?
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -211,6 +245,8 @@ model Employee {
   leaveBalances       LeaveBalance[]
   leaveRequestsAsApplicant LeaveRequest[] @relation("Applicant")
   documents           Document[]
+  attendanceRecords   AttendanceRecord[]
+  regularizationRequests RegularizationRequest[]
 
   @@unique([tenantId, employeeCode])
   @@index([tenantId])
@@ -319,5 +355,74 @@ model AuditLog {
 
   @@index([tenantId])
   @@map("audit_log")
+  @@schema("public")
+}
+
+model AttendanceRecord {
+  id           String            @id @default(uuid()) @db.Uuid
+  tenantId     String            @map("tenant_id") @db.Uuid
+  employeeId   String            @map("employee_id") @db.Uuid
+  employee     Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  date         DateTime          @db.Date
+  checkInAt    DateTime?         @map("check_in_at")
+  checkOutAt   DateTime?         @map("check_out_at")
+  status       AttendanceStatus  @default(ABSENT)
+  source       AttendanceSource  @default(WEB)
+
+  createdAt    DateTime          @default(now()) @map("created_at")
+  updatedAt    DateTime          @updatedAt @map("updated_at")
+
+  breaks                  AttendanceBreak[]
+  regularizationRequests  RegularizationRequest[]
+
+  @@unique([tenantId, employeeId, date])
+  @@index([tenantId])
+  @@map("attendance_records")
+  @@schema("public")
+}
+
+model AttendanceBreak {
+  id                  String           @id @default(uuid()) @db.Uuid
+  tenantId            String           @map("tenant_id") @db.Uuid
+  attendanceRecordId  String           @map("attendance_record_id") @db.Uuid
+  attendanceRecord    AttendanceRecord @relation(fields: [attendanceRecordId], references: [id], onDelete: Cascade)
+
+  startAt             DateTime         @map("start_at")
+  endAt                DateTime?        @map("end_at")
+  createdAt           DateTime         @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([attendanceRecordId])
+  @@map("attendance_breaks")
+  @@schema("public")
+}
+
+model RegularizationRequest {
+  id                   String                     @id @default(uuid()) @db.Uuid
+  tenantId             String                     @map("tenant_id") @db.Uuid
+
+  employeeId           String                     @map("employee_id") @db.Uuid
+  employee             Employee                   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  attendanceRecordId   String?                    @map("attendance_record_id") @db.Uuid
+  attendanceRecord     AttendanceRecord?          @relation(fields: [attendanceRecordId], references: [id], onDelete: SetNull)
+
+  targetDate           DateTime                   @map("target_date") @db.Date
+  reasonType           RegularizationReasonType   @map("reason_type")
+  requestedCheckInAt   DateTime?                  @map("requested_check_in_at")
+  requestedCheckOutAt  DateTime?                  @map("requested_check_out_at")
+  note                 String?
+
+  status               RegularizationStatus       @default(PENDING)
+  approverId           String?                    @map("approver_id") @db.Uuid
+  decidedAt            DateTime?                  @map("decided_at")
+
+  createdAt            DateTime                   @default(now()) @map("created_at")
+  updatedAt             DateTime                   @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@index([tenantId, employeeId])
+  @@map("regularization_requests")
   @@schema("public")
 }

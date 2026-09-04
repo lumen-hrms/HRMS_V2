@@ -1,5 +1,7 @@
 import * as React from 'react';
-import { platformApi, setPlatformToken, PlatformApiError } from '@/lib/platform-api';
+import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { auth } from '@/lib/firebase';
+import { platformApi, PlatformApiError } from '@/lib/platform-api';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
@@ -14,22 +16,17 @@ interface Tenant {
   subscription: { plan: string; seats: number } | null;
 }
 
-type LoginStep =
-  | { kind: 'credentials' }
-  | { kind: 'mfa'; token: string }
-  | { kind: 'enroll'; token: string; qr: string };
-
 /**
  * Standalone console for the SaaS operator (the founder). Intentionally a
- * separate React tree with its own auth state — nothing here shares a
- * token, a Prisma connection, or even an HTTP client with the tenant app.
+ * separate React tree with its own auth state — nothing here shares
+ * tenant-app state, only the underlying Firebase Auth SDK instance (see
+ * lib/firebase.ts); a platform admin token is a distinct custom-claim
+ * shape (`type: 'platform_admin'`, no tenantId) from any tenant user's.
  */
 export function PlatformAdminConsole() {
   const [authed, setAuthed] = React.useState(false);
-  const [step, setStep] = React.useState<LoginStep>({ kind: 'credentials' });
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
-  const [code, setCode] = React.useState('');
   const [error, setError] = React.useState<string | null>(null);
   const [tenants, setTenants] = React.useState<Tenant[]>([]);
   const [createForm, setCreateForm] = React.useState({
@@ -51,31 +48,14 @@ export function PlatformAdminConsole() {
     e.preventDefault();
     setError(null);
     try {
-      const res = await platformApi.post<any>('/auth/login', { email, password });
-      if (res.status === 'mfa_enrollment_required') {
-        setStep({ kind: 'enroll', token: res.mfaChallengeToken, qr: res.qrCodeDataUrl });
-      } else if (res.status === 'mfa_required') {
-        setStep({ kind: 'mfa', token: res.mfaChallengeToken });
-      }
-    } catch (err) {
-      setError(err instanceof PlatformApiError ? err.message : 'Login failed');
-    }
-  }
-
-  async function handleMfa(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    try {
-      const path = step.kind === 'enroll' ? '/auth/mfa/enroll/verify' : '/auth/mfa/verify';
-      const token = step.kind === 'enroll' || step.kind === 'mfa' ? step.token : '';
-      const res = await platformApi.post<{ accessToken: string }>(path, {
-        mfaChallengeToken: token,
-        code,
-      });
-      setPlatformToken(res.accessToken);
+      const credential = await signInWithEmailAndPassword(auth, email, password);
+      const idToken = await credential.user.getIdToken();
+      const res = await platformApi.post<{ status: string }>('/auth/session', { idToken });
+      if (res.status !== 'ok') throw new Error('Session could not be established');
       setAuthed(true);
     } catch (err) {
-      setError(err instanceof PlatformApiError ? err.message : 'Invalid code');
+      await signOut(auth).catch(() => undefined);
+      setError(err instanceof PlatformApiError ? err.message : 'Login failed');
     }
   }
 
@@ -106,38 +86,23 @@ export function PlatformAdminConsole() {
             <CardDescription>SaaS operator access — separate from tenant accounts.</CardDescription>
           </CardHeader>
           <CardContent>
-            {step.kind === 'credentials' && (
-              <form onSubmit={handleLogin} className="flex flex-col gap-3">
-                <div className="flex flex-col gap-1.5">
-                  <Label>Email</Label>
-                  <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label>Password</Label>
-                  <Input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                  />
-                </div>
-                {error && <p className="text-sm text-destructive">{error}</p>}
-                <Button type="submit">Sign in</Button>
-              </form>
-            )}
-            {(step.kind === 'mfa' || step.kind === 'enroll') && (
-              <form onSubmit={handleMfa} className="flex flex-col gap-3">
-                {step.kind === 'enroll' && (
-                  <img src={step.qr} alt="MFA QR" className="mx-auto h-40 w-40 rounded-md border border-border" />
-                )}
-                <div className="flex flex-col gap-1.5">
-                  <Label>Authenticator code</Label>
-                  <Input value={code} onChange={(e) => setCode(e.target.value)} autoFocus required />
-                </div>
-                {error && <p className="text-sm text-destructive">{error}</p>}
-                <Button type="submit">Verify</Button>
-              </form>
-            )}
+            <form onSubmit={handleLogin} className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label>Email</Label>
+                <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label>Password</Label>
+                <Input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+              </div>
+              {error && <p className="text-sm text-destructive">{error}</p>}
+              <Button type="submit">Sign in</Button>
+            </form>
           </CardContent>
         </Card>
       </div>

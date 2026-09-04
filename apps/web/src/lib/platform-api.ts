@@ -1,12 +1,9 @@
 /** Separate, tiny client for the platform-admin console. Deliberately does
- * NOT share state with lib/api.ts — a platform admin token and a tenant
- * user token are different token types that must never be conflated. */
-
-let platformToken: string | null = null;
-
-export function setPlatformToken(token: string | null) {
-  platformToken = token;
-}
+ * NOT share state with lib/api.ts beyond the shared Firebase Auth instance
+ * (see lib/firebase.ts) — a platform admin session and a tenant user
+ * session are different Firebase custom-claim shapes that must never be
+ * conflated, even though both come from the one Firebase project. */
+import { auth } from './firebase';
 
 export class PlatformApiError extends Error {
   status: number;
@@ -21,7 +18,10 @@ export class PlatformApiError extends Error {
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set('Content-Type', 'application/json');
-  if (platformToken) headers.set('Authorization', `Bearer ${platformToken}`);
+
+  const idToken = await auth.currentUser?.getIdToken();
+  if (idToken) headers.set('Authorization', `Bearer ${idToken}`);
+
   const res = await fetch(`/api/platform-admin${path}`, { ...options, headers });
   const text = await res.text();
   const body = text ? JSON.parse(text) : null;
