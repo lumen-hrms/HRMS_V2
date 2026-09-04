@@ -11,6 +11,7 @@ import { EmployeeCreatePage } from '@/pages/employees/create';
 import { OrgChartPage } from '@/pages/org-chart';
 import { DepartmentsPage } from '@/pages/departments';
 import { LeavePage } from '@/pages/leave';
+import { AttendancePage } from '@/pages/attendance';
 import { PlatformAdminConsole } from '@/pages/platform-admin/console';
 
 export default function App() {
@@ -39,6 +40,7 @@ export default function App() {
                     <Route path="org-chart" element={<OrgChartPage />} />
                     <Route path="departments" element={<DepartmentsPage />} />
                     <Route path="leave" element={<LeavePage />} />
+                    <Route path="attendance" element={<AttendancePage />} />
                   </Route>
                 </Routes>
               </AuthProvider>

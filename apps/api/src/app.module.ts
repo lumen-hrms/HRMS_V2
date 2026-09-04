@@ -2,12 +2,14 @@ import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/c
 import { ConfigModule } from '@nestjs/config';
 import configuration from './config/configuration';
 import { PrismaModule } from './prisma/prisma.module';
+import { FirebaseModule } from './firebase/firebase.module';
 import { StorageModule } from './storage/storage.module';
 import { TenantResolutionMiddleware } from './common/tenancy/tenant-resolution.middleware';
 import { AuthModule } from './auth/auth.module';
 import { PlatformAdminModule } from './platform-admin/platform-admin.module';
 import { EmployeesModule } from './employees/employees.module';
 import { LeaveModule } from './leave/leave.module';
+import { AttendanceModule } from './attendance/attendance.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
@@ -18,11 +20,13 @@ import { DashboardModule } from './dashboard/dashboard.module';
       envFilePath: process.env.NODE_ENV === 'test' ? '.env.test' : '.env',
     }),
     PrismaModule,
+    FirebaseModule,
     StorageModule,
     AuthModule,
     PlatformAdminModule,
     EmployeesModule,
     LeaveModule,
+    AttendanceModule,
     DashboardModule,
   ],
 })

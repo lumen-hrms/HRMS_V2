@@ -5,6 +5,7 @@ import {
   CalendarDays,
   Network,
   Building2,
+  Clock,
   LogOut,
   Moon,
   Sun,
@@ -13,6 +14,7 @@ import {
 import { useAuth } from '@/context/auth-context';
 import { useTheme } from '@/context/theme-context';
 import { cn } from '@/lib/utils';
+import lumenLogo from '@/assets/brand/lumen-logo-lockup.png';
 
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -20,6 +22,7 @@ const NAV = [
   { to: '/org-chart', label: 'Org Chart', icon: Network },
   { to: '/departments', label: 'Departments', icon: Building2 },
   { to: '/leave', label: 'Leave', icon: CalendarDays },
+  { to: '/attendance', label: 'Attendance', icon: Clock },
 ];
 
 export function AppLayout() {
@@ -35,11 +38,8 @@ export function AppLayout() {
   return (
     <div className="flex min-h-screen bg-background text-foreground">
       <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-card">
-        <div className="flex items-center gap-2 px-5 py-5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground font-semibold">
-            H
-          </div>
-          <span className="text-sm font-semibold tracking-tight">HRMS Platform</span>
+        <div className="flex items-center px-5 py-5">
+          <img src={lumenLogo} alt="Lumen HRMS" className="h-7 w-auto" />
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-3">
           {NAV.map(({ to, label, icon: Icon, end }) => (

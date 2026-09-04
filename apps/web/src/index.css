@@ -44,6 +44,38 @@
 
   --radius: 0.625rem;
   color-scheme: light;
+
+  /* Lumen brand tokens — scoped for the Attendance module only (design
+   * handoff from Claude Design). Parallel set, not a replacement for
+   * --primary etc. above; promote to the global tokens later if the
+   * brand refresh goes app-wide. */
+  --lumen-gold: #d99220;
+  --lumen-gold-light: #f5b544;
+  --lumen-gold-dark: #c68118;
+  --lumen-gold-soft: #fff4d8;
+  --lumen-navy: #07141f;
+  --lumen-navy-2: #0d1f2d;
+  --lumen-bg: #f8fafc;
+  --lumen-surface: #ffffff;
+  --lumen-surface-2: #f1f5f8;
+  --lumen-surface-hover: #eaf0f4;
+  --lumen-text: #0b1722;
+  --lumen-text-secondary: #526170;
+  --lumen-text-muted: #82909c;
+  --lumen-border: #dce3e8;
+  --lumen-border-strong: #c5d0d8;
+  --lumen-success: #16855b;
+  --lumen-success-soft: #e7f6ef;
+  --lumen-warning: #c48716;
+  --lumen-warning-soft: #fff4d8;
+  --lumen-error: #c74646;
+  --lumen-error-soft: #fceaea;
+  --lumen-info: #2878b8;
+  --lumen-info-soft: #e8f3fa;
+  --lumen-purple: #7657b8;
+  --lumen-purple-soft: #f0ebfa;
+  --lumen-gradient: linear-gradient(135deg, #f5b544, #ffd77a);
+  --lumen-glow: rgba(245, 181, 68, 0.12);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -72,6 +104,34 @@
     --destructive: #e5675f;
     --destructive-foreground: #2b0705;
     color-scheme: dark;
+
+    --lumen-gold: #f5b544;
+    --lumen-gold-light: #ffd06a;
+    --lumen-gold-dark: #d99220;
+    --lumen-gold-soft: #3a2c15;
+    --lumen-navy: #07141f;
+    --lumen-navy-2: #0d1f2d;
+    --lumen-bg: #07141f;
+    --lumen-surface: #0d1f2d;
+    --lumen-surface-2: #132a3a;
+    --lumen-surface-hover: #183346;
+    --lumen-text: #f5f7f9;
+    --lumen-text-secondary: #aab7c2;
+    --lumen-text-muted: #71818e;
+    --lumen-border: #243a49;
+    --lumen-border-strong: #365062;
+    --lumen-success: #35c98a;
+    --lumen-success-soft: #102f25;
+    --lumen-warning: #f5c451;
+    --lumen-warning-soft: #3a2c15;
+    --lumen-error: #f26b6b;
+    --lumen-error-soft: #351d20;
+    --lumen-info: #55aee8;
+    --lumen-info-soft: #102b3b;
+    --lumen-purple: #a88ae8;
+    --lumen-purple-soft: #29223a;
+    --lumen-gradient: linear-gradient(135deg, #f5b544, #ffd77a);
+    --lumen-glow: rgba(245, 181, 68, 0.18);
   }
 }
 
@@ -100,6 +160,34 @@
   --destructive: #e5675f;
   --destructive-foreground: #2b0705;
   color-scheme: dark;
+
+  --lumen-gold: #f5b544;
+  --lumen-gold-light: #ffd06a;
+  --lumen-gold-dark: #d99220;
+  --lumen-gold-soft: #3a2c15;
+  --lumen-navy: #07141f;
+  --lumen-navy-2: #0d1f2d;
+  --lumen-bg: #07141f;
+  --lumen-surface: #0d1f2d;
+  --lumen-surface-2: #132a3a;
+  --lumen-surface-hover: #183346;
+  --lumen-text: #f5f7f9;
+  --lumen-text-secondary: #aab7c2;
+  --lumen-text-muted: #71818e;
+  --lumen-border: #243a49;
+  --lumen-border-strong: #365062;
+  --lumen-success: #35c98a;
+  --lumen-success-soft: #102f25;
+  --lumen-warning: #f5c451;
+  --lumen-warning-soft: #3a2c15;
+  --lumen-error: #f26b6b;
+  --lumen-error-soft: #351d20;
+  --lumen-info: #55aee8;
+  --lumen-info-soft: #102b3b;
+  --lumen-purple: #a88ae8;
+  --lumen-purple-soft: #29223a;
+  --lumen-gradient: linear-gradient(135deg, #f5b544, #ffd77a);
+  --lumen-glow: rgba(245, 181, 68, 0.18);
 }
 
 @theme inline {
@@ -129,6 +217,33 @@
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 0.25rem);
   --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  /* Lumen brand tokens exposed as Tailwind utilities (bg-lumen-gold, etc). */
+  --color-lumen-gold: var(--lumen-gold);
+  --color-lumen-gold-light: var(--lumen-gold-light);
+  --color-lumen-gold-dark: var(--lumen-gold-dark);
+  --color-lumen-gold-soft: var(--lumen-gold-soft);
+  --color-lumen-navy: var(--lumen-navy);
+  --color-lumen-navy-2: var(--lumen-navy-2);
+  --color-lumen-bg: var(--lumen-bg);
+  --color-lumen-surface: var(--lumen-surface);
+  --color-lumen-surface-2: var(--lumen-surface-2);
+  --color-lumen-surface-hover: var(--lumen-surface-hover);
+  --color-lumen-text: var(--lumen-text);
+  --color-lumen-text-secondary: var(--lumen-text-secondary);
+  --color-lumen-text-muted: var(--lumen-text-muted);
+  --color-lumen-border: var(--lumen-border);
+  --color-lumen-border-strong: var(--lumen-border-strong);
+  --color-lumen-success: var(--lumen-success);
+  --color-lumen-success-soft: var(--lumen-success-soft);
+  --color-lumen-warning: var(--lumen-warning);
+  --color-lumen-warning-soft: var(--lumen-warning-soft);
+  --color-lumen-error: var(--lumen-error);
+  --color-lumen-error-soft: var(--lumen-error-soft);
+  --color-lumen-info: var(--lumen-info);
+  --color-lumen-info-soft: var(--lumen-info-soft);
+  --color-lumen-purple: var(--lumen-purple);
+  --color-lumen-purple-soft: var(--lumen-purple-soft);
 }
 
 @layer base {
