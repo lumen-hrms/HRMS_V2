@@ -19,6 +19,7 @@
  */
 import { PrismaClient, Prisma } from '@prisma/client';
 import * as admin from 'firebase-admin';
+import { entitlementsForPlan } from '../src/platform-admin/entitlements';
 
 const prisma = new PrismaClient();
 
@@ -83,6 +84,7 @@ interface SeedEmployeeSpec {
 }
 
 async function seedTenant(name: string, subdomain: string, employees: SeedEmployeeSpec[]) {
+  const growth = entitlementsForPlan('GROWTH');
   const tenant = await prisma.tenant.upsert({
     where: { subdomain },
     update: {},
@@ -90,7 +92,14 @@ async function seedTenant(name: string, subdomain: string, employees: SeedEmploy
       name,
       subdomain,
       status: 'ACTIVE',
-      subscription: { create: { plan: 'GROWTH', seats: 200 } },
+      subscription: {
+        create: {
+          plan: 'GROWTH',
+          seats: 200,
+          enabledModules: growth.enabledModules,
+          features: growth.features as unknown as Prisma.InputJsonValue,
+        },
+      },
     },
   });
 
@@ -196,6 +205,42 @@ async function seedTenant(name: string, subdomain: string, employees: SeedEmploy
           },
         });
       }
+    }
+
+    // Tenant HR-config defaults — mirrors PlatformAdminService.seedTenantDefaults
+    // so a seeded tenant looks exactly like a freshly onboarded one.
+    await tx.tenantSettings.upsert({
+      where: { tenantId: tenant.id },
+      update: {},
+      create: { tenantId: tenant.id },
+    });
+    await tx.attendanceSettings.upsert({
+      where: { tenantId: tenant.id },
+      update: {},
+      create: { tenantId: tenant.id },
+    });
+    await tx.shift.upsert({
+      where: { tenantId_name: { tenantId: tenant.id, name: 'General' } },
+      update: {},
+      create: {
+        tenantId: tenant.id,
+        name: 'General',
+        type: 'FIXED',
+        startTime: '09:00',
+        endTime: '18:00',
+        isDefault: true,
+      },
+    });
+    for (const h of [
+      { date: new Date(Date.UTC(year, 0, 26)), name: 'Republic Day' },
+      { date: new Date(Date.UTC(year, 7, 15)), name: 'Independence Day' },
+      { date: new Date(Date.UTC(year, 9, 2)), name: 'Gandhi Jayanti' },
+    ]) {
+      await tx.holiday.upsert({
+        where: { tenantId_date_name: { tenantId: tenant.id, date: h.date, name: h.name } },
+        update: {},
+        create: { tenantId: tenant.id, date: h.date, name: h.name },
+      });
     }
 
     // One sample pending leave request for the demo to have something in

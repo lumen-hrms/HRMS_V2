@@ -174,6 +174,7 @@ export async function cleanupTenantFixture(tenantId: string) {
   // any `public` table (the two schemas are fully decoupled), so deleting
   // the tenant row does NOT cascade into tenant business data — clean up
   // both sides explicitly.
+  await superuserPrisma.punch.deleteMany({ where: { tenantId } });
   await superuserPrisma.regularizationRequest.deleteMany({ where: { tenantId } });
   await superuserPrisma.attendanceBreak.deleteMany({ where: { tenantId } });
   await superuserPrisma.attendanceRecord.deleteMany({ where: { tenantId } });
@@ -188,6 +189,10 @@ export async function cleanupTenantFixture(tenantId: string) {
   await superuserPrisma.employee.deleteMany({ where: { tenantId } });
   await superuserPrisma.user.deleteMany({ where: { tenantId } });
   await superuserPrisma.department.deleteMany({ where: { tenantId } });
+  await superuserPrisma.shift.deleteMany({ where: { tenantId } });
+  await superuserPrisma.holiday.deleteMany({ where: { tenantId } });
+  await superuserPrisma.attendanceSettings.deleteMany({ where: { tenantId } });
+  await superuserPrisma.tenantSettings.deleteMany({ where: { tenantId } });
   await superuserPrisma.auditLog.deleteMany({ where: { tenantId } });
   await superuserPrisma.tenant.delete({ where: { id: tenantId } }).catch(() => undefined);
 }

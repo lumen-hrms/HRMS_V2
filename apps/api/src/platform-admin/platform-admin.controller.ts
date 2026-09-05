@@ -12,8 +12,11 @@ export class PlatformAdminController {
   constructor(private readonly service: PlatformAdminService) {}
 
   @Post('auth/session')
-  session(@Body() dto: PlatformSessionDto) {
-    return this.service.session(dto.idToken);
+  async session(@Body() dto: PlatformSessionDto) {
+    // Shape mirrors the tenant AuthController.session response the web app
+    // expects: { status: 'ok', ... }.
+    const admin = await this.service.session(dto.idToken);
+    return { status: 'ok', admin };
   }
 
   @UseGuards(PlatformJwtAuthGuard)

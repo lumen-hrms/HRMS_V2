@@ -9,7 +9,9 @@ import type * as admin from 'firebase-admin';
 import { FIREBASE_AUTH } from '../firebase/firebase-admin.provider';
 import { PlatformPrismaClientProvider } from '../prisma/platform-prisma-client.provider';
 import { TenantPrismaClientProvider } from '../prisma/tenant-prisma-client.provider';
+import { Prisma } from '@prisma/client';
 import { withTenantContext } from '../prisma/with-tenant-context';
+import { entitlementsForPlan } from './entitlements';
 import type { CreateTenantDto } from './dto/platform-admin.dto';
 import type { AuthenticatedPlatformAdmin } from './platform-admin.types';
 
@@ -75,20 +77,33 @@ export class PlatformAdminService {
     const existing = await this.platformPrisma.tenant.findUnique({ where: { subdomain } });
     if (existing) throw new ConflictException('Subdomain already in use');
 
+    const plan = dto.plan ?? 'STARTER';
+    const { enabledModules, features } = entitlementsForPlan(plan);
+
     const tenant = await this.platformPrisma.tenant.create({
       data: {
         name: dto.companyName,
         subdomain,
         status: 'TRIAL',
-        subscription: { create: { plan: 'TRIAL', seats: 50 } },
+        subscription: {
+          create: {
+            plan,
+            seats: 50,
+            enabledModules,
+            features: features as unknown as Prisma.InputJsonValue,
+          },
+        },
       },
     });
 
     try {
       await this.seedCompanyAdmin(tenant.id, dto.adminEmail, dto.adminTempPassword);
+      // Working HR-config defaults so the tenant functions before anyone
+      // opens Settings (see docs/TENANT_CONFIGURATION.md).
+      await this.seedTenantDefaults(tenant.id);
     } catch (err) {
-      // Roll back the tenant record if we couldn't seed its first admin —
-      // a tenant with no way to log in is worse than no tenant at all.
+      // Roll back the tenant record if we couldn't finish provisioning —
+      // a half-provisioned tenant is worse than no tenant at all.
       await this.platformPrisma.tenant.delete({ where: { id: tenant.id } });
       throw err;
     }
@@ -120,6 +135,30 @@ export class PlatformAdminService {
 
     return scoped.user.create({
       data: { tenantId, email, firebaseUid, role: 'COMPANY_ADMIN' },
+    });
+  }
+
+  /**
+   * Seeds the tenant's operational HR config with sensible defaults —
+   * 5-day week (Sun/Sat off), one 09:00–18:00 "General" shift, self-service
+   * attendance. The Company Admin tunes these in-app; nothing here is a
+   * commercial/plan concern. Uses the tenant-scoped `hrms_app` connection,
+   * same as seedCompanyAdmin (the platform role has no grants on `public`).
+   */
+  private async seedTenantDefaults(tenantId: string) {
+    const scoped = withTenantContext(this.tenantPrismaRaw, tenantId);
+
+    await scoped.tenantSettings.create({ data: { tenantId } });
+    await scoped.attendanceSettings.create({ data: { tenantId } });
+    await scoped.shift.create({
+      data: {
+        tenantId,
+        name: 'General',
+        type: 'FIXED',
+        startTime: '09:00',
+        endTime: '18:00',
+        isDefault: true,
+      },
     });
   }
 

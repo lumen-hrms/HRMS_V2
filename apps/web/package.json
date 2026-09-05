@@ -13,6 +13,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "firebase": "^11.0.2",
+    "hrms-platform": "file:../..",
     "lucide-react": "^1.38.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
