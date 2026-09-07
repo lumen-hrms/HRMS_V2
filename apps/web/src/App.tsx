@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from '@/context/auth-context';
 import { ThemeProvider } from '@/context/theme-context';
+import { ToastProvider } from '@/components/ui/toast';
 import { ProtectedRoute } from '@/components/protected-route';
 import { AppLayout } from '@/components/app-layout';
 import { LoginPage } from '@/pages/login';
@@ -17,6 +18,7 @@ import { PlatformAdminConsole } from '@/pages/platform-admin/console';
 export default function App() {
   return (
     <ThemeProvider>
+      <ToastProvider>
       <BrowserRouter>
         <Routes>
           <Route path="/platform-admin" element={<PlatformAdminConsole />} />
@@ -48,6 +50,7 @@ export default function App() {
           />
         </Routes>
       </BrowserRouter>
+      </ToastProvider>
     </ThemeProvider>
   );
 }

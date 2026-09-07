@@ -14,13 +14,29 @@ import {
 import { useAuth } from '@/context/auth-context';
 import { useTheme } from '@/context/theme-context';
 import { cn } from '@/lib/utils';
+import { ROLE_LABELS, type Role } from '@/lib/roles';
 import lumenLogo from '@/assets/brand/lumen-logo-lockup.png';
 
-const NAV = [
+/**
+ * `roles` omitted ⇒ visible to every authenticated tenant user. Otherwise the
+ * item only renders for those roles. The server still guards each route; this
+ * just keeps the nav honest so nobody clicks into a 403.
+ */
+const NAV: { to: string; label: string; icon: typeof LayoutDashboard; end?: boolean; roles?: Role[] }[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/employees', label: 'Employees', icon: Users },
-  { to: '/org-chart', label: 'Org Chart', icon: Network },
-  { to: '/departments', label: 'Departments', icon: Building2 },
+  {
+    to: '/org-chart',
+    label: 'Org Chart',
+    icon: Network,
+    roles: ['COMPANY_ADMIN', 'HR_MANAGER', 'LINE_MANAGER', 'AUDITOR'],
+  },
+  {
+    to: '/departments',
+    label: 'Departments',
+    icon: Building2,
+    roles: ['COMPANY_ADMIN', 'HR_MANAGER', 'LINE_MANAGER', 'AUDITOR'],
+  },
   { to: '/leave', label: 'Leave', icon: CalendarDays },
   { to: '/attendance', label: 'Attendance', icon: Clock },
 ];
@@ -35,6 +51,8 @@ export function AppLayout() {
     navigate('/login');
   }
 
+  const nav = NAV.filter((item) => !item.roles || (user && item.roles.includes(user.role)));
+
   return (
     <div className="flex min-h-screen bg-background text-foreground">
       <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-card">
@@ -42,7 +60,7 @@ export function AppLayout() {
           <img src={lumenLogo} alt="Lumen HRMS" className="h-7 w-auto" />
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-3">
-          {NAV.map(({ to, label, icon: Icon, end }) => (
+          {nav.map(({ to, label, icon: Icon, end }) => (
             <NavLink
               key={to}
               to={to}
@@ -85,7 +103,9 @@ export function AppLayout() {
           </div>
           <div className="mb-2 truncate px-1 text-xs text-muted-foreground">
             {user?.email}
-            <div className="font-medium text-foreground">{user?.role.replace('_', ' ')}</div>
+            <div className="font-medium text-foreground">
+              {user ? ROLE_LABELS[user.role] : ''}
+            </div>
           </div>
           <button
             onClick={handleLogout}

@@ -14,7 +14,11 @@
 > `[COULD]` = later. Where V1 deliberately narrows a requirement, it's called
 > out under **Scope cut**.
 >
-> **Last synced to code:** 2026-09-05 (commit `82973a3`).
+> **Last synced to code:** 2026-09-07 (commit `82973a3` + in-progress Leave UI
+> rebuild — see `docs/LEAVE_UI_SPECS.md`).
+>
+> **Keep the status table + per-module progress bars current on every change** —
+> if a commit moves a module, move its bar in the same commit.
 
 ---
 
@@ -31,7 +35,7 @@
 | 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ / 🟡 | `█████████████████░░░` 88% |
 | 2. Platform Admin | ✅ | `██████████████████░░` 90% |
 | 3. Employee Master + Org Structure | 🟡 | `█████████████████░░░` 85% |
-| 4. Leave Management | 🟡 | `████████████████░░░░` 80% |
+| 4. Leave Management | 🟡 | `█████████████████░░░` 86% — BE ~80%; FE rebuild underway (foundation + Employee + Line Manager screens done; HR / Company Admin / Auditor screens next) |
 | 5. Attendance & Time Tracking | 🟡 | `███████████░░░░░░░░░░` 55% |
 | 6. Dashboard | ✅ | `█████████████████░░░` 85% |
 | 7. Payroll Engine | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
@@ -287,8 +291,11 @@ must validate and report per-row rather than fail the batch.
 
 ## 4. Leave Management
 
-**Status:** 🟡
-**Code:** `apps/api/src/leave`, `apps/web/src/pages/leave`
+**Status:** 🟡 — BE ~80%; FE being rebuilt role-by-role (UI-first, ahead of the
+remaining BE). Progress + per-screen contract: `docs/LEAVE_UI_SPECS.md`.
+**Code:** `apps/api/src/leave`, `apps/web/src/pages/leave`,
+`apps/web/src/lib/leave` (typed client + fixture/mock layer — screens run
+without the `planned` endpoints; `VITE_LEAVE_MOCK=false` switches to live)
 
 ### Expectation
 
