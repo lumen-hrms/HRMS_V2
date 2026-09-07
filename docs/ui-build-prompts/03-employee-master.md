@@ -9,7 +9,9 @@ production-grade layouts with all overlays and states instead of guessing.
 tool. It carries the frontend stack, the design tokens, the data dictionary,
 and the per-role screen map. Pair it with:
 
-- `docs/MODULE_SPECS.md` §3 — product behaviour, happy paths, known gaps.
+- `docs/modules/03_EMPLOYEE_MASTER.md` — the module source of truth
+  (personas, flows, technical + functional expectations, permissions matrix).
+- `docs/MODULE_SPECS.md` §3 — condensed product behaviour, happy paths, known gaps.
 - `docs/BACKEND_ARCHITECTURE.md` — how the backend is wired.
 - `apps/api/src/employees` + `apps/web/src/pages/employees` — current code.
 
@@ -55,8 +57,8 @@ feel. Not a marketing site.
 | Path alias | `@/*` → `src/*`. |
 | Dates/money | ISO UTC strings, display **IST**, format `14 Apr 2026`. Money is `Decimal` — render `₹ 12,00,000` (Indian grouping). |
 
-<!-- CANONICAL §2.2 — keep this block byte-identical in docs/leave-management.md
-     and docs/employee-master.md (and any future module prompt). -->
+<!-- CANONICAL §2.2 — keep this block byte-identical in every
+     docs/ui-build-prompts/NN-*.md file (and any future module prompt). -->
 ### 2.2 Design system / tokens — single source of truth
 
 **Authoritative token definitions live in `apps/web/src/index.css`** (`:root`,

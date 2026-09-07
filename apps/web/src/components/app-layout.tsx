@@ -6,6 +6,8 @@ import {
   Network,
   Building2,
   Clock,
+  ShieldCheck,
+  UserCog,
   LogOut,
   Moon,
   Sun,
@@ -15,7 +17,11 @@ import { useAuth } from '@/context/auth-context';
 import { useTheme } from '@/context/theme-context';
 import { cn } from '@/lib/utils';
 import { ROLE_LABELS, type Role } from '@/lib/roles';
-import lumenLogo from '@/assets/brand/lumen-logo-lockup.png';
+// Sidebar is on `bg-card` (theme-driven), so the mark swaps per theme in
+// index.css (`.brand-mark-light` / `.brand-mark-dark`) — same three-state
+// pattern as the token blocks. Both are transparent PNGs.
+import lumenMarkDark from '@/assets/brand/lumen-mark-dark.png';
+import lumenMarkWhite from '@/assets/brand/lumen-mark-white.png';
 
 /**
  * `roles` omitted ⇒ visible to every authenticated tenant user. Otherwise the
@@ -39,6 +45,12 @@ const NAV: { to: string; label: string; icon: typeof LayoutDashboard; end?: bool
   },
   { to: '/leave', label: 'Leave', icon: CalendarDays },
   { to: '/attendance', label: 'Attendance', icon: Clock },
+  {
+    to: '/access',
+    label: 'Identity & Access',
+    icon: ShieldCheck,
+    roles: ['COMPANY_ADMIN', 'HR_MANAGER', 'AUDITOR'],
+  },
 ];
 
 export function AppLayout() {
@@ -56,8 +68,12 @@ export function AppLayout() {
   return (
     <div className="flex min-h-screen bg-background text-foreground">
       <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-card">
-        <div className="flex items-center px-5 py-5">
-          <img src={lumenLogo} alt="Lumen HRMS" className="h-7 w-auto" />
+        <div className="flex items-center gap-2 px-5 py-5">
+          <img src={lumenMarkDark} alt="" className="brand-mark-light h-7 w-7 shrink-0 object-contain" />
+          <img src={lumenMarkWhite} alt="" className="brand-mark-dark h-7 w-7 shrink-0 object-contain" />
+          <span className="text-lg font-semibold tracking-tight text-foreground">
+            Lumen <span className="text-muted-foreground">HRMS</span>
+          </span>
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-3">
           {nav.map(({ to, label, icon: Icon, end }) => (
@@ -101,12 +117,23 @@ export function AppLayout() {
               </button>
             ))}
           </div>
-          <div className="mb-2 truncate px-1 text-xs text-muted-foreground">
-            {user?.email}
-            <div className="font-medium text-foreground">
-              {user ? ROLE_LABELS[user.role] : ''}
-            </div>
-          </div>
+          <NavLink
+            to="/account"
+            className={({ isActive }) =>
+              cn(
+                'mb-2 flex items-center gap-2 rounded-md px-1 py-1 text-xs transition-colors',
+                isActive ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+              )
+            }
+          >
+            <UserCog className="h-4 w-4 shrink-0" />
+            <span className="min-w-0 truncate">
+              {user?.email}
+              <span className="block font-medium text-foreground">
+                {user ? ROLE_LABELS[user.role] : ''}
+              </span>
+            </span>
+          </NavLink>
           <button
             onClick={handleLogout}
             className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground"

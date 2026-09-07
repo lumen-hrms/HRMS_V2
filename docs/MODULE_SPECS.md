@@ -1,7 +1,7 @@
 # HRMS — Module Specifications (Developer Guide)
 
-> **Audience:** anyone (founder or contractor) picking up a module to build or
-> extend. For each module this gives: the **expectation** (what "done" means),
+> **Audience:** anyone on the team picking up a module to build or extend.
+> For each module this gives: the **expectation** (what "done" means),
 > the **feature list** it owns, the **happy-path user journey**, and the
 > **functionalities / API surface** as they exist today.
 >
@@ -9,16 +9,28 @@
 > `docs/BACKEND_ARCHITECTURE.md` (the *what/where*, traced from source). This
 > file sits between them: it's the per-module product+dev contract.
 >
-> **Traceability:** `FR-XXX` tags reference requirement IDs in
-> `HRMS_SRS_v1.0(1).docx`. `[MUST]` = MVP-blocking, `[SHOULD]` = v1.1 target,
-> `[COULD]` = later. Where V1 deliberately narrows a requirement, it's called
-> out under **Scope cut**.
+> **This file is the index / summary.** Each module has a deep spec in
+> `docs/modules/NN_MODULE_NAME.md` — personas & how each uses the module,
+> full technical + functional expectations, flows, invariants, permission
+> matrix, acceptance criteria. The per-module `**Deep spec:**` link points to
+> it. Modules without a link yet are still to be written.
 >
-> **Last synced to code:** 2026-09-07 (commit `82973a3` + in-progress Leave UI
-> rebuild — see `docs/LEAVE_UI_SPECS.md`).
+> **Priority tags:** `[MUST]` = V1-blocking, `[SHOULD]` = v1.1 target,
+> `[COULD]` = later. Where V1 deliberately narrows a feature, it's called
+> out under **Scope cut**. (`FR-XXX` tags are legacy references to an early
+> spec draft that is no longer maintained — ignore them; this file and the
+> code are the source of truth.)
+>
+> **Last synced to code:** 2026-09-08 (commit `36f5a1c` + Identity & Access
+> management UI — Users / Audit / My Account, on a mock client pending the
+> `/api/access/*` endpoints; + in-progress Leave UI rebuild, see
+> `docs/LEAVE_UI_SPECS.md`).
 >
 > **Keep the status table + per-module progress bars current on every change** —
-> if a commit moves a module, move its bar in the same commit.
+> if a commit moves a module, move its bar (status mark, ASCII bar, %), its
+> `**Status:**` line, and the `Last synced to code` date in the **same
+> commit**. This is a standing, non-optional rule — see `CLAUDE.md` →
+> "Keeping module status in sync".
 
 ---
 
@@ -32,7 +44,7 @@
 
 | Module | Status | Progress |
 |---|---|---|
-| 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ / 🟡 | `█████████████████░░░` 88% |
+| 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ / 🟡 | `██████████████████░░` 90% — auth/RBAC/tenancy live; access-management UI (Users, role/status/reset, login+access audit, My Account) built on a mock client; `/api/access/*` endpoints + `LoginAuditEntry` table still not wired |
 | 2. Platform Admin | ✅ | `██████████████████░░` 90% |
 | 3. Employee Master + Org Structure | 🟡 | `█████████████████░░░` 85% |
 | 4. Leave Management | 🟡 | `█████████████████░░░` 86% — BE ~80%; FE rebuild underway (foundation + Employee + Line Manager screens done; HR / Company Admin / Auditor screens next) |
@@ -82,9 +94,13 @@ live e-filing APIs, SSO.
 
 ## 1. Identity & Access — Auth + RBAC + Multi-tenancy
 
-**Status:** ✅ auth/RBAC/tenancy · 🟡 login audit trail missing
+**Deep spec:** `docs/modules/01_IDENTITY_AND_ACCESS.md` ·
+**UI prompt:** `docs/ui-build-prompts/01-identity-access.md`
+**Status:** ✅ auth/RBAC/tenancy · 🟡 access-management UI built on a mock
+client (`VITE_ACCESS_MOCK`) — `/api/access/*` + `LoginAuditEntry` not wired
 **Code:** `apps/api/src/auth`, `apps/api/src/firebase`,
-`apps/api/src/common/{guards,decorators,tenancy}`, `apps/api/src/prisma`
+`apps/api/src/common/{guards,decorators,tenancy}`, `apps/api/src/prisma`,
+`apps/web/src/pages/access`, `apps/web/src/lib/access`
 
 ### Expectation
 
@@ -144,7 +160,14 @@ creation). Never trust a claim the client could set.
 ### Known gaps / TODO
 
 - Wire the **login audit log** (FR-AUTH-008) — new table + write on every
-  session validation (success and failure), with IP + user-agent.
+  session validation (success and failure), with IP + user-agent. The
+  Auditor/Admin screens for it now exist (`apps/web/src/pages/access`,
+  `Audit` tab) but read from a fixture store until this lands.
+- Build the **access-management API** — `GET /api/access/users`,
+  `PATCH .../role`, `PATCH .../status`, `POST .../password-reset`,
+  `GET /api/access/audit`. The UI (`apps/web/src/pages/access`,
+  `apps/web/src/lib/access`) is built to this contract behind
+  `VITE_ACCESS_MOCK`; flip it off once the endpoints exist.
 - Tighten the Line-Manager visibility placeholder in Leave (see §4).
 - Decide if/when SSO (FR-AUTH-003) re-enters scope for the hospital pilot.
 
@@ -152,6 +175,8 @@ creation). Never trust a claim the client could set.
 
 ## 2. Platform Admin
 
+**Deep spec:** `docs/modules/02_PLATFORM_ADMIN.md` ·
+**UI prompt:** `docs/ui-build-prompts/02-platform-admin.md`
 **Status:** ✅
 **Code:** `apps/api/src/platform-admin`, `apps/web/src/pages/platform-admin`
 
@@ -210,6 +235,8 @@ future logged, time-boxed break-glass flow, not a standing grant.
 
 ## 3. Employee Master + Org Structure
 
+**Deep spec:** `docs/modules/03_EMPLOYEE_MASTER.md` ·
+**UI prompt:** `docs/ui-build-prompts/03-employee-master.md`
 **Status:** 🟡
 **Code:** `apps/api/src/employees`, `apps/web/src/pages/employees`,
 `apps/web/src/pages/org-chart.tsx`, `apps/web/src/pages/departments.tsx`
@@ -291,6 +318,9 @@ must validate and report per-row rather than fail the batch.
 
 ## 4. Leave Management
 
+**Deep spec:** `docs/modules/04_LEAVE_MANAGEMENT.md` *(pending)* ·
+**UI prompt:** `docs/ui-build-prompts/04-leave-management.md` ·
+**API contract:** `docs/LEAVE_UI_SPECS.md`
 **Status:** 🟡 — BE ~80%; FE being rebuilt role-by-role (UI-first, ahead of the
 remaining BE). Progress + per-screen contract: `docs/LEAVE_UI_SPECS.md`.
 **Code:** `apps/api/src/leave`, `apps/web/src/pages/leave`,
@@ -847,7 +877,9 @@ two can be built against a stable interface.
 |---|---|
 | Why a stack/architecture choice was made | `CLAUDE.md` |
 | How a mechanism works, traced from source | `docs/BACKEND_ARCHITECTURE.md` |
-| What a module should do + its happy path | this file |
+| A module's one-page summary + happy path | this file |
+| A module's **deep spec** — personas, flows, invariants, permission matrix, acceptance criteria | `docs/modules/NN_MODULE_NAME.md` |
+| The prompt to build a module's UI (all personas, all screens) | `docs/ui-build-prompts/NN-module-name.md` |
 | Where per-tenant config lives + who sets it | `docs/TENANT_CONFIGURATION.md` |
-| The original requirement text + priorities | `HRMS_SRS_v1.0(1).docx` |
-| Current known gaps in shipped modules | `docs/BACKEND_ARCHITECTURE.md` §8 + per-module "Known gaps" here |
+| The docs naming convention (which file is authoritative) | `docs/README.md` |
+| Current known gaps in shipped modules | `docs/BACKEND_ARCHITECTURE.md` §8 + per-module "Known gaps" here + each deep spec's §9 |

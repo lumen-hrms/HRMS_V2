@@ -45,7 +45,7 @@ export function LoginPage() {
   return (
     <AuthSplitLayout
       taglineLines={[
-        'Attendance, leave, and people data in one place — built for teams that move fast.',
+        'Attendance, leave, and people data in one place built for teams that move fast.',
         'One workspace for every team, tenant, and time zone.',
       ]}
     >
@@ -66,7 +66,7 @@ export function LoginPage() {
           <form onSubmit={handleSubmit} className="flex flex-col gap-4.5">
             <AuthField
               id="subdomain"
-              label="Company subdomain"
+              label="Company Subdomain"
               placeholder="acme"
               value={subdomain.value}
               onChange={subdomain.onChange}
