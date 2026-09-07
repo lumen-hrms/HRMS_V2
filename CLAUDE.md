@@ -32,7 +32,7 @@ file + the SRS if it's been lost).
 | Multi-tenancy | Shared DB, shared schema, `tenant_id` + PostgreSQL Row-Level Security | Not schema-per-tenant — RLS gives real isolation without per-tenant migration/connection tooling a solo dev would have to build |
 | Background jobs | BullMQ on Redis | Not Kafka — payslip PDFs, statutory files, email sends, don't need a broker at this scale |
 | Storage | S3 (private, presigned URLs) | — |
-| Auth | JWT (15min access / 30-day refresh, httpOnly cookie) + bcrypt (cost 12) + TOTP MFA for admin roles | Not Keycloak — one less system to run and patch |
+| Auth | Firebase Auth — ID token *is* the session (Bearer header, SDK-refreshed), `tenantId`/`role` as server-set custom claims. No MFA. | Not a self-issued JWT/bcrypt/TOTP stack (the original choice, kept "for one less system to run and patch") — revisited for ship speed: hosted password reset/sign-in UI beats hand-rolling it solo. Not Keycloak either, same reasoning as before. |
 | Hosting | AWS ap-south-1 (Mumbai), managed services: ECS Fargate, RDS, S3, CloudFront | Not EKS/Kubernetes — stays in-region for the "India-compliant" story without container-orchestration ops overhead |
 
 ## Multi-tenancy — the load-bearing decision
@@ -40,11 +40,13 @@ file + the SRS if it's been lost).
 **One shared database, one shared schema.** Every tenant-owned table has a
 `tenant_id` column and a Postgres RLS policy keyed to the session variable
 `app.current_tenant_id`, set once per request/transaction from the
-validated JWT claim — never from a raw request parameter. The app's
-Postgres role must **never** have `BYPASSRLS`.
+validated Firebase ID token's `tenantId` custom claim — never from a raw
+request parameter. The app's Postgres role must **never** have
+`BYPASSRLS`.
 
 Enforcement is layered, not single-point:
-1. Subdomain → tenant resolution, tenant ID embedded in the JWT at login.
+1. Subdomain → tenant resolution; `tenantId`/`role` live as custom claims
+   on the user's Firebase ID token (set server-side via the Admin SDK).
 2. Application-level query scoping (wrapped Prisma client injects the
    tenant filter automatically).
 3. **Database-level RLS is the real backstop** — even a raw-SQL bug can't

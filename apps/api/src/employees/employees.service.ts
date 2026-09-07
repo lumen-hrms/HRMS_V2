@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import * as ExcelJS from 'exceljs';
+import type * as admin from 'firebase-admin';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service';
 import { StorageService } from '../storage/storage.service';
-import { AuthService } from '../auth/auth.service';
+import { FIREBASE_AUTH } from '../firebase/firebase-admin.provider';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import type { CreateDepartmentDto, CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
 
@@ -34,6 +35,7 @@ export class EmployeesService {
   constructor(
     private readonly tenantPrisma: TenantPrismaService,
     private readonly storage: StorageService,
+    @Inject(FIREBASE_AUTH) private readonly firebaseAuth: admin.auth.Auth,
   ) {}
 
   // ---- Departments ----
@@ -70,16 +72,38 @@ export class EmployeesService {
   async create(dto: CreateEmployeeDto) {
     const tenantId = this.tenantPrisma.tenantId;
 
+    // Firebase user creation is a network call to the Admin SDK, not a DB
+    // write — do it before the transaction rather than inside it, same
+    // pattern as PlatformAdminService.seedCompanyAdmin.
+    let pendingUser: { email: string; firebaseUid: string; role: string } | undefined;
+    if (dto.loginEmail && dto.loginTempPassword) {
+      const role = (dto.loginRole as string) ?? 'EMPLOYEE';
+      let firebaseUid: string;
+      try {
+        const created = await this.firebaseAuth.createUser({
+          email: dto.loginEmail,
+          password: dto.loginTempPassword,
+        });
+        firebaseUid = created.uid;
+      } catch (err: any) {
+        if (err?.code === 'auth/email-already-exists') {
+          throw new BadRequestException('That login email is already registered with Firebase');
+        }
+        throw err;
+      }
+      await this.firebaseAuth.setCustomUserClaims(firebaseUid, { tenantId, role });
+      pendingUser = { email: dto.loginEmail, firebaseUid, role };
+    }
+
     return this.tenantPrisma.client.$transaction(async (tx) => {
       let userId: string | undefined;
-      if (dto.loginEmail && dto.loginTempPassword) {
-        const passwordHash = await AuthService.hashPassword(dto.loginTempPassword);
+      if (pendingUser) {
         const user = await tx.user.create({
           data: {
             tenantId,
-            email: dto.loginEmail,
-            passwordHash,
-            role: (dto.loginRole as any) ?? 'EMPLOYEE',
+            email: pendingUser.email,
+            firebaseUid: pendingUser.firebaseUid,
+            role: pendingUser.role as any,
           },
         });
         userId = user.id;

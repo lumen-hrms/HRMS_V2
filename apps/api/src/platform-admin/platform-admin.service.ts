@@ -1,132 +1,52 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
+  Inject,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { JwtService } from '@nestjs/jwt';
-import * as bcrypt from 'bcrypt';
+import type * as admin from 'firebase-admin';
+import { FIREBASE_AUTH } from '../firebase/firebase-admin.provider';
 import { PlatformPrismaClientProvider } from '../prisma/platform-prisma-client.provider';
 import { TenantPrismaClientProvider } from '../prisma/tenant-prisma-client.provider';
+import { Prisma } from '@prisma/client';
 import { withTenantContext } from '../prisma/with-tenant-context';
-import { MfaService } from '../auth/mfa.service';
-import { AuthService } from '../auth/auth.service';
-import type { AppConfig } from '../config/configuration';
+import { entitlementsForPlan } from './entitlements';
 import type { CreateTenantDto } from './dto/platform-admin.dto';
-
-const MAX_FAILED_ATTEMPTS = 5;
-const LOCKOUT_MINUTES = 30;
+import type { AuthenticatedPlatformAdmin } from './platform-admin.types';
 
 @Injectable()
 export class PlatformAdminService {
   constructor(
     private readonly platformPrisma: PlatformPrismaClientProvider,
     private readonly tenantPrismaRaw: TenantPrismaClientProvider,
-    private readonly jwt: JwtService,
-    private readonly config: ConfigService<AppConfig, true>,
-    private readonly mfa: MfaService,
+    @Inject(FIREBASE_AUTH) private readonly firebaseAuth: admin.auth.Auth,
   ) {}
 
-  // ---- Auth (mirrors AuthService's flow but for platform_admin_users) ----
+  // ---- Auth ----
+  //
+  // Firebase's ID token is the session artifact, same as the tenant side
+  // (AuthService.session). `type: 'platform_admin'` is the custom claim
+  // that keeps a platform admin's token from ever satisfying a tenant
+  // user's guard chain, and vice versa.
 
-  async login(email: string, password: string) {
-    const admin = await this.platformPrisma.platformAdminUser.findUnique({ where: { email } });
-    const passwordHash = admin?.passwordHash ?? '$2b$12$invalidsaltinvalidsaltinvalidsaltinvOe';
-
-    if (admin?.lockedUntil && admin.lockedUntil > new Date()) {
-      throw new ForbiddenException(`Account locked until ${admin.lockedUntil.toISOString()}`);
-    }
-
-    const ok = await bcrypt.compare(password, passwordHash);
-    if (!admin || !ok) {
-      if (admin) {
-        const nextCount = admin.failedLoginCount + 1;
-        await this.platformPrisma.platformAdminUser.update({
-          where: { id: admin.id },
-          data: {
-            failedLoginCount: nextCount,
-            lockedUntil:
-              nextCount >= MAX_FAILED_ATTEMPTS
-                ? new Date(Date.now() + LOCKOUT_MINUTES * 60_000)
-                : undefined,
-          },
-        });
-      }
-      throw new UnauthorizedException('Invalid credentials');
-    }
-
-    if (admin.failedLoginCount > 0 || admin.lockedUntil) {
-      await this.platformPrisma.platformAdminUser.update({
-        where: { id: admin.id },
-        data: { failedLoginCount: 0, lockedUntil: null },
-      });
-    }
-
-    if (!admin.mfaEnabled) {
-      const secret = this.mfa.generateSecret();
-      const qrCodeDataUrl = await this.mfa.generateQrCodeDataUrl(admin.email, secret);
-      const mfaChallengeToken = this.jwt.sign(
-        { sub: admin.id, type: 'platform_mfa_enroll', secret },
-        { secret: this.config.get('jwt.accessSecret', { infer: true }), expiresIn: '10m' },
-      );
-      return { status: 'mfa_enrollment_required', mfaChallengeToken, qrCodeDataUrl };
-    }
-
-    const mfaChallengeToken = this.jwt.sign(
-      { sub: admin.id, type: 'platform_mfa_verify' },
-      { secret: this.config.get('jwt.accessSecret', { infer: true }), expiresIn: '10m' },
-    );
-    return { status: 'mfa_required', mfaChallengeToken };
-  }
-
-  async verifyMfa(mfaChallengeToken: string, code: string) {
-    const payload = this.decode(mfaChallengeToken, 'platform_mfa_verify');
-    const admin = await this.platformPrisma.platformAdminUser.findUnique({
-      where: { id: payload.sub },
-    });
-    if (!admin?.mfaSecret) throw new UnauthorizedException('MFA not configured');
-    if (!this.mfa.verifyToken(code, admin.mfaSecret)) {
-      throw new UnauthorizedException('Invalid MFA code');
-    }
-    return { accessToken: this.issueAccessToken(admin.id, admin.email) };
-  }
-
-  async completeEnrollment(mfaChallengeToken: string, code: string) {
-    const payload = this.decode(mfaChallengeToken, 'platform_mfa_enroll');
-    const secret = payload.secret as string;
-    if (!this.mfa.verifyToken(code, secret)) {
-      throw new UnauthorizedException('Invalid MFA code');
-    }
-    const admin = await this.platformPrisma.platformAdminUser.update({
-      where: { id: payload.sub },
-      data: { mfaEnabled: true, mfaSecret: secret },
-    });
-    return { accessToken: this.issueAccessToken(admin.id, admin.email) };
-  }
-
-  private decode(token: string, expectedType: string) {
-    let payload: { sub: string; type: string; secret?: string };
+  async session(idToken: string): Promise<AuthenticatedPlatformAdmin> {
+    let decoded: admin.auth.DecodedIdToken;
     try {
-      payload = this.jwt.verify(token, {
-        secret: this.config.get('jwt.accessSecret', { infer: true }),
-      });
+      decoded = await this.firebaseAuth.verifyIdToken(idToken);
     } catch {
-      throw new UnauthorizedException('Invalid or expired MFA challenge');
+      throw new UnauthorizedException('Invalid or expired token');
     }
-    if (payload.type !== expectedType) throw new UnauthorizedException('Wrong challenge type');
-    return payload;
-  }
+    if (decoded.type !== 'platform_admin') {
+      throw new UnauthorizedException('Not a platform admin token');
+    }
 
-  private issueAccessToken(sub: string, email: string) {
-    return this.jwt.sign(
-      { sub, email, type: 'platform_admin' },
-      {
-        secret: this.config.get('jwt.accessSecret', { infer: true }),
-        expiresIn: this.config.get('jwt.accessTtl', { infer: true }),
-      },
-    );
+    const platformAdmin = await this.platformPrisma.platformAdminUser.findUnique({
+      where: { firebaseUid: decoded.uid },
+    });
+    if (!platformAdmin) throw new UnauthorizedException('Platform admin not found');
+
+    return { sub: platformAdmin.id, email: platformAdmin.email };
   }
 
   // ---- Tenant provisioning & metadata ----
@@ -157,20 +77,33 @@ export class PlatformAdminService {
     const existing = await this.platformPrisma.tenant.findUnique({ where: { subdomain } });
     if (existing) throw new ConflictException('Subdomain already in use');
 
+    const plan = dto.plan ?? 'STARTER';
+    const { enabledModules, features } = entitlementsForPlan(plan);
+
     const tenant = await this.platformPrisma.tenant.create({
       data: {
         name: dto.companyName,
         subdomain,
         status: 'TRIAL',
-        subscription: { create: { plan: 'TRIAL', seats: 50 } },
+        subscription: {
+          create: {
+            plan,
+            seats: 50,
+            enabledModules,
+            features: features as unknown as Prisma.InputJsonValue,
+          },
+        },
       },
     });
 
     try {
       await this.seedCompanyAdmin(tenant.id, dto.adminEmail, dto.adminTempPassword);
+      // Working HR-config defaults so the tenant functions before anyone
+      // opens Settings (see docs/TENANT_CONFIGURATION.md).
+      await this.seedTenantDefaults(tenant.id);
     } catch (err) {
-      // Roll back the tenant record if we couldn't seed its first admin —
-      // a tenant with no way to log in is worse than no tenant at all.
+      // Roll back the tenant record if we couldn't finish provisioning —
+      // a half-provisioned tenant is worse than no tenant at all.
       await this.platformPrisma.tenant.delete({ where: { id: tenant.id } });
       throw err;
     }
@@ -184,13 +117,48 @@ export class PlatformAdminService {
 
   private async seedCompanyAdmin(tenantId: string, email: string, tempPassword: string) {
     const scoped = withTenantContext(this.tenantPrismaRaw, tenantId);
-    const passwordHash = await AuthService.hashPassword(tempPassword);
 
     const existing = await scoped.user.findFirst({ where: { tenantId, email } });
     if (existing) throw new BadRequestException('That admin email is already in use');
 
+    let firebaseUid: string;
+    try {
+      const created = await this.firebaseAuth.createUser({ email, password: tempPassword });
+      firebaseUid = created.uid;
+    } catch (err: any) {
+      if (err?.code === 'auth/email-already-exists') {
+        throw new BadRequestException('That admin email is already registered with Firebase');
+      }
+      throw err;
+    }
+    await this.firebaseAuth.setCustomUserClaims(firebaseUid, { tenantId, role: 'COMPANY_ADMIN' });
+
     return scoped.user.create({
-      data: { tenantId, email, passwordHash, role: 'COMPANY_ADMIN' },
+      data: { tenantId, email, firebaseUid, role: 'COMPANY_ADMIN' },
+    });
+  }
+
+  /**
+   * Seeds the tenant's operational HR config with sensible defaults —
+   * 5-day week (Sun/Sat off), one 09:00–18:00 "General" shift, self-service
+   * attendance. The Company Admin tunes these in-app; nothing here is a
+   * commercial/plan concern. Uses the tenant-scoped `hrms_app` connection,
+   * same as seedCompanyAdmin (the platform role has no grants on `public`).
+   */
+  private async seedTenantDefaults(tenantId: string) {
+    const scoped = withTenantContext(this.tenantPrismaRaw, tenantId);
+
+    await scoped.tenantSettings.create({ data: { tenantId } });
+    await scoped.attendanceSettings.create({ data: { tenantId } });
+    await scoped.shift.create({
+      data: {
+        tenantId,
+        name: 'General',
+        type: 'FIXED',
+        startTime: '09:00',
+        endTime: '18:00',
+        isDefault: true,
+      },
     });
   }
 

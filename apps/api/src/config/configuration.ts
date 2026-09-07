@@ -2,13 +2,10 @@ export interface AppConfig {
   port: number;
   nodeEnv: string;
   tenantResolutionMode: 'header' | 'subdomain';
-  jwt: {
-    accessSecret: string;
-    refreshSecret: string;
-    accessTtl: string;
-    refreshTtl: string;
+  firebase: {
+    projectId: string;
+    serviceAccountJson?: string;
   };
-  mfaIssuer: string;
   db: {
     tenantUrl: string;
     platformUrl: string;
@@ -27,13 +24,10 @@ export default (): AppConfig => ({
   port: parseInt(process.env.PORT ?? '3000', 10),
   nodeEnv: process.env.NODE_ENV ?? 'development',
   tenantResolutionMode: (process.env.TENANT_RESOLUTION_MODE as 'header' | 'subdomain') ?? 'header',
-  jwt: {
-    accessSecret: process.env.JWT_ACCESS_SECRET ?? 'dev-only-access-secret-change-me',
-    refreshSecret: process.env.JWT_REFRESH_SECRET ?? 'dev-only-refresh-secret-change-me',
-    accessTtl: process.env.JWT_ACCESS_TTL ?? '15m',
-    refreshTtl: process.env.JWT_REFRESH_TTL ?? '30d',
+  firebase: {
+    projectId: process.env.FIREBASE_PROJECT_ID ?? 'hrms-platform-dev',
+    serviceAccountJson: process.env.FIREBASE_SERVICE_ACCOUNT_JSON,
   },
-  mfaIssuer: process.env.MFA_ISSUER ?? 'HRMS Platform',
   db: {
     tenantUrl: process.env.TENANT_DATABASE_URL as string,
     platformUrl: process.env.PLATFORM_DATABASE_URL as string,

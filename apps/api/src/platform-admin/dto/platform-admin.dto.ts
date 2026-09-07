@@ -1,20 +1,9 @@
-import { IsEmail, IsIn, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
 
-export class PlatformLoginDto {
-  @IsEmail()
-  email!: string;
-
+export class PlatformSessionDto {
   @IsString()
-  password!: string;
-}
-
-export class PlatformMfaVerifyDto {
-  @IsString()
-  mfaChallengeToken!: string;
-
-  @IsString()
-  @MinLength(6)
-  code!: string;
+  @MinLength(1)
+  idToken!: string;
 }
 
 export class CreateTenantDto {
@@ -32,6 +21,15 @@ export class CreateTenantDto {
   @IsString()
   @MinLength(8)
   adminTempPassword!: string;
+
+  /**
+   * Sold plan the tenant starts on. Drives the subscription's entitlements
+   * (enabled modules + feature flags — see platform-admin/entitlements.ts).
+   * Omitted → STARTER. Tenant `status` still begins as TRIAL regardless.
+   */
+  @IsOptional()
+  @IsIn(['STARTER', 'GROWTH', 'ENTERPRISE'])
+  plan?: 'STARTER' | 'GROWTH' | 'ENTERPRISE';
 }
 
 export class UpdateTenantStatusDto {

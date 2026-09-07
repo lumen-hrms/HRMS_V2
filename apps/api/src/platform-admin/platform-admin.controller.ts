@@ -3,8 +3,7 @@ import { PlatformJwtAuthGuard } from '../common/guards/platform-jwt-auth.guard';
 import { PlatformAdminService } from './platform-admin.service';
 import {
   CreateTenantDto,
-  PlatformLoginDto,
-  PlatformMfaVerifyDto,
+  PlatformSessionDto,
   UpdateTenantStatusDto,
 } from './dto/platform-admin.dto';
 
@@ -12,19 +11,12 @@ import {
 export class PlatformAdminController {
   constructor(private readonly service: PlatformAdminService) {}
 
-  @Post('auth/login')
-  login(@Body() dto: PlatformLoginDto) {
-    return this.service.login(dto.email, dto.password);
-  }
-
-  @Post('auth/mfa/verify')
-  verifyMfa(@Body() dto: PlatformMfaVerifyDto) {
-    return this.service.verifyMfa(dto.mfaChallengeToken, dto.code);
-  }
-
-  @Post('auth/mfa/enroll/verify')
-  completeEnrollment(@Body() dto: PlatformMfaVerifyDto) {
-    return this.service.completeEnrollment(dto.mfaChallengeToken, dto.code);
+  @Post('auth/session')
+  async session(@Body() dto: PlatformSessionDto) {
+    // Shape mirrors the tenant AuthController.session response the web app
+    // expects: { status: 'ok', ... }.
+    const admin = await this.service.session(dto.idToken);
+    return { status: 'ok', admin };
   }
 
   @UseGuards(PlatformJwtAuthGuard)

@@ -1,0 +1,207 @@
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { AttendanceService } from './attendance.service';
+import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
+
+/** Minimal fake of the tenant-scoped Prisma surface AttendanceService touches. */
+function buildFakeTenantPrisma(overrides: Record<string, any> = {}) {
+  const client = {
+    attendanceRecord: {
+      findUnique: jest.fn(),
+      upsert: jest.fn((args: any) => ({ id: 'rec-1', ...args.create })),
+      update: jest.fn((args: any) => ({ id: args.where.id, ...args.data })),
+    },
+    attendanceBreak: {
+      findFirst: jest.fn(),
+      create: jest.fn((args: any) => ({ id: 'brk-1', endAt: null, ...args.data })),
+      update: jest.fn((args: any) => ({ id: args.where.id, ...args.data })),
+    },
+    regularizationRequest: {
+      create: jest.fn((args: any) => ({ id: 'reg-1', status: 'PENDING', ...args.data })),
+      findUniqueOrThrow: jest.fn(),
+      update: jest.fn((args: any) => ({ id: args.where.id, ...args.data })),
+    },
+    ...overrides,
+  };
+  return { tenantId: 'tenant-1', client };
+}
+
+function fakeLeave() {
+  return { getBalances: jest.fn().mockResolvedValue([]) };
+}
+
+function user(overrides: Partial<AuthenticatedUser> = {}): AuthenticatedUser {
+  return {
+    sub: 'user-1',
+    tenantId: 'tenant-1',
+    role: 'EMPLOYEE',
+    email: 'e@test.com',
+    employeeId: 'emp-1',
+    ...overrides,
+  };
+}
+
+describe('AttendanceService', () => {
+  beforeEach(() => {
+    // Fixed at 09:05 UTC — inside the 15min grace window, so clock-ins land PRESENT unless a test overrides the time.
+    jest.useFakeTimers().setSystemTime(new Date('2026-03-02T09:05:00Z'));
+  });
+  afterEach(() => jest.useRealTimers());
+
+  describe('clockIn()', () => {
+    it('creates a PRESENT record when within the grace window', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        attendanceRecord: {
+          findUnique: jest.fn().mockResolvedValue(null),
+          upsert: jest.fn((args: any) => ({ id: 'rec-1', ...args.create })),
+        },
+      });
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+
+      const result = await service.clockIn(user());
+      expect(result.status).toBe('PRESENT');
+      expect(result.checkInAt).toBeInstanceOf(Date);
+    });
+
+    it('marks LATE once past the grace window', async () => {
+      jest.setSystemTime(new Date('2026-03-02T09:30:00Z'));
+      const tenantPrisma = buildFakeTenantPrisma({
+        attendanceRecord: {
+          findUnique: jest.fn().mockResolvedValue(null),
+          upsert: jest.fn((args: any) => ({ id: 'rec-1', ...args.create })),
+        },
+      });
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+
+      const result = await service.clockIn(user());
+      expect(result.status).toBe('LATE');
+    });
+
+    it('rejects a second clock-in while already clocked in', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        attendanceRecord: {
+          findUnique: jest.fn().mockResolvedValue({ checkInAt: new Date(), checkOutAt: null }),
+          upsert: jest.fn(),
+        },
+      });
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+
+      await expect(service.clockIn(user())).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects when the caller has no linked employee record', async () => {
+      const tenantPrisma = buildFakeTenantPrisma();
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+      await expect(service.clockIn(user({ employeeId: undefined }))).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+  });
+
+  describe('clockOut()', () => {
+    it('rejects clocking out without having clocked in', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        attendanceRecord: { findUnique: jest.fn().mockResolvedValue(null) },
+      });
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+      await expect(service.clockOut(user())).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects clocking out with an open break', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        attendanceRecord: {
+          findUnique: jest
+            .fn()
+            .mockResolvedValue({ id: 'rec-1', checkInAt: new Date(), checkOutAt: null }),
+        },
+        attendanceBreak: { findFirst: jest.fn().mockResolvedValue({ id: 'brk-1', endAt: null }) },
+      });
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+      await expect(service.clockOut(user())).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('startBreak() / endBreak()', () => {
+    it('starts a break once clocked in, and rejects a second concurrent break', async () => {
+      const record = { id: 'rec-1', checkInAt: new Date(), checkOutAt: null };
+      const tenantPrisma = buildFakeTenantPrisma({
+        attendanceRecord: { findUnique: jest.fn().mockResolvedValue(record) },
+        attendanceBreak: {
+          findFirst: jest
+            .fn()
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce({ id: 'brk-1', endAt: null }),
+          create: jest.fn((args: any) => ({ id: 'brk-1', endAt: null, ...args.data })),
+        },
+      });
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+
+      const started = await service.startBreak(user());
+      expect(started.endAt).toBeNull();
+
+      await expect(service.startBreak(user())).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects starting a break before clocking in', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        attendanceRecord: { findUnique: jest.fn().mockResolvedValue(null) },
+      });
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+      await expect(service.startBreak(user())).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects ending a break when none is in progress', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        attendanceRecord: { findUnique: jest.fn().mockResolvedValue({ id: 'rec-1' }) },
+        attendanceBreak: { findFirst: jest.fn().mockResolvedValue(null) },
+      });
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+      await expect(service.endBreak(user())).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('requestRegularization()', () => {
+    it('creates a PENDING request for the current employee', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        attendanceRecord: { findUnique: jest.fn().mockResolvedValue(null) },
+      });
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+
+      const result = await service.requestRegularization(
+        { targetDate: '2026-03-01', reasonType: 'MISSED_PUNCH_OUT', note: 'forgot' },
+        user(),
+      );
+      expect(result.status).toBe('PENDING');
+      expect(result.employeeId).toBe('emp-1');
+    });
+  });
+
+  describe('cancelRegularization()', () => {
+    it('rejects cancelling someone else’s request', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        regularizationRequest: {
+          findUniqueOrThrow: jest
+            .fn()
+            .mockResolvedValue({ id: 'reg-1', employeeId: 'someone-else', status: 'PENDING' }),
+        },
+      });
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+      await expect(service.cancelRegularization('reg-1', user())).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('rejects cancelling a request that is no longer pending', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        regularizationRequest: {
+          findUniqueOrThrow: jest
+            .fn()
+            .mockResolvedValue({ id: 'reg-1', employeeId: 'emp-1', status: 'APPROVED' }),
+        },
+      });
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+      await expect(service.cancelRegularization('reg-1', user())).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+  });
+});

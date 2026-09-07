@@ -10,13 +10,50 @@
  * `app.current_tenant_id` itself before writing each tenant's rows, exactly
  * like the running API does, to prove the RLS policies work end-to-end
  * even for the owner role.
+ *
+ * User identity now lives in Firebase Auth, not this database — every
+ * user/admin below is created via the Firebase Admin SDK (idempotently:
+ * re-running the seed reuses the existing Firebase account by email) with
+ * `tenantId`/`role` (or `type: 'platform_admin'`) set as custom claims,
+ * and only the resulting `firebaseUid` is persisted here.
  */
 import { PrismaClient, Prisma } from '@prisma/client';
-import * as bcrypt from 'bcrypt';
+import * as admin from 'firebase-admin';
+import { entitlementsForPlan } from '../src/platform-admin/entitlements';
 
 const prisma = new PrismaClient();
 
 const DEMO_PASSWORD = 'Passw0rd!123'; // dev-only, printed to console at the end
+
+if (!admin.apps.length) {
+  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  admin.initializeApp({
+    projectId: process.env.FIREBASE_PROJECT_ID ?? 'hrms-platform-dev',
+    credential: serviceAccountJson
+      ? admin.credential.cert(JSON.parse(serviceAccountJson))
+      : admin.credential.applicationDefault(),
+  });
+}
+const firebaseAuth = admin.auth();
+
+/** Creates the Firebase user if it doesn't exist yet, otherwise reuses it —
+ * makes the seed script safe to re-run against the same emulator/project. */
+async function upsertFirebaseUser(
+  email: string,
+  password: string,
+  claims: Record<string, unknown>,
+): Promise<string> {
+  let uid: string;
+  try {
+    const existing = await firebaseAuth.getUserByEmail(email);
+    uid = existing.uid;
+  } catch {
+    const created = await firebaseAuth.createUser({ email, password });
+    uid = created.uid;
+  }
+  await firebaseAuth.setCustomUserClaims(uid, claims);
+  return uid;
+}
 
 type Tx = Prisma.TransactionClient;
 
@@ -35,10 +72,6 @@ async function withTenant<T>(tenantId: string, fn: (tx: Tx) => Promise<T>): Prom
   });
 }
 
-async function hash(pw: string) {
-  return bcrypt.hash(pw, 12);
-}
-
 interface SeedEmployeeSpec {
   code: string;
   first: string;
@@ -51,6 +84,7 @@ interface SeedEmployeeSpec {
 }
 
 async function seedTenant(name: string, subdomain: string, employees: SeedEmployeeSpec[]) {
+  const growth = entitlementsForPlan('GROWTH');
   const tenant = await prisma.tenant.upsert({
     where: { subdomain },
     update: {},
@@ -58,9 +92,27 @@ async function seedTenant(name: string, subdomain: string, employees: SeedEmploy
       name,
       subdomain,
       status: 'ACTIVE',
-      subscription: { create: { plan: 'GROWTH', seats: 200 } },
+      subscription: {
+        create: {
+          plan: 'GROWTH',
+          seats: 200,
+          enabledModules: growth.enabledModules,
+          features: growth.features as unknown as Prisma.InputJsonValue,
+        },
+      },
     },
   });
+
+  // Resolve every Firebase account first — real network calls, kept outside
+  // the DB transaction below so they can't run into its timeout.
+  const firebaseUidByCode = new Map<string, string>();
+  for (const spec of employees) {
+    const firebaseUid = await upsertFirebaseUser(spec.loginEmail, DEMO_PASSWORD, {
+      tenantId: tenant.id,
+      role: spec.role,
+    });
+    firebaseUidByCode.set(spec.code, firebaseUid);
+  }
 
   await withTenant(tenant.id, async (tx) => {
     const deptNames = [...new Set(employees.map((e) => e.dept))];
@@ -75,16 +127,20 @@ async function seedTenant(name: string, subdomain: string, employees: SeedEmploy
     }
 
     const idByCode = new Map<string, string>();
-    // Pass 1: create users + employees without manager links.
+    // Pass 1: create users + employees without manager links, using the
+    // Firebase uid resolved up front (see below) — external network calls
+    // must never happen inside this DB transaction, or a slow round-trip to
+    // a real Firebase project (unlike the near-instant local emulator) can
+    // outlast Prisma's interactive-transaction timeout.
     for (const spec of employees) {
-      const passwordHash = await hash(DEMO_PASSWORD);
+      const firebaseUid = firebaseUidByCode.get(spec.code)!;
       const user = await tx.user.upsert({
         where: { tenantId_email: { tenantId: tenant.id, email: spec.loginEmail } },
-        update: {},
+        update: { firebaseUid },
         create: {
           tenantId: tenant.id,
           email: spec.loginEmail,
-          passwordHash,
+          firebaseUid,
           role: spec.role,
         },
       });
@@ -151,6 +207,42 @@ async function seedTenant(name: string, subdomain: string, employees: SeedEmploy
       }
     }
 
+    // Tenant HR-config defaults — mirrors PlatformAdminService.seedTenantDefaults
+    // so a seeded tenant looks exactly like a freshly onboarded one.
+    await tx.tenantSettings.upsert({
+      where: { tenantId: tenant.id },
+      update: {},
+      create: { tenantId: tenant.id },
+    });
+    await tx.attendanceSettings.upsert({
+      where: { tenantId: tenant.id },
+      update: {},
+      create: { tenantId: tenant.id },
+    });
+    await tx.shift.upsert({
+      where: { tenantId_name: { tenantId: tenant.id, name: 'General' } },
+      update: {},
+      create: {
+        tenantId: tenant.id,
+        name: 'General',
+        type: 'FIXED',
+        startTime: '09:00',
+        endTime: '18:00',
+        isDefault: true,
+      },
+    });
+    for (const h of [
+      { date: new Date(Date.UTC(year, 0, 26)), name: 'Republic Day' },
+      { date: new Date(Date.UTC(year, 7, 15)), name: 'Independence Day' },
+      { date: new Date(Date.UTC(year, 9, 2)), name: 'Gandhi Jayanti' },
+    ]) {
+      await tx.holiday.upsert({
+        where: { tenantId_date_name: { tenantId: tenant.id, date: h.date, name: h.name } },
+        update: {},
+        create: { tenantId: tenant.id, date: h.date, name: h.name },
+      });
+    }
+
     // One sample pending leave request for the demo to have something in
     // the approvals queue immediately.
     const [firstEmployeeId] = [...idByCode.values()];
@@ -183,11 +275,11 @@ async function seedTenant(name: string, subdomain: string, employees: SeedEmploy
 
 async function seedPlatformAdmin() {
   const email = 'founder@hrms-platform.dev';
-  const passwordHash = await hash(DEMO_PASSWORD);
+  const firebaseUid = await upsertFirebaseUser(email, DEMO_PASSWORD, { type: 'platform_admin' });
   await prisma.platformAdminUser.upsert({
     where: { email },
-    update: {},
-    create: { email, passwordHash, fullName: 'Platform Founder' },
+    update: { firebaseUid },
+    create: { email, firebaseUid, fullName: 'Platform Founder' },
   });
   return email;
 }
@@ -219,12 +311,13 @@ async function main() {
 
   // eslint-disable-next-line no-console
   console.log(`
-Seed complete.
+Seed complete. Every account below is a real Firebase Auth user
+(FIREBASE_AUTH_EMULATOR_HOST must be set for local dev, or these land in
+your real Firebase project).
 
 Platform admin console:
   email:    ${founderEmail}
   password: ${DEMO_PASSWORD}
-  (first login will prompt MFA enrollment)
 
 Tenants (send header  X-Tenant-Subdomain: <subdomain>  in dev mode):
   ${acme.name}  -> subdomain "acme"

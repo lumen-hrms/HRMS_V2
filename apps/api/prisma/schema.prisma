@@ -57,50 +57,56 @@ model Tenant {
   createdAt     DateTime     @default(now()) @map("created_at")
   updatedAt     DateTime     @updatedAt @map("updated_at")
 
-  subscription  Subscription?
+  subscription Subscription?
 
   @@map("tenants")
   @@schema("platform")
 }
 
 model Subscription {
-  id            String           @id @default(uuid()) @db.Uuid
-  tenantId      String           @unique @map("tenant_id") @db.Uuid
-  tenant        Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  plan          SubscriptionPlan @default(TRIAL)
-  seats         Int              @default(50)
-  renewsAt      DateTime?        @map("renews_at")
-  createdAt     DateTime         @default(now()) @map("created_at")
-  updatedAt     DateTime         @updatedAt @map("updated_at")
+  id       String           @id @default(uuid()) @db.Uuid
+  tenantId String           @unique @map("tenant_id") @db.Uuid
+  tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plan     SubscriptionPlan @default(TRIAL)
+  seats    Int              @default(50)
+  renewsAt DateTime?        @map("renews_at")
+
+  // Plan entitlements — what this tenant is ALLOWED to use, derived from
+  // `plan` at onboarding (see platform-admin/entitlements.ts) and re-derived
+  // on plan change. This is the commercial boundary; it is NOT where a
+  // tenant's HR rules live (those are public.tenant_settings et al.).
+  //   enabledModules — e.g. ["CORE_HR","LEAVE","ATTENDANCE","PAYROLL"]
+  //   features       — e.g. { "biometricIntegration": true, "customRoles": false }
+  enabledModules String[] @default([]) @map("enabled_modules")
+  features       Json     @default("{}")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("subscriptions")
   @@schema("platform")
 }
 
 model PlatformAdminUser {
-  id           String    @id @default(uuid()) @db.Uuid
-  email        String    @unique
-  passwordHash String    @map("password_hash")
-  fullName     String    @map("full_name")
-  mfaSecret    String?   @map("mfa_secret")
-  mfaEnabled   Boolean   @default(false) @map("mfa_enabled")
-  failedLoginCount Int   @default(0) @map("failed_login_count")
-  lockedUntil  DateTime? @map("locked_until")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  id          String   @id @default(uuid()) @db.Uuid
+  email       String   @unique
+  firebaseUid String   @unique @map("firebase_uid")
+  fullName    String   @map("full_name")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   @@map("platform_admin_users")
   @@schema("platform")
 }
 
 model PlatformAuditLog {
-  id          String   @id @default(uuid()) @db.Uuid
-  actorEmail  String   @map("actor_email")
-  action      String
-  targetType  String   @map("target_type")
-  targetId    String?  @map("target_id")
-  metadata    Json?
-  createdAt   DateTime @default(now()) @map("created_at")
+  id         String   @id @default(uuid()) @db.Uuid
+  actorEmail String   @map("actor_email")
+  action     String
+  targetType String   @map("target_type")
+  targetId   String?  @map("target_id")
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at")
 
   @@map("platform_audit_log")
   @@schema("platform")
@@ -142,22 +148,103 @@ enum LeaveRequestStatus {
   @@schema("public")
 }
 
-model User {
-  id                String    @id @default(uuid()) @db.Uuid
-  tenantId          String    @map("tenant_id") @db.Uuid
-  email             String
-  passwordHash      String    @map("password_hash")
-  role              UserRole
-  mfaSecret         String?   @map("mfa_secret")
-  mfaEnabled        Boolean   @default(false) @map("mfa_enabled")
-  failedLoginCount  Int       @default(0) @map("failed_login_count")
-  lockedUntil       DateTime? @map("locked_until")
-  isActive          Boolean   @default(true) @map("is_active")
-  refreshTokenHash  String?   @map("refresh_token_hash")
-  createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt @map("updated_at")
+enum AttendanceStatus {
+  PRESENT
+  LATE
+  ON_LEAVE
+  WEEKLY_OFF
+  HOLIDAY
+  ABSENT
+  PENDING_REGULARIZATION
 
-  employee          Employee?
+  @@schema("public")
+}
+
+enum AttendanceSource {
+  WEB
+  // The following are capture channels the punch pipeline is designed to
+  // accept. Only WEB has a live write path today; the rest are wired per
+  // client as needed (BIOMETRIC device integration stays on CLAUDE.md's
+  // deferred list until a specific customer needs it — gate it behind the
+  // subscription's `biometricIntegration` feature flag when you do).
+  BIOMETRIC
+  GPS
+  IMPORT
+  MANUAL
+
+  @@schema("public")
+}
+
+enum PunchDirection {
+  IN
+  OUT
+
+  @@schema("public")
+}
+
+enum ShiftType {
+  FIXED
+  FLEXI
+  ROTATIONAL
+
+  @@schema("public")
+}
+
+enum AttendanceMode {
+  // Employees clock themselves in/out via the web app (startup default).
+  SELF_SERVICE
+  // Attendance comes from an assigned roster + device/import punches; the
+  // self-service clock-in button is hidden.
+  ROSTER
+  // No attendance tracking — leave-only (trust-based). Nightly finalization
+  // still marks holidays/weekly-offs/approved leave for payroll.
+  OFF
+
+  @@schema("public")
+}
+
+enum RegularizationUnactionedBehavior {
+  // At payroll cut-off, regularization requests a manager never actioned
+  // are auto-approved (lenient) ...
+  AUTO_APPROVE
+  // ... or auto-rejected (strict — the day stands as-is, LOP if absent).
+  AUTO_REJECT
+
+  @@schema("public")
+}
+
+enum RegularizationReasonType {
+  MISSED_PUNCH_IN
+  MISSED_PUNCH_OUT
+  WRONG_PUNCH_TIME
+  FORGOT_TO_CLOCK_IN
+  FORGOT_TO_CLOCK_OUT
+  ON_DUTY_FIELD_WORK
+  OTHER
+
+  @@schema("public")
+}
+
+enum RegularizationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+
+  @@schema("public")
+}
+
+model User {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  email       String
+  firebaseUid String   @unique @map("firebase_uid")
+  role        UserRole
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  employee Employee?
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -166,13 +253,13 @@ model User {
 }
 
 model Department {
-  id          String   @id @default(uuid()) @db.Uuid
-  tenantId    String   @map("tenant_id") @db.Uuid
-  name        String
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  employees   Employee[]
+  employees Employee[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -181,36 +268,45 @@ model Department {
 }
 
 model Employee {
-  id                  String           @id @default(uuid()) @db.Uuid
-  tenantId            String           @map("tenant_id") @db.Uuid
-  userId              String?          @unique @map("user_id") @db.Uuid
-  user                User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+  id       String  @id @default(uuid()) @db.Uuid
+  tenantId String  @map("tenant_id") @db.Uuid
+  userId   String? @unique @map("user_id") @db.Uuid
+  user     User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  employeeCode        String           @map("employee_code")
-  firstName           String           @map("first_name")
-  lastName            String           @map("last_name")
-  personalEmail       String?          @map("personal_email")
-  phone               String?
-  dateOfBirth         DateTime?        @map("date_of_birth")
-  gender              String?
+  employeeCode  String    @map("employee_code")
+  firstName     String    @map("first_name")
+  lastName      String    @map("last_name")
+  personalEmail String?   @map("personal_email")
+  phone         String?
+  dateOfBirth   DateTime? @map("date_of_birth")
+  gender        String?
 
-  departmentId        String?          @map("department_id") @db.Uuid
-  department          Department?      @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  departmentId String?     @map("department_id") @db.Uuid
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
 
-  designation         String?
-  dateOfJoining        DateTime?        @map("date_of_joining")
-  employmentStatus    EmploymentStatus @default(ACTIVE) @map("employment_status")
+  designation      String?
+  dateOfJoining    DateTime?        @map("date_of_joining")
+  employmentStatus EmploymentStatus @default(ACTIVE) @map("employment_status")
 
-  reportingManagerId  String?          @map("reporting_manager_id") @db.Uuid
-  reportingManager    Employee?        @relation("ManagerReports", fields: [reportingManagerId], references: [id], onDelete: SetNull)
-  directReports       Employee[]       @relation("ManagerReports")
+  reportingManagerId String?    @map("reporting_manager_id") @db.Uuid
+  reportingManager   Employee?  @relation("ManagerReports", fields: [reportingManagerId], references: [id], onDelete: SetNull)
+  directReports      Employee[] @relation("ManagerReports")
 
-  createdAt           DateTime         @default(now()) @map("created_at")
-  updatedAt           DateTime         @updatedAt @map("updated_at")
+  // Optional per-employee shift override. NULL = the tenant's default shift
+  // (the one `Shift.isDefault = true`). Hospital rota staff get a
+  // ROTATIONAL shift here; desk staff inherit the default.
+  shiftId String? @map("shift_id") @db.Uuid
+  shift   Shift?  @relation(fields: [shiftId], references: [id], onDelete: SetNull)
 
-  leaveBalances       LeaveBalance[]
-  leaveRequestsAsApplicant LeaveRequest[] @relation("Applicant")
-  documents           Document[]
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  leaveBalances            LeaveBalance[]
+  leaveRequestsAsApplicant LeaveRequest[]          @relation("Applicant")
+  documents                Document[]
+  attendanceRecords        AttendanceRecord[]
+  regularizationRequests   RegularizationRequest[]
+  punches                  Punch[]
 
   @@unique([tenantId, employeeCode])
   @@index([tenantId])
@@ -220,16 +316,16 @@ model Employee {
 }
 
 model Document {
-  id           String   @id @default(uuid()) @db.Uuid
-  tenantId     String   @map("tenant_id") @db.Uuid
-  employeeId   String   @map("employee_id") @db.Uuid
-  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  employeeId String   @map("employee_id") @db.Uuid
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
-  label        String
-  storageKey   String   @map("storage_key")
-  mimeType     String   @map("mime_type")
-  sizeBytes    Int      @map("size_bytes")
-  uploadedAt   DateTime @default(now()) @map("uploaded_at")
+  label      String
+  storageKey String   @map("storage_key")
+  mimeType   String   @map("mime_type")
+  sizeBytes  Int      @map("size_bytes")
+  uploadedAt DateTime @default(now()) @map("uploaded_at")
 
   @@index([tenantId])
   @@map("documents")
@@ -237,17 +333,17 @@ model Document {
 }
 
 model LeaveType {
-  id                String   @id @default(uuid()) @db.Uuid
-  tenantId          String   @map("tenant_id") @db.Uuid
-  name              String
-  annualQuota       Decimal  @map("annual_quota") @db.Decimal(6, 2)
-  carryForwardCap   Decimal  @default(0) @map("carry_forward_cap") @db.Decimal(6, 2)
-  requiresApproval  Boolean  @default(true) @map("requires_approval")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
+  id               String   @id @default(uuid()) @db.Uuid
+  tenantId         String   @map("tenant_id") @db.Uuid
+  name             String
+  annualQuota      Decimal  @map("annual_quota") @db.Decimal(6, 2)
+  carryForwardCap  Decimal  @default(0) @map("carry_forward_cap") @db.Decimal(6, 2)
+  requiresApproval Boolean  @default(true) @map("requires_approval")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
-  balances          LeaveBalance[]
-  requests          LeaveRequest[]
+  balances LeaveBalance[]
+  requests LeaveRequest[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -256,17 +352,17 @@ model LeaveType {
 }
 
 model LeaveBalance {
-  id           String    @id @default(uuid()) @db.Uuid
-  tenantId     String    @map("tenant_id") @db.Uuid
-  employeeId   String    @map("employee_id") @db.Uuid
-  employee     Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  leaveTypeId  String    @map("leave_type_id") @db.Uuid
-  leaveType    LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+  id          String    @id @default(uuid()) @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  employeeId  String    @map("employee_id") @db.Uuid
+  employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveTypeId String    @map("leave_type_id") @db.Uuid
+  leaveType   LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
 
-  year         Int
-  accrued      Decimal   @default(0) @db.Decimal(6, 2)
-  used         Decimal   @default(0) @db.Decimal(6, 2)
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  year      Int
+  accrued   Decimal  @default(0) @db.Decimal(6, 2)
+  used      Decimal  @default(0) @db.Decimal(6, 2)
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@unique([tenantId, employeeId, leaveTypeId, year])
   @@index([tenantId])
@@ -275,30 +371,30 @@ model LeaveBalance {
 }
 
 model LeaveRequest {
-  id              String              @id @default(uuid()) @db.Uuid
-  tenantId        String              @map("tenant_id") @db.Uuid
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
 
-  employeeId      String              @map("employee_id") @db.Uuid
-  employee        Employee            @relation("Applicant", fields: [employeeId], references: [id], onDelete: Cascade)
+  employeeId String   @map("employee_id") @db.Uuid
+  employee   Employee @relation("Applicant", fields: [employeeId], references: [id], onDelete: Cascade)
 
-  leaveTypeId     String              @map("leave_type_id") @db.Uuid
-  leaveType       LeaveType           @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+  leaveTypeId String    @map("leave_type_id") @db.Uuid
+  leaveType   LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
 
-  startDate       DateTime            @map("start_date")
-  endDate         DateTime            @map("end_date")
-  days            Decimal             @db.Decimal(6, 2)
-  isLop           Boolean             @default(false) @map("is_lop")
-  reason          String?
+  startDate DateTime @map("start_date")
+  endDate   DateTime @map("end_date")
+  days      Decimal  @db.Decimal(6, 2)
+  isLop     Boolean  @default(false) @map("is_lop")
+  reason    String?
 
-  status          LeaveRequestStatus  @default(PENDING_L1)
+  status LeaveRequestStatus @default(PENDING_L1)
 
-  l1ApproverId    String?             @map("l1_approver_id") @db.Uuid
-  l1DecidedAt     DateTime?           @map("l1_decided_at")
-  l2ApproverId    String?             @map("l2_approver_id") @db.Uuid
-  l2DecidedAt     DateTime?           @map("l2_decided_at")
+  l1ApproverId String?   @map("l1_approver_id") @db.Uuid
+  l1DecidedAt  DateTime? @map("l1_decided_at")
+  l2ApproverId String?   @map("l2_approver_id") @db.Uuid
+  l2DecidedAt  DateTime? @map("l2_decided_at")
 
-  createdAt       DateTime            @default(now()) @map("created_at")
-  updatedAt       DateTime            @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([tenantId])
   @@index([tenantId, employeeId])
@@ -319,5 +415,202 @@ model AuditLog {
 
   @@index([tenantId])
   @@map("audit_log")
+  @@schema("public")
+}
+
+model AttendanceRecord {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  employeeId String   @map("employee_id") @db.Uuid
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  date       DateTime         @db.Date
+  checkInAt  DateTime?        @map("check_in_at")
+  checkOutAt DateTime?        @map("check_out_at")
+  status     AttendanceStatus @default(ABSENT)
+  source     AttendanceSource @default(WEB)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  breaks                 AttendanceBreak[]
+  regularizationRequests RegularizationRequest[]
+
+  @@unique([tenantId, employeeId, date])
+  @@index([tenantId])
+  @@map("attendance_records")
+  @@schema("public")
+}
+
+model AttendanceBreak {
+  id                 String           @id @default(uuid()) @db.Uuid
+  tenantId           String           @map("tenant_id") @db.Uuid
+  attendanceRecordId String           @map("attendance_record_id") @db.Uuid
+  attendanceRecord   AttendanceRecord @relation(fields: [attendanceRecordId], references: [id], onDelete: Cascade)
+
+  startAt   DateTime  @map("start_at")
+  endAt     DateTime? @map("end_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([attendanceRecordId])
+  @@map("attendance_breaks")
+  @@schema("public")
+}
+
+model RegularizationRequest {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+
+  employeeId String   @map("employee_id") @db.Uuid
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  attendanceRecordId String?           @map("attendance_record_id") @db.Uuid
+  attendanceRecord   AttendanceRecord? @relation(fields: [attendanceRecordId], references: [id], onDelete: SetNull)
+
+  targetDate          DateTime                 @map("target_date") @db.Date
+  reasonType          RegularizationReasonType @map("reason_type")
+  requestedCheckInAt  DateTime?                @map("requested_check_in_at")
+  requestedCheckOutAt DateTime?                @map("requested_check_out_at")
+  note                String?
+
+  status     RegularizationStatus @default(PENDING)
+  approverId String?              @map("approver_id") @db.Uuid
+  decidedAt  DateTime?            @map("decided_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@index([tenantId, employeeId])
+  @@map("regularization_requests")
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// TENANT CONFIGURATION — how each tenant's HR rules work. Company Admin
+// owns these (via in-app Settings), NOT the platform operator. Seeded with
+// working defaults on tenant creation (see platform-admin.service.ts) so a
+// new tenant functions before anyone opens Settings. All RLS-scoped like
+// every other public table. See docs/TENANT_CONFIGURATION.md.
+// ─────────────────────────────────────────────────────────────────────────
+
+model TenantSettings {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @unique @map("tenant_id") @db.Uuid
+
+  // IANA zone; wall-clock shift times and "today" boundaries resolve against this.
+  timezone            String @default("Asia/Kolkata")
+  // Days of week that are weekly-offs. 0 = Sunday … 6 = Saturday.
+  weeklyOffDays       Int[]  @default([0, 6]) @map("weekly_off_days")
+  // Day of month the payroll period locks — the only hard deadline the
+  // attendance/regularization auto-resolve flow hangs on.
+  payrollCutoffDay    Int    @default(25) @map("payroll_cutoff_day")
+  // Leave approval chain depth (1 or 2 for V1).
+  leaveApprovalLevels Int    @default(2) @map("leave_approval_levels")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("tenant_settings")
+  @@schema("public")
+}
+
+model Shift {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+
+  name            String
+  type            ShiftType @default(FIXED)
+  // Wall-clock "HH:MM" in the tenant timezone.
+  startTime       String    @map("start_time")
+  endTime         String    @map("end_time")
+  graceMinutes    Int       @default(15) @map("grace_minutes")
+  minHoursFullDay Decimal   @default(8) @map("min_hours_full_day") @db.Decimal(4, 2)
+  minHoursHalfDay Decimal   @default(4) @map("min_hours_half_day") @db.Decimal(4, 2)
+  // For FLEXI shifts: the window that must be covered regardless of start.
+  coreStartTime   String?   @map("core_start_time")
+  coreEndTime     String?   @map("core_end_time")
+  // Exactly one shift per tenant should have this set; it's the fallback
+  // for employees with no explicit `Employee.shiftId`.
+  isDefault       Boolean   @default(false) @map("is_default")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  employees Employee[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("shifts")
+  @@schema("public")
+}
+
+model Holiday {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+
+  date       DateTime @db.Date
+  name       String
+  // Optional/restricted holiday — employee may choose to avail it or not.
+  isOptional Boolean  @default(false) @map("is_optional")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, date, name])
+  @@index([tenantId])
+  @@index([tenantId, date])
+  @@map("holidays")
+  @@schema("public")
+}
+
+model AttendanceSettings {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @unique @map("tenant_id") @db.Uuid
+
+  mode           AttendanceMode     @default(SELF_SERVICE)
+  // Which capture channels are accepted for this tenant. The frontend hides
+  // the web clock-in button when WEB is absent.
+  captureMethods AttendanceSource[] @default([WEB]) @map("capture_methods")
+
+  // Regularization guardrails.
+  regularizationWindowDays Int                              @default(7) @map("regularization_window_days")
+  regularizationMonthlyCap Int                              @default(3) @map("regularization_monthly_cap")
+  unactionedBehavior       RegularizationUnactionedBehavior @default(AUTO_APPROVE) @map("unactioned_behavior")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("attendance_settings")
+  @@schema("public")
+}
+
+// Raw capture events. Source of truth for attendance — a web clock-in, a
+// biometric device webhook, and a CSV import all land here identically, and
+// the (future) nightly finalization job rolls them up into
+// AttendanceRecord. `AttendanceRecord.checkInAt/checkOutAt` remain as a
+// denormalized convenience (first IN / last OUT of the day).
+model Punch {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+
+  employeeId String   @map("employee_id") @db.Uuid
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  at        DateTime
+  direction PunchDirection
+  source    AttendanceSource @default(WEB)
+  // Set for device/import sources: which device, and the provider's own row id.
+  deviceId  String?          @map("device_id")
+  rawRef    String?          @map("raw_ref")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([tenantId, employeeId, at])
+  @@map("punches")
   @@schema("public")
 }

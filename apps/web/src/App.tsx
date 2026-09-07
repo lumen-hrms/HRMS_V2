@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from '@/context/auth-context';
 import { ThemeProvider } from '@/context/theme-context';
+import { ToastProvider } from '@/components/ui/toast';
 import { ProtectedRoute } from '@/components/protected-route';
 import { AppLayout } from '@/components/app-layout';
 import { LoginPage } from '@/pages/login';
@@ -11,11 +12,13 @@ import { EmployeeCreatePage } from '@/pages/employees/create';
 import { OrgChartPage } from '@/pages/org-chart';
 import { DepartmentsPage } from '@/pages/departments';
 import { LeavePage } from '@/pages/leave';
+import { AttendancePage } from '@/pages/attendance';
 import { PlatformAdminConsole } from '@/pages/platform-admin/console';
 
 export default function App() {
   return (
     <ThemeProvider>
+      <ToastProvider>
       <BrowserRouter>
         <Routes>
           <Route path="/platform-admin" element={<PlatformAdminConsole />} />
@@ -39,6 +42,7 @@ export default function App() {
                     <Route path="org-chart" element={<OrgChartPage />} />
                     <Route path="departments" element={<DepartmentsPage />} />
                     <Route path="leave" element={<LeavePage />} />
+                    <Route path="attendance" element={<AttendancePage />} />
                   </Route>
                 </Routes>
               </AuthProvider>
@@ -46,6 +50,7 @@ export default function App() {
           />
         </Routes>
       </BrowserRouter>
+      </ToastProvider>
     </ThemeProvider>
   );
 }

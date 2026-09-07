@@ -50,7 +50,15 @@ the actual DDL.
 
 ## Running it locally
 
-Prerequisites: Docker, Node.js 22+.
+Prerequisites: Docker, Node.js 22+. Auth is Firebase — you either point at a
+**real Firebase project** (default for this repo's local dev) or the local
+**Firebase Auth emulator** (needs a JRE; required by the e2e suite).
+
+`scripts\dev.bat` (Windows) / `./scripts/dev.sh` (macOS/Linux) does the whole
+sequence — Postgres + MinIO, deps, migrate, then the API + web dev servers.
+It reads `apps/api/.env`: if `FIREBASE_AUTH_EMULATOR_HOST` is set it starts
+and seeds against the emulator; otherwise it runs against your real Firebase
+project and skips auto-seed.
 
 ```bash
 # 1. Start Postgres + MinIO
@@ -59,28 +67,61 @@ docker compose up -d
 # 2. API
 cd apps/api
 npm install
-cp .env.example .env          # defaults already match docker-compose.yml
+cp .env.example .env
+#   For REAL Firebase (default): set FIREBASE_PROJECT_ID + FIREBASE_SERVICE_ACCOUNT_JSON,
+#   and DELETE the FIREBASE_AUTH_EMULATOR_HOST line.
+#   For the emulator: keep FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 and run
+#   `npm run emulator` (repo root) in a separate terminal.
 npm run prisma:generate
 npm run prisma:migrate        # applies schema + creates hrms_app/hrms_platform roles + RLS
-npm run prisma:seed           # seeds 3 demo tenants — prints logins at the end
+npm run prisma:seed           # OPTIONAL: seeds 3 demo tenants as Firebase users — prints logins
 npm run start:dev             # http://localhost:3000/api
 
 # 3. Web (separate terminal)
 cd apps/web
 npm install
+cp .env.example .env          # set VITE_FIREBASE_* to the same project; delete
+                              # VITE_FIREBASE_AUTH_EMULATOR_HOST for real Firebase
 npm run dev                   # http://localhost:5173, proxies /api to :3000
 ```
 
-Open http://localhost:5173, and on the login screen enter one of the seeded
-tenant subdomains (`acme`, `beta`, or `gamma`) plus an email/password printed
-by the seed script (all share the password `Passw0rd!123`). Logging in as
-`admin@acme.test` or `hr@acme.test` will prompt MFA enrollment on first
-login — scan the QR code with any TOTP app (Google Authenticator, Authy,
-`oathtool`, etc).
+Open http://localhost:5173, enter a tenant subdomain plus an email/password.
+If you ran the seed, use a subdomain of `acme` / `beta` / `gamma` and any
+seeded account (all share password `Passw0rd!123`). There is no MFA — the
+Firebase ID token is the session.
+
+The **e2e suite always needs the emulator** (`test/utils/fixtures.ts` mints
+test ID tokens from it) — `dev.bat test` / `dev.sh test` will tell you if
+`FIREBASE_AUTH_EMULATOR_HOST` isn't set.
 
 The platform-admin console is a separate route: http://localhost:5173/platform-admin,
-login `founder@hrms-platform.dev` / `Passw0rd!123` (also MFA-gated on first
-login).
+login `founder@hrms-platform.dev` / `Passw0rd!123`.
+
+### Seeded users (dev reference)
+
+Every account below is a real Firebase Auth user (see "Auth" above), created
+idempotently by `npm run prisma:seed`. All 14 tenant users + the platform
+admin share the same password — **dev-only, rotate before any real pilot
+use**, since it's printed in plaintext by the seed script.
+
+| Tenant (subdomain) | Email                  | Role           |
+| ------------------- | ----------------------- | -------------- |
+| — (platform admin)  | `founder@hrms-platform.dev` | Platform Admin |
+| Acme Hospitals (`acme`) | `admin@acme.test`    | Company Admin  |
+| Acme Hospitals (`acme`) | `hr@acme.test`       | HR Manager     |
+| Acme Hospitals (`acme`) | `manager@acme.test`  | Line Manager   |
+| Acme Hospitals (`acme`) | `employee@acme.test` | Employee       |
+| Acme Hospitals (`acme`) | `employee2@acme.test`| Employee       |
+| Acme Hospitals (`acme`) | `auditor@acme.test`  | Auditor        |
+| Beta Textiles (`beta`)  | `admin@beta.test`    | Company Admin  |
+| Beta Textiles (`beta`)  | `hr@beta.test`       | HR Manager     |
+| Beta Textiles (`beta`)  | `manager@beta.test`  | Line Manager   |
+| Beta Textiles (`beta`)  | `employee@beta.test` | Employee       |
+| Gamma Logistics (`gamma`) | `admin@gamma.test` | Company Admin  |
+| Gamma Logistics (`gamma`) | `hr@gamma.test`    | HR Manager     |
+| Gamma Logistics (`gamma`) | `employee@gamma.test` | Employee    |
+
+**Password for all 15 accounts above: `Passw0rd!123`**
 
 **Why a header instead of real subdomains locally?** `TENANT_RESOLUTION_MODE=header`
 in `.env` makes the API resolve the tenant from an `X-Tenant-Subdomain`

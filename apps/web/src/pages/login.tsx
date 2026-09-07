@@ -1,186 +1,118 @@
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/auth-context';
-import { Button } from '@/components/ui/button';
-import { Input, Label } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { getTenantSubdomain, isApiError } from '@/lib/api';
-
-type Step =
-  | { kind: 'credentials' }
-  | { kind: 'mfa'; challengeToken: string }
-  | { kind: 'enroll'; challengeToken: string; qrCodeDataUrl: string };
+import { auth } from '@/lib/firebase';
+import { getTenantSubdomain } from '@/lib/api';
+import { AuthSplitLayout, AuthBanner, AuthField, AuthSubmitButton } from '@/components/auth/auth-split-layout';
+import { AuthResetPanel } from '@/components/auth/auth-reset-panel';
+import { useAuthField } from '@/components/auth/use-auth-form-field';
+import { describeLoginError } from '@/components/auth/auth-errors';
 
 export function LoginPage() {
-  const { login, verifyMfa, completeMfaEnrollment } = useAuth();
+  const { login } = useAuth();
   const navigate = useNavigate();
-  const [subdomain, setSubdomain] = React.useState(getTenantSubdomain() ?? '');
-  const [email, setEmail] = React.useState('');
-  const [password, setPassword] = React.useState('');
-  const [code, setCode] = React.useState('');
-  const [step, setStep] = React.useState<Step>({ kind: 'credentials' });
+  const [screen, setScreen] = React.useState<'signin' | 'reset'>('signin');
+
+  const subdomain = useAuthField('subdomain', getTenantSubdomain() ?? '');
+  const email = useAuthField('email');
+  const password = useAuthField('password');
+  const [showPassword, setShowPassword] = React.useState(false);
+
+  const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [busy, setBusy] = React.useState(false);
+  const [success, setSuccess] = React.useState(false);
 
-  async function handleCredentials(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    setBusy(true);
-    try {
-      const res = await login(subdomain.trim(), email.trim(), password);
-      if (res.status === 'ok') {
-        navigate('/');
-      } else if (res.status === 'mfa_required') {
-        setStep({ kind: 'mfa', challengeToken: res.mfaChallengeToken! });
-      } else if (res.status === 'mfa_enrollment_required') {
-        setStep({
-          kind: 'enroll',
-          challengeToken: res.mfaChallengeToken!,
-          qrCodeDataUrl: res.qrCodeDataUrl!,
-        });
-      }
-    } catch (err) {
-      setError(isApiError(err) ? err.message : 'Login failed');
-    } finally {
-      setBusy(false);
-    }
-  }
+    setSuccess(false);
+    const validSubdomain = subdomain.validateNow();
+    const validEmail = email.validateNow();
+    const validPassword = password.validateNow();
+    if (!validSubdomain || !validEmail || !validPassword) return;
 
-  async function handleMfaVerify(e: React.FormEvent) {
-    e.preventDefault();
-    if (step.kind !== 'mfa') return;
-    setError(null);
-    setBusy(true);
+    setLoading(true);
     try {
-      await verifyMfa(step.challengeToken, code);
-      navigate('/');
+      await login(subdomain.value.trim(), email.value.trim(), password.value);
+      setSuccess(true);
+      setTimeout(() => navigate('/'), 400);
     } catch (err) {
-      setError(isApiError(err) ? err.message : 'Invalid code');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleEnrollVerify(e: React.FormEvent) {
-    e.preventDefault();
-    if (step.kind !== 'enroll') return;
-    setError(null);
-    setBusy(true);
-    try {
-      await completeMfaEnrollment(step.challengeToken, code);
-      navigate('/');
-    } catch (err) {
-      setError(isApiError(err) ? err.message : 'Invalid code');
-    } finally {
-      setBusy(false);
+      setError(describeLoginError(err));
+      setLoading(false);
     }
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <div className="mb-1 flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground font-semibold">
-            H
-          </div>
-          <CardTitle>
-            {step.kind === 'credentials' && 'Sign in to HRMS Platform'}
-            {step.kind === 'mfa' && 'Enter your authenticator code'}
-            {step.kind === 'enroll' && 'Set up two-factor authentication'}
-          </CardTitle>
-          <CardDescription>
-            {step.kind === 'credentials' && 'Enter your company subdomain and credentials.'}
-            {step.kind === 'mfa' && 'Open your authenticator app and enter the 6-digit code.'}
-            {step.kind === 'enroll' &&
-              'Your role requires MFA. Scan this QR code in Google Authenticator or Authy, then enter the code it shows.'}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {step.kind === 'credentials' && (
-            <form onSubmit={handleCredentials} className="flex flex-col gap-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="subdomain">Company subdomain</Label>
-                <Input
-                  id="subdomain"
-                  placeholder="acme"
-                  value={subdomain}
-                  onChange={(e) => setSubdomain(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
-              </div>
-              {error && <p className="text-sm text-destructive">{error}</p>}
-              <Button type="submit" disabled={busy} className="mt-1">
-                {busy ? 'Signing in…' : 'Sign in'}
-              </Button>
-            </form>
-          )}
+    <AuthSplitLayout
+      taglineLines={[
+        'Attendance, leave, and people data in one place — built for teams that move fast.',
+        'One workspace for every team, tenant, and time zone.',
+      ]}
+    >
+      {screen === 'reset' ? (
+        <AuthResetPanel auth={auth} onBack={() => setScreen('signin')} />
+      ) : (
+        <div>
+          <h1 className="m-0 text-[26px] font-bold" style={{ color: 'var(--lumen-text)' }}>
+            Sign in to your workspace
+          </h1>
+          <p className="mb-6 mt-2 text-[14.5px] leading-relaxed" style={{ color: 'var(--lumen-text-secondary)' }}>
+            Enter your workspace details to continue.
+          </p>
 
-          {step.kind === 'mfa' && (
-            <form onSubmit={handleMfaVerify} className="flex flex-col gap-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="code">Authentication code</Label>
-                <Input
-                  id="code"
-                  inputMode="numeric"
-                  autoFocus
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  required
-                />
-              </div>
-              {error && <p className="text-sm text-destructive">{error}</p>}
-              <Button type="submit" disabled={busy}>
-                {busy ? 'Verifying…' : 'Verify'}
-              </Button>
-            </form>
-          )}
+          {error && <AuthBanner kind="error">{error}</AuthBanner>}
+          {success && <AuthBanner kind="success">Signed in — redirecting to your workspace…</AuthBanner>}
 
-          {step.kind === 'enroll' && (
-            <form onSubmit={handleEnrollVerify} className="flex flex-col gap-3">
-              <img
-                src={step.qrCodeDataUrl}
-                alt="MFA enrollment QR code"
-                className="mx-auto h-40 w-40 rounded-md border border-border"
-              />
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="enroll-code">Code from your authenticator app</Label>
-                <Input
-                  id="enroll-code"
-                  inputMode="numeric"
-                  autoFocus
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  required
-                />
-              </div>
-              {error && <p className="text-sm text-destructive">{error}</p>}
-              <Button type="submit" disabled={busy}>
-                {busy ? 'Verifying…' : 'Activate & sign in'}
-              </Button>
-            </form>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+          <form onSubmit={handleSubmit} className="flex flex-col gap-4.5">
+            <AuthField
+              id="subdomain"
+              label="Company subdomain"
+              placeholder="acme"
+              value={subdomain.value}
+              onChange={subdomain.onChange}
+              onBlur={subdomain.onBlur}
+              error={subdomain.error}
+            />
+            <AuthField
+              id="email"
+              label="Email"
+              type="email"
+              placeholder="you@company.com"
+              autoComplete="email"
+              value={email.value}
+              onChange={email.onChange}
+              onBlur={email.onBlur}
+              error={email.error}
+            />
+            <AuthField
+              id="password"
+              label="Password"
+              placeholder="Enter your password"
+              autoComplete="current-password"
+              isPassword
+              showPassword={showPassword}
+              onToggleShow={() => setShowPassword((s) => !s)}
+              value={password.value}
+              onChange={password.onChange}
+              onBlur={password.onBlur}
+              error={password.error}
+            />
+
+            <div className="-mt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setScreen('reset')}
+                className="text-[13px] font-semibold"
+                style={{ color: 'var(--lumen-gold)' }}
+              >
+                Forgot password?
+              </button>
+            </div>
+
+            <AuthSubmitButton loading={loading}>Sign in</AuthSubmitButton>
+          </form>
+        </div>
+      )}
+    </AuthSplitLayout>
   );
 }
