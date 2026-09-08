@@ -1,13 +1,11 @@
 import * as React from 'react';
-import { Construction } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
-import { Card } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { EmptyState } from '@/components/ui/empty-state';
 import { useAuth } from '@/context/auth-context';
 import { USE_MOCK } from '@/lib/leave/client';
 import {
   hasRole,
+  isCompanyAdmin,
   isLeaveAdmin,
   isLeaveApprover,
   hasTeamView,
@@ -23,6 +21,11 @@ import { HolidaysTab } from '@/pages/leave/tabs/holidays';
 import { ApprovalsTab } from '@/pages/leave/tabs/approvals';
 import { TeamCalendarTab } from '@/pages/leave/tabs/team-calendar';
 import { TeamBalancesTab } from '@/pages/leave/tabs/team-balances';
+import { AllRequestsTab } from '@/pages/leave/tabs/all-requests';
+import { LeaveTypesTab } from '@/pages/leave/tabs/leave-types';
+import { BalanceAdjustmentsTab } from '@/pages/leave/tabs/balance-adjustments';
+import { LedgerTab } from '@/pages/leave/tabs/ledger';
+import { SettingsTab } from '@/pages/leave/tabs/settings';
 import type { LeaveRequest } from '@/lib/leave/types';
 
 type TabId =
@@ -81,6 +84,8 @@ export function LeavePage() {
   }, []);
 
   const canManageHolidays = isLeaveAdmin(user);
+  const readOnlyAdminScreens = isAuditor(user);
+  const readOnlySettings = !isCompanyAdmin(user);
 
   return (
     <div className="flex flex-col gap-5">
@@ -122,20 +127,21 @@ export function LeavePage() {
           <TeamBalancesTab />
         </TabsContent>
 
-        {/* Built in later passes of this session — HR/Admin, Auditor. */}
-        {(['all-requests', 'leave-types', 'balance-adjustments', 'ledger', 'settings'] as TabId[]).map(
-          (id) => (
-            <TabsContent key={id} value={id}>
-              <Card>
-                <EmptyState
-                  icon={Construction}
-                  title="Screen coming up in this build pass"
-                  description="The role-by-role Leave screens are being added in order: Employee → Line Manager → HR / Company Admin → Auditor."
-                />
-              </Card>
-            </TabsContent>
-          ),
-        )}
+        <TabsContent value="all-requests">
+          <AllRequestsTab readOnly={readOnlyAdminScreens} refreshKey={refreshKey} onDecided={bump} />
+        </TabsContent>
+        <TabsContent value="leave-types">
+          <LeaveTypesTab readOnly={readOnlyAdminScreens} />
+        </TabsContent>
+        <TabsContent value="balance-adjustments">
+          <BalanceAdjustmentsTab />
+        </TabsContent>
+        <TabsContent value="ledger">
+          <LedgerTab />
+        </TabsContent>
+        <TabsContent value="settings">
+          <SettingsTab readOnly={readOnlySettings} />
+        </TabsContent>
       </Tabs>
 
       <RequestDetailSheet request={detail} open={detailOpen} onOpenChange={setDetailOpen} />

@@ -100,12 +100,16 @@ Tab visibility is centralised in `apps/web/src/pages/leave/index.tsx`
 
 | Slice | Bar | State |
 |---|---|---|
-| **Overall (Leave FE)** | `██████████████░░░░░░` ~72% | in progress |
+| **Overall (Leave FE)** | `████████████████████` 100% | ✅ done |
 | Foundation (primitives, role nav, `lib/leave` contract/mock) | `████████████████████` 100% | ✅ done |
 | Employee — Overview, Apply, My Requests, Holidays (read) | `████████████████████` 100% | ✅ done |
 | Line Manager — Approvals (L1), Team Calendar, Team Balances | `████████████████████` 100% | ✅ done |
-| HR / Company Admin — All Requests, Approvals (L2), Leave Types CRUD + initialize, Holidays manage, Balance Adjustments, Settings | `░░░░░░░░░░░░░░░░░░░░` 0% | next |
-| Auditor — read-only All Requests, Leave Types, Balance Ledger | `░░░░░░░░░░░░░░░░░░░░` 0% | queued |
+| HR / Company Admin — All Requests, Approvals (L2), Leave Types CRUD + initialize, Holidays manage, Balance Adjustments, Settings | `████████████████████` 100% | ✅ done |
+| Auditor — read-only All Requests, Leave Types, Balance Ledger, Settings | `████████████████████` 100% | ✅ done (same components, `readOnly` prop) |
+
+All 12 role×tab cells are now wired to `leaveApi` — still running against the
+mock client by default (`VITE_LEAVE_MOCK`); see "Contract deltas still open"
+above for the response-shape gaps to resolve when flipping to live.
 
 When a slice completes, also move the module bar in `docs/MODULE_SPECS.md` §
 status table (row 4) to match.
@@ -162,6 +166,39 @@ report, column per leave type, cell = days available
 (`accrued + carried − used − pending`). Amber ≤ 2 days, red < 0. Row expands to
 the per-type accrued/carried/used/pending breakdown. Year switcher.
 
+### Screen contracts — HR / Company Admin / Auditor (built)
+
+**All Requests** (`tabs/all-requests.tsx`, shared with Auditor read-only)
+Already documented in the Employee/Line Manager section above by
+implementation — wired into the tab shell as of this pass. `readOnly` hides
+the detail sheet's decide action for Auditor.
+
+**Leave Types** (`tabs/leave-types.tsx`)
+`GET types` table (name, annual quota, carry-forward cap, accrual frequency,
+requires-approval). Admin-only: **Add type** / **Edit** dialogs (`POST`/`PATCH
+types`) exposing only the 4 backend-persisted fields — the rest of the
+frontend `LeaveType` shape (`code`, `colorToken`, `genderRestriction`, …) is
+auto-derived on create rather than surfaced as form fields (contract delta,
+see above). Per-row **Initialize year** dialog → `POST
+types/:id/initialize/:year`. Auditor: table only, no actions.
+
+**Balance Adjustments** (`tabs/balance-adjustments.tsx`, Admin-only — not
+shown to Auditor)
+A form (employee, leave type, year, signed delta, note) → `POST
+balances/adjust`; below it, a history table filtered client-side from
+`GET balances/ledger` to `source === 'HR_ADJUSTMENT'`, refetched after every
+submit.
+
+**Balance Ledger** (`tabs/ledger.tsx`, shared with Auditor — always read-only
+regardless of role)
+Filter bar (employee, leave type) over `GET balances/ledger`; table with
+colored credit/debit deltas and a source `Badge`.
+
+**Settings** (`tabs/settings.tsx`)
+`GET`/`PATCH settings` — approval levels (1 or 2), allow-LOP-requests
+checkbox, fiscal-year-start-month. Company Admin edits; everyone else who can
+reach the tab (Auditor) sees the same form disabled, no Save button.
+
 ## Test hooks (for the QA hire)
 
 - Log in as each seeded role (`acme` tenant, password `Passw0rd!123`) — the
@@ -179,3 +216,12 @@ the per-type accrued/carried/used/pending breakdown. Year switcher.
   new status without a manual refresh.
 - Team Calendar / Team Balances scope: Line Manager sees only reports; HR /
   Company Admin see everyone.
+- Adding/editing a leave type reflects immediately in that table and in the
+  Apply tab's type dropdown; Initialize year toasts the seeded-employee count.
+- A balance adjustment appears in both its own screen's history and the
+  Ledger tab with `source: HR_ADJUSTMENT`.
+- Auditor sees Balance Ledger and Leave Types read-only, does **not** see
+  Balance Adjustments in the tab bar at all, and Settings renders disabled
+  with no Save button.
+- Verified end-to-end against a real login (Firebase + seeded `acme` tenant)
+  as HR Manager, Company Admin, and Auditor — not just mock-mode unit checks.

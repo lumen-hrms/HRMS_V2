@@ -30,8 +30,9 @@
 > closure — Line Manager visibility, holiday calendar, attachments,
 > configurable approval levels + escalation timers (new BullMQ `leave`
 > queue / Redis), a minimal accrual job, and the remaining planned
-> endpoints, see §4; + in-progress Leave UI rebuild, see
-> `docs/LEAVE_UI_SPECS.md`).
+> endpoints; + the Leave Management HR/Company Admin/Auditor frontend
+> screens (Leave Types, Balance Adjustments, Ledger, Settings, and wiring
+> `all-requests.tsx` in), closing the frontend role×tab matrix — see §4).
 >
 > **Keep the status table + per-module progress bars current on every change** —
 > if a commit moves a module, move its bar (status mark, ASCII bar, %), its
@@ -54,7 +55,7 @@
 | 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ | `███████████████████░` 97% — auth/RBAC/tenancy live; `access` module wired (Users, role/status/reset, login+access audit, My Account) with e2e RBAC + append-only tests; `LoginAuditEntry` table written on every session outcome. Remaining: `BAD_CREDENTIALS`/`TENANT_SUSPENDED` not server-observable (§1 gaps) |
 | 2. Platform Admin | ✅ | `██████████████████░░` 90% |
 | 3. Employee Master + Org Structure | 🟡 | `█████████████████░░░` 85% |
-| 4. Leave Management | 🟡 | `███████████████████░` 93% — BE ~95% (all 6 tracked backend gaps closed: LM visibility, holidays, attachments, configurable approval levels + escalation timers, accrual job, missing endpoints); FE rebuild underway (foundation + Employee + Line Manager screens done; HR / Company Admin / Auditor screens next, still on `VITE_LEAVE_MOCK`) |
+| 4. Leave Management | 🟡 | `████████████████████` 97% — BE ~95% (all 6 tracked backend gaps closed: LM visibility, holidays, attachments, configurable approval levels + escalation timers, accrual job, missing endpoints); FE 100% of the role×tab matrix wired to `leaveApi` (still on `VITE_LEAVE_MOCK`, and a few response-shape contract deltas remain before flipping to live — see `docs/LEAVE_UI_SPECS.md`) |
 | 5. Attendance & Time Tracking | 🟡 | `███████████░░░░░░░░░░` 55% |
 | 6. Dashboard | ✅ | `█████████████████░░░` 85% |
 | 7. Payroll Engine | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
@@ -339,9 +340,10 @@ must validate and report per-row rather than fail the batch.
 **UI prompt:** `docs/ui-build-prompts/04-leave-management.md` ·
 **API contract:** `docs/LEAVE_UI_SPECS.md`
 **Status:** 🟡 — BE ~95% (the 6 tracked backend gaps are closed; remaining
-gap is FE wiring + comp-off/attendance-sync, deliberately deferred); FE
-being rebuilt role-by-role (UI-first). Progress + per-screen contract:
-`docs/LEAVE_UI_SPECS.md`.
+gap is comp-off/attendance-sync, deliberately deferred); FE 100% of the
+role×tab matrix wired to `leaveApi` (all screens built, still running
+against the mock client — see `docs/LEAVE_UI_SPECS.md` for the
+response-shape deltas to close before flipping `VITE_LEAVE_MOCK` off).
 **Code:** `apps/api/src/leave` (service/controller + `leave-escalation.processor.ts` /
 `leave-accrual.processor.ts` on a new BullMQ `leave` queue — see `docker-compose.yml`'s
 `redis` service), `apps/web/src/pages/leave`, `apps/web/src/lib/leave` (typed
@@ -428,10 +430,10 @@ attendance and flag LOP when the balance is short.
 4. Richer `LeaveType` config (gender restriction, min notice, encashment,
    short `code`) — frontend-only today; low priority until a customer asks.
 5. Mid-year proration for new joiners in the accrual job.
-6. Flip `apps/web/src/lib/leave` off `VITE_LEAVE_MOCK` now that the backend
-   contract is live, and wire `all-requests.tsx` / Leave Types CRUD /
-   Balance Adjustments / Ledger / Settings tabs into `pages/leave/index.tsx`
-   (currently placeholder — see `docs/LEAVE_UI_SPECS.md`).
+6. Flip `apps/web/src/lib/leave` off `VITE_LEAVE_MOCK` now that both the
+   backend and every frontend screen are wired — first reconcile the
+   response-shape deltas in `docs/LEAVE_UI_SPECS.md` (ledger/approvals
+   return raw Prisma shapes today, not the frontend's denormalized ones).
 
 ---
 
