@@ -128,6 +128,22 @@ enum UserRole {
   @@schema("public")
 }
 
+// Outcome of a POST /api/auth/session attempt. Only outcomes the server
+// actually observes are represented — BAD_CREDENTIALS happens entirely in
+// the Firebase client SDK and never reaches us (see
+// docs/modules/01_IDENTITY_AND_ACCESS.md §9). TENANT_SUSPENDED is rejected
+// pre-auth in TenantResolutionMiddleware and is intentionally not written
+// per-request; the operator's suspend/resume action is logged once in
+// platform.platform_audit_log instead.
+enum LoginOutcome {
+  SUCCESS
+  USER_INACTIVE
+  CLAIM_MISMATCH
+  TOKEN_EXPIRED
+
+  @@schema("public")
+}
+
 enum EmploymentStatus {
   ACTIVE
   ON_LEAVE
@@ -415,6 +431,29 @@ model AuditLog {
 
   @@index([tenantId])
   @@map("audit_log")
+  @@schema("public")
+}
+
+// Append-only record of every server-observed sign-in attempt (functional
+// expectation #8, module 01). hrms_app holds SELECT + INSERT on this table
+// only — no UPDATE/DELETE grant — and it is RLS-scoped like every other
+// tenant table. Written by AuthService.session() on each outcome branch;
+// read by GET /api/access/audit?feed=login. 2-year retention (enforced by a
+// later scheduled purge, not yet built).
+model LoginAuditEntry {
+  id        String       @id @default(uuid()) @db.Uuid
+  tenantId  String       @map("tenant_id") @db.Uuid
+  email     String
+  userId    String?      @map("user_id") @db.Uuid
+  outcome   LoginOutcome
+  ipAddress String?      @map("ip_address")
+  userAgent String?      @map("user_agent")
+  at        DateTime     @default(now())
+
+  @@index([tenantId])
+  @@index([tenantId, at])
+  @@index([tenantId, userId, outcome])
+  @@map("login_audit_entries")
   @@schema("public")
 }
 

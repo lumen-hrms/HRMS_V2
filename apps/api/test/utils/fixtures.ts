@@ -13,50 +13,121 @@ export const superuserPrisma = new PrismaClient();
 
 export const TEST_PASSWORD = 'Test-Passw0rd!1';
 
+// --- Firebase (real project — no emulator) --------------------------------
+//
+// Tests run against the real Firebase project in FIREBASE_PROJECT_ID, using
+// the Admin SDK (service-account creds) to create/manage users and the
+// Identity Toolkit REST API (web API key) to sign one in for a real,
+// verifiable ID token — the exact artifact `verifyIdToken` checks in prod.
+// Every Firebase user a test creates is tracked and deleted in
+// cleanupTenantFixture / afterAll so the project's user list stays clean.
+
+const FIREBASE_WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY;
+if (!FIREBASE_WEB_API_KEY) {
+  throw new Error('FIREBASE_WEB_API_KEY is not set — e2e tests sign in against real Firebase');
+}
+
 if (!admin.apps.length) {
-  admin.initializeApp({ projectId: process.env.FIREBASE_PROJECT_ID ?? 'hrms-platform-dev' });
+  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  admin.initializeApp({
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    credential: serviceAccountJson
+      ? admin.credential.cert(JSON.parse(serviceAccountJson))
+      : admin.credential.applicationDefault(),
+  });
 }
 const firebaseAuth = admin.auth();
 
+/** UIDs of every Firebase user created by the helpers below, for teardown. */
+const createdUids = new Set<string>();
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 /**
- * Creates a real Firebase user against the Auth Emulator (FIREBASE_AUTH_
- * EMULATOR_HOST must be set — see test/jest-e2e setup) with the given
- * custom claims, so tests exercise the exact same `verifyIdToken` path
- * production traffic does — no bcrypt/JWT test doubles.
+ * Retries a Firebase call through the throttling real Firebase applies to
+ * bursts of auth operations (`QUOTA_EXCEEDED`, `TOO_MANY_ATTEMPTS_TRY_LATER`,
+ * HTTP 429). Exponential backoff, ~5 attempts (~15s worst case). Anything
+ * else rethrows immediately.
+ */
+async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      lastErr = err;
+      const msg = `${err?.code ?? ''} ${err?.message ?? ''}`;
+      const throttled =
+        err?.code === 'auth/too-many-requests' ||
+        /TOO_MANY_ATTEMPTS|QUOTA_EXCEEDED|RESOURCE_EXHAUSTED|rate|429/i.test(msg);
+      if (!throttled) throw err;
+      await sleep(500 * 2 ** attempt);
+    }
+  }
+  throw new Error(`${label}: still throttled after retries — ${String(lastErr)}`);
+}
+
+/**
+ * Creates a real Firebase user (Admin SDK) with the given custom claims. If
+ * a prior crashed run left the email behind, it's replaced rather than
+ * failing the run.
  */
 export async function createFirebaseTestUser(
   email: string,
   claims: Record<string, unknown>,
   password = TEST_PASSWORD,
 ): Promise<string> {
-  const created = await firebaseAuth.createUser({ email, password });
-  await firebaseAuth.setCustomUserClaims(created.uid, claims);
-  return created.uid;
+  const uid = await withRetry(`createUser ${email}`, async () => {
+    try {
+      const created = await firebaseAuth.createUser({ email, password });
+      return created.uid;
+    } catch (err: any) {
+      if (err?.code === 'auth/email-already-exists') {
+        const existing = await firebaseAuth.getUserByEmail(email);
+        await firebaseAuth.updateUser(existing.uid, { password, disabled: false });
+        return existing.uid;
+      }
+      throw err;
+    }
+  });
+  await withRetry(`setClaims ${email}`, () => firebaseAuth.setCustomUserClaims(uid, claims));
+  createdUids.add(uid);
+  return uid;
 }
 
 /**
- * Signs in against the Auth Emulator's REST endpoint to obtain a real,
- * verifiable ID token — the Admin SDK can create/manage users but can't
- * sign one in itself, so this is the emulator equivalent of what the
- * Firebase Web SDK's `signInWithEmailAndPassword` does in the browser.
+ * Signs in against the Identity Toolkit REST endpoint to obtain a real ID
+ * token — the Admin SDK can manage users but can't sign one in, so this is
+ * the server-side equivalent of the Web SDK's `signInWithEmailAndPassword`.
  */
 export async function getIdTokenForEmail(email: string, password = TEST_PASSWORD): Promise<string> {
-  const host = process.env.FIREBASE_AUTH_EMULATOR_HOST;
-  if (!host) throw new Error('FIREBASE_AUTH_EMULATOR_HOST is not set — tests require the emulator');
+  return withRetry(`signIn ${email}`, async () => {
+    const res = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${FIREBASE_WEB_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, returnSecureToken: true }),
+      },
+    );
+    const body = await res.json();
+    if (!res.ok) {
+      const code = body?.error?.message ?? `HTTP ${res.status}`;
+      const err = new Error(`Firebase sign-in failed for ${email}: ${JSON.stringify(body)}`);
+      (err as any).code = code;
+      throw err;
+    }
+    return body.idToken as string;
+  });
+}
 
-  const res = await fetch(
-    `http://${host}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, returnSecureToken: true }),
-    },
-  );
-  const body = await res.json();
-  if (!res.ok) {
-    throw new Error(`Emulator sign-in failed for ${email}: ${JSON.stringify(body)}`);
+/** Best-effort delete of every Firebase user these helpers created. */
+export async function deleteTrackedFirebaseUsers() {
+  const uids = [...createdUids];
+  createdUids.clear();
+  for (let i = 0; i < uids.length; i += 1000) {
+    await firebaseAuth.deleteUsers(uids.slice(i, i + 1000)).catch(() => undefined);
   }
-  return body.idToken as string;
 }
 
 export interface TenantFixture {
@@ -93,9 +164,8 @@ export async function createTenantFixture(label: string): Promise<TenantFixture>
   const managerEmail = `manager+${subdomain}@example.test`;
   const employeeEmail = `employee+${subdomain}@example.test`;
 
-  // AUDITOR/LINE_MANAGER/EMPLOYEE (none are MFA-relevant now that MFA is
-  // gone entirely) so the tenant-isolation suite can exercise "full tenant
-  // visibility" assertions with plain Firebase-emulator accounts.
+  // The shared fixture makes AUDITOR / LINE_MANAGER / EMPLOYEE so the
+  // tenant-isolation suite can exercise "full tenant visibility" assertions.
   const adminUid = await createFirebaseTestUser(adminEmail, {
     tenantId: tenant.id,
     role: 'AUDITOR',
@@ -170,6 +240,18 @@ export async function createTenantFixture(label: string): Promise<TenantFixture>
 }
 
 export async function cleanupTenantFixture(tenantId: string) {
+  // Delete this tenant's Firebase users first (they're the only thing that
+  // outlives a DB wipe — everything else is in Postgres).
+  const users = await superuserPrisma.user.findMany({
+    where: { tenantId },
+    select: { firebaseUid: true },
+  });
+  const uids = users.map((u) => u.firebaseUid).filter(Boolean);
+  if (uids.length) {
+    await firebaseAuth.deleteUsers(uids).catch(() => undefined);
+    uids.forEach((u) => createdUids.delete(u));
+  }
+
   // There is deliberately no real foreign key from platform.tenants into
   // any `public` table (the two schemas are fully decoupled), so deleting
   // the tenant row does NOT cascade into tenant business data — clean up
@@ -187,6 +269,7 @@ export async function cleanupTenantFixture(tenantId: string) {
     data: { reportingManagerId: null },
   });
   await superuserPrisma.employee.deleteMany({ where: { tenantId } });
+  await superuserPrisma.loginAuditEntry.deleteMany({ where: { tenantId } });
   await superuserPrisma.user.deleteMany({ where: { tenantId } });
   await superuserPrisma.department.deleteMany({ where: { tenantId } });
   await superuserPrisma.shift.deleteMany({ where: { tenantId } });

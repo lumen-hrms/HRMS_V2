@@ -6,11 +6,11 @@
  * `docs/modules/01_IDENTITY_AND_ACCESS.md` §9). Screens only ever import
  * from here.
  *
- * `USE_MOCK` (default: on) routes everything through the fixture store so the
- * whole Access surface is runnable before the backend lands. Flip via
- * `VITE_ACCESS_MOCK=false` once `GET /api/access/users`, `PATCH .../role`,
- * `PATCH .../status`, `POST .../password-reset` and `GET /api/access/audit`
- * exist; the `planned` ones will 404 until then.
+ * The NestJS `access` module is live (`GET /api/access/users`, `/access/me`,
+ * `PATCH .../role`, `PATCH .../status`, `POST .../password-reset`,
+ * `GET /api/access/audit`, `GET .../:id/activity`), so `USE_MOCK` now
+ * defaults to **off**. Set `VITE_ACCESS_MOCK=true` to force the in-memory
+ * fixture store back on (design review, offline, storybook).
  *
  * Server-side rules this client mirrors so the mock behaves like the real API
  * (all are also enforced by the backend guard chain / service layer):
@@ -22,14 +22,11 @@
  */
 import { api } from '@/lib/api';
 import { assignableRoles, ROLE_LABELS, type Role } from '@/lib/roles';
-import {
-  makeAccessAudit,
-  makeLoginAudit,
-  makeUsers,
-} from './fixtures';
+import { makeAccessAudit, makeLoginAudit, makeUsers, MOCK_TENANT_NAME } from './fixtures';
 import type {
   AccessAuditEntry,
   AccessAuditFilter,
+  AccessSelf,
   AccessUser,
   ChangeRoleInput,
   LoginAuditEntry,
@@ -37,7 +34,7 @@ import type {
   SetUserStatusInput,
 } from './types';
 
-export const USE_MOCK = import.meta.env.VITE_ACCESS_MOCK !== 'false';
+export const USE_MOCK = import.meta.env.VITE_ACCESS_MOCK === 'true';
 
 /** Who is making the call — the real API reads this from the bearer token. */
 export interface AccessCtx {
@@ -85,7 +82,17 @@ function inRange(iso: string, from?: string, to?: string): boolean {
 // ---------------------------------------------------------------------------
 
 export const accessApi = {
-  /** `GET /api/access/users` · Company Admin, HR Manager, Auditor · planned */
+  /** `GET /api/access/me` · any authenticated tenant user · live */
+  getMe(): Promise<AccessSelf> {
+    if (USE_MOCK) {
+      const self =
+        store.users.find((u) => u.role === 'COMPANY_ADMIN' && u.isActive) ?? store.users[0];
+      return delay({ ...clone(self), tenantName: MOCK_TENANT_NAME });
+    }
+    return api.get<AccessSelf>('/access/me');
+  },
+
+  /** `GET /api/access/users` · Company Admin, HR Manager, Auditor · live */
   listUsers(): Promise<AccessUser[]> {
     if (USE_MOCK) {
       return delay(
@@ -95,7 +102,7 @@ export const accessApi = {
     return api.get<AccessUser[]>('/access/users');
   },
 
-  /** `PATCH /api/access/users/:id/role` · Company Admin only · planned */
+  /** `PATCH /api/access/users/:id/role` · Company Admin only · live */
   changeRole(input: ChangeRoleInput, ctx: AccessCtx): Promise<AccessUser> {
     if (USE_MOCK) {
       const u = store.users.find((x) => x.id === input.userId);
@@ -141,7 +148,7 @@ export const accessApi = {
     });
   },
 
-  /** `PATCH /api/access/users/:id/status` · Company Admin, HR Manager · planned */
+  /** `PATCH /api/access/users/:id/status` · Company Admin, HR Manager · live */
   setStatus(input: SetUserStatusInput, ctx: AccessCtx): Promise<AccessUser> {
     if (USE_MOCK) {
       const u = store.users.find((x) => x.id === input.userId);
@@ -183,7 +190,7 @@ export const accessApi = {
     });
   },
 
-  /** `POST /api/access/users/:id/password-reset` · Company Admin, HR Manager · planned */
+  /** `POST /api/access/users/:id/password-reset` · Company Admin, HR Manager · live */
   sendPasswordReset(userId: string, ctx: AccessCtx): Promise<{ email: string }> {
     if (USE_MOCK) {
       const u = store.users.find((x) => x.id === userId);
@@ -204,7 +211,7 @@ export const accessApi = {
     return api.post<{ email: string }>(`/access/users/${userId}/password-reset`);
   },
 
-  /** `GET /api/access/audit?feed=login` · Company Admin, Auditor · planned */
+  /** `GET /api/access/audit?feed=login` · Company Admin, Auditor · live */
   loginAudit(filter: LoginAuditFilter = {}): Promise<LoginAuditEntry[]> {
     if (USE_MOCK) {
       let rows = clone(store.loginAudit);
@@ -224,7 +231,7 @@ export const accessApi = {
     return api.get<LoginAuditEntry[]>(`/access/audit?${qs}`);
   },
 
-  /** `GET /api/access/audit?feed=access` · Company Admin, Auditor · planned */
+  /** `GET /api/access/audit?feed=access` · Company Admin, Auditor · live */
   accessAudit(filter: AccessAuditFilter = {}): Promise<AccessAuditEntry[]> {
     if (USE_MOCK) {
       let rows = clone(store.accessAudit);

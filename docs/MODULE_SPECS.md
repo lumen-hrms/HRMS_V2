@@ -21,10 +21,13 @@
 > spec draft that is no longer maintained — ignore them; this file and the
 > code are the source of truth.)
 >
-> **Last synced to code:** 2026-09-08 (commit `36f5a1c` + Identity & Access
-> management UI — Users / Audit / My Account, on a mock client pending the
-> `/api/access/*` endpoints; + in-progress Leave UI rebuild, see
-> `docs/LEAVE_UI_SPECS.md`).
+> **Last synced to code:** 2026-09-08 (commit `dbd71f2` + Identity & Access
+> **backend**: `access` module (`GET /api/access/users` · `/access/me` ·
+> `PATCH .../role` · `PATCH .../status` · `POST .../password-reset` ·
+> `GET /api/access/audit` · `.../:id/activity`), `LoginAuditEntry` table +
+> append-only login-audit writes on `POST /api/auth/session`,
+> `VITE_ACCESS_MOCK` now defaults **off**; + in-progress Leave UI rebuild,
+> see `docs/LEAVE_UI_SPECS.md`).
 >
 > **Keep the status table + per-module progress bars current on every change** —
 > if a commit moves a module, move its bar (status mark, ASCII bar, %), its
@@ -44,7 +47,7 @@
 
 | Module | Status | Progress |
 |---|---|---|
-| 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ / 🟡 | `██████████████████░░` 90% — auth/RBAC/tenancy live; access-management UI (Users, role/status/reset, login+access audit, My Account) built on a mock client; `/api/access/*` endpoints + `LoginAuditEntry` table still not wired |
+| 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ | `███████████████████░` 97% — auth/RBAC/tenancy live; `access` module wired (Users, role/status/reset, login+access audit, My Account) with e2e RBAC + append-only tests; `LoginAuditEntry` table written on every session outcome. Remaining: `BAD_CREDENTIALS`/`TENANT_SUSPENDED` not server-observable (§1 gaps); Line-Manager leave scoping (§4) |
 | 2. Platform Admin | ✅ | `██████████████████░░` 90% |
 | 3. Employee Master + Org Structure | 🟡 | `█████████████████░░░` 85% |
 | 4. Leave Management | 🟡 | `█████████████████░░░` 86% — BE ~80%; FE rebuild underway (foundation + Employee + Line Manager screens done; HR / Company Admin / Auditor screens next) |
@@ -55,7 +58,7 @@
 | 9. Documents | 🟡 | `████████████░░░░░░░░` 60% (lives inside Employee Master today) |
 | 10. Notifications | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
 | 11. Reports & Analytics | 🔴 | `██░░░░░░░░░░░░░░░░░░` 10% (only the Dashboard aggregates exist) |
-| 12. Audit Log | 🟡 | `███░░░░░░░░░░░░░░░░░` 15% (tables exist, not written to) |
+| 12. Audit Log | 🟡 | `█████░░░░░░░░░░░░░░░` 25% — `login_audit_entries` + `audit_log` are append-only (no `UPDATE`/`DELETE` grant) and written by Identity & Access (sign-in outcomes, role/status/reset/login-created); no aggregation/retention-purge/UI yet |
 | 13. Tenant Configuration | 🟡 | `██████░░░░░░░░░░░░░░` 30% — schema + onboarding defaults landed; guard, Settings UI, engine wiring next. See `docs/TENANT_CONFIGURATION.md` |
 
 Deferred to a later phase — **do not build without a scope discussion**
@@ -96,9 +99,10 @@ live e-filing APIs, SSO.
 
 **Deep spec:** `docs/modules/01_IDENTITY_AND_ACCESS.md` ·
 **UI prompt:** `docs/ui-build-prompts/01-identity-access.md`
-**Status:** ✅ auth/RBAC/tenancy · 🟡 access-management UI built on a mock
-client (`VITE_ACCESS_MOCK`) — `/api/access/*` + `LoginAuditEntry` not wired
-**Code:** `apps/api/src/auth`, `apps/api/src/firebase`,
+**Status:** ✅ auth/RBAC/tenancy · ✅ `access` module wired
+(`/api/access/*`) with e2e RBAC + append-only tests · ✅ `LoginAuditEntry`
+written on every session outcome · `VITE_ACCESS_MOCK` defaults off
+**Code:** `apps/api/src/auth`, `apps/api/src/access`, `apps/api/src/firebase`,
 `apps/api/src/common/{guards,decorators,tenancy}`, `apps/api/src/prisma`,
 `apps/web/src/pages/access`, `apps/web/src/lib/access`
 
@@ -125,7 +129,9 @@ and a **P0 gate**, not a nice-to-have.
 | JWT access + refresh rotation | FR-AUTH-004 | ➖ replaced — the Firebase ID token *is* the session, SDK-refreshed client-side; no server-minted tokens (see `CLAUDE.md`) |
 | MFA (TOTP) for admin roles | FR-AUTH-002 | ➖ **cut for V1** — no MFA (documented decision) |
 | Google / Azure AD SSO | FR-AUTH-003 | 🔴 deferred |
-| Login audit log (IP, device, timestamp, outcome), 2-yr retention | FR-AUTH-008 | 🔴 **not wired** — highest-value gap in this module |
+| Login audit log (IP, device, timestamp, outcome), 2-yr retention | FR-AUTH-008 | ✅ `LoginAuditEntry` (append-only) written on every `POST /api/auth/session` outcome the server can see (`SUCCESS`, `USER_INACTIVE`, `CLAIM_MISMATCH`, `TOKEN_EXPIRED`); read via `GET /api/access/audit?feed=login`. Retention purge job still TODO |
+| Access-change trail (role change, activate/deactivate, reset, login created) | — | ✅ written to append-only `audit_log` (`access.*` actions, `metadata.module = "identity-access"`); read via `GET /api/access/audit?feed=access` |
+| User administration (list logins, change role, activate/deactivate, send reset) | FR-RBAC-004 | ✅ `access` module — `@Roles`-gated + service-layer invariants (RULE-2 ceiling, keep ≥1 active Company Admin, no self-deactivation); Firebase claim + `disabled` flag kept in sync |
 | Custom role builder / granular per-module permissions | FR-RBAC-002 | 🔴 deferred — roles are fixed for V1 |
 | Approval delegation | FR-RBAC-005 | 🔴 deferred |
 
@@ -150,24 +156,32 @@ and a **P0 gate**, not a nice-to-have.
 
 | Method | Path | Notes |
 |---|---|---|
-| `POST` | `/api/auth/session` | `@Public` — validate ID token, return session user |
+| `POST` | `/api/auth/session` | `@Public` — validate ID token, return session user; writes one append-only `LoginAuditEntry` per outcome |
 | `GET` | `/api/auth/me` | current `AuthenticatedUser` from the token |
+| `GET` | `/api/access/me` | signed-in user's own row + `tenantName` (My Account) — any tenant role |
+| `GET` | `/api/access/users` | `@Roles(COMPANY_ADMIN, HR_MANAGER, AUDITOR)` — logins + linked employee + last successful sign-in |
+| `PATCH` | `/api/access/users/:id/role` | `@Roles(COMPANY_ADMIN)` — RULE-2 ceiling; blocks demoting the last active Company Admin; syncs the Firebase `role` claim |
+| `PATCH` | `/api/access/users/:id/status` | `@Roles(COMPANY_ADMIN, HR_MANAGER)` — no self-deactivation; keeps ≥1 active Company Admin; sets Firebase `disabled` + revokes refresh tokens on deactivate |
+| `POST` | `/api/access/users/:id/password-reset` | `@Roles(COMPANY_ADMIN, HR_MANAGER)` — sends Firebase's hosted reset email via the Identity Toolkit REST API (`FIREBASE_WEB_API_KEY`) |
+| `GET` | `/api/access/audit?feed=login\|access` | `@Roles(COMPANY_ADMIN, AUDITOR)` — sign-in outcomes / access-change trail; `outcome`/`action`/`from`/`to`/`q` filters |
+| `GET` | `/api/access/users/:id/activity` | `@Roles(COMPANY_ADMIN, HR_MANAGER, AUDITOR)` — merged recent login + access-change feed for the detail drawer |
 
 Custom claims (`tenantId`, `role`) are **set server-side** via the Admin
 SDK when a user is created (tenant onboarding, employee-with-login
-creation). Never trust a claim the client could set.
+creation) and on every role change. Never trust a claim the client could set.
 
 ### Known gaps / TODO
 
-- Wire the **login audit log** (FR-AUTH-008) — new table + write on every
-  session validation (success and failure), with IP + user-agent. The
-  Auditor/Admin screens for it now exist (`apps/web/src/pages/access`,
-  `Audit` tab) but read from a fixture store until this lands.
-- Build the **access-management API** — `GET /api/access/users`,
-  `PATCH .../role`, `PATCH .../status`, `POST .../password-reset`,
-  `GET /api/access/audit`. The UI (`apps/web/src/pages/access`,
-  `apps/web/src/lib/access`) is built to this contract behind
-  `VITE_ACCESS_MOCK`; flip it off once the endpoints exist.
+- **`BAD_CREDENTIALS` sign-in failures are not recorded** — wrong
+  password / unknown email is rejected entirely inside the Firebase client
+  SDK and never reaches `POST /api/auth/session`, so the server can't log
+  it. Decision (owner-approved): server-observed outcomes only for V1.
+- **`TENANT_SUSPENDED` is not logged per-request** — it's rejected in
+  `TenantResolutionMiddleware` before the session handler. Instead, one
+  `tenant.status_changed` row is written to `platform_audit_log` on the
+  operator's suspend/resume action (module 02).
+- **Retention purge** — `LoginAuditEntry` has a 2-year retention
+  requirement; the scheduled purge job is not built yet.
 - Tighten the Line-Manager visibility placeholder in Leave (see §4).
 - Decide if/when SSO (FR-AUTH-003) re-enters scope for the hospital pilot.
 

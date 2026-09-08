@@ -5,6 +5,14 @@ export interface AppConfig {
   firebase: {
     projectId: string;
     serviceAccountJson?: string;
+    /**
+     * Firebase Web API key — used server-side ONLY to call the Identity
+     * Toolkit REST endpoint that sends a hosted password-reset email
+     * (admin-triggered reset for another user; module 01 §4.4). Not a
+     * secret (it ships in the web client too). Against the Auth emulator
+     * any non-empty value works.
+     */
+    webApiKey?: string;
   };
   db: {
     tenantUrl: string;
@@ -27,6 +35,7 @@ export default (): AppConfig => ({
   firebase: {
     projectId: process.env.FIREBASE_PROJECT_ID ?? 'hrms-platform-dev',
     serviceAccountJson: process.env.FIREBASE_SERVICE_ACCOUNT_JSON,
+    webApiKey: process.env.FIREBASE_WEB_API_KEY,
   },
   db: {
     tenantUrl: process.env.TENANT_DATABASE_URL as string,

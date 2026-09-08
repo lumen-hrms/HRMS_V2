@@ -33,8 +33,14 @@ jobs:
       DATABASE_URL: postgresql://hrms_superuser:hrms_superuser_pw@localhost:5432/hrms?schema=public
       TENANT_DATABASE_URL: postgresql://hrms_app:hrms_app_pw@localhost:5432/hrms?schema=public
       PLATFORM_DATABASE_URL: postgresql://hrms_platform:hrms_platform_pw@localhost:5432/hrms?schema=platform
-      FIREBASE_PROJECT_ID: hrms-platform-ci
-      FIREBASE_AUTH_EMULATOR_HOST: localhost:9099
+      # Real Firebase — no emulator. These must be set as repo secrets:
+      #   FIREBASE_PROJECT_ID          – the project id (e.g. a dedicated *-ci project)
+      #   FIREBASE_WEB_API_KEY         – Project settings > General > Web API Key
+      #   FIREBASE_SERVICE_ACCOUNT_JSON – the service-account JSON blob, one line
+      # e2e tests create users named e2e-*@example.test and delete them in afterAll.
+      FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+      FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
       TENANT_RESOLUTION_MODE: header
       NODE_ENV: test
       PORT: 3000
@@ -54,23 +60,8 @@ jobs:
           cache: npm
           cache-dependency-path: apps/api/package-lock.json
 
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
       - name: Install dependencies
         run: npm ci
-
-      - name: Install Firebase emulator
-        run: npm install -g firebase-tools
-
-      - name: Start Firebase Auth emulator
-        run: firebase emulators:start --only auth --project hrms-platform-ci &
-        working-directory: .
-
-      - name: Wait for Firebase Auth emulator
-        run: npx wait-on tcp:9099 --timeout 60000
 
       - name: Generate Prisma client
         run: npm run prisma:generate
@@ -84,7 +75,7 @@ jobs:
       - name: Unit tests
         run: npm test -- --ci
 
-      - name: Tenant-isolation + auth e2e tests
+      - name: E2E tests (tenant isolation + auth + identity & access)
         run: npm run test:e2e
 
       - name: Build

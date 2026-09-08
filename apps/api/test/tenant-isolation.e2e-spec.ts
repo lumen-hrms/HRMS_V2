@@ -4,6 +4,7 @@ import { PrismaClient } from '@prisma/client';
 import { createTestApp } from './utils/test-app';
 import {
   cleanupTenantFixture,
+  deleteTrackedFirebaseUsers,
   createTenantFixture,
   getIdTokenForEmail,
   superuserPrisma,
@@ -36,6 +37,7 @@ describe('Tenant isolation (e2e)', () => {
   afterAll(async () => {
     await cleanupTenantFixture(tenantA.tenantId);
     await cleanupTenantFixture(tenantB.tenantId);
+    await deleteTrackedFirebaseUsers();
     await superuserPrisma.$disconnect();
     await app.close();
   });

@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import * as ExcelJS from 'exceljs';
 import type * as admin from 'firebase-admin';
@@ -6,7 +6,18 @@ import { TenantPrismaService } from '../prisma/tenant-prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { FIREBASE_AUTH } from '../firebase/firebase-admin.provider';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
+import type { AppRole } from '../common/decorators/roles.decorator';
+import { buildAccessAuditData, ROLE_LABELS } from '../access/access.support';
 import type { CreateDepartmentDto, CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
+
+/** email local-part → "Jane Doe" style label for audit actor names. */
+function humanizeEmail(email: string): string {
+  return email
+    .split('@')[0]
+    .replace(/[._-]+/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .trim();
+}
 
 /**
  * "Own reports only" (Line Manager) / "own data only" (Employee) scoping,
@@ -32,6 +43,8 @@ function scopeFor(user: AuthenticatedUser): Prisma.EmployeeWhereInput {
 
 @Injectable()
 export class EmployeesService {
+  private readonly logger = new Logger(EmployeesService.name);
+
   constructor(
     private readonly tenantPrisma: TenantPrismaService,
     private readonly storage: StorageService,
@@ -69,7 +82,7 @@ export class EmployeesService {
     return employee;
   }
 
-  async create(dto: CreateEmployeeDto) {
+  async create(dto: CreateEmployeeDto, actor?: AuthenticatedUser) {
     const tenantId = this.tenantPrisma.tenantId;
 
     // Firebase user creation is a network call to the Admin SDK, not a DB
@@ -95,8 +108,8 @@ export class EmployeesService {
       pendingUser = { email: dto.loginEmail, firebaseUid, role };
     }
 
-    return this.tenantPrisma.client.$transaction(async (tx) => {
-      let userId: string | undefined;
+    let createdUserId: string | undefined;
+    const employee = await this.tenantPrisma.client.$transaction(async (tx) => {
       if (pendingUser) {
         const user = await tx.user.create({
           data: {
@@ -106,13 +119,13 @@ export class EmployeesService {
             role: pendingUser.role as any,
           },
         });
-        userId = user.id;
+        createdUserId = user.id;
       }
 
       return tx.employee.create({
         data: {
           tenantId,
-          userId,
+          userId: createdUserId,
           employeeCode: dto.employeeCode,
           firstName: dto.firstName,
           lastName: dto.lastName,
@@ -127,6 +140,35 @@ export class EmployeesService {
         },
       });
     });
+
+    // A provisioned login is an Identity & Access event — record it in the
+    // same access-change trail the Access module reads
+    // (GET /api/access/audit?feed=access). Non-fatal: a failed audit write
+    // must not fail employee creation.
+    if (pendingUser && createdUserId) {
+      try {
+        await this.tenantPrisma.client.auditLog.create({
+          data: buildAccessAuditData({
+            tenantId,
+            actorUserId: actor?.sub ?? createdUserId,
+            actorName: actor?.email ? humanizeEmail(actor.email) : 'System',
+            actorRole: actor?.role ?? 'HR_MANAGER',
+            action: 'user.created',
+            targetUserId: createdUserId,
+            targetEmail: pendingUser.email,
+            after: ROLE_LABELS[pendingUser.role as AppRole] ?? pendingUser.role,
+            note: 'Login provisioned via Employee Master.',
+          }),
+        });
+      } catch (err) {
+        this.logger.error(
+          `Employee created but the access-change audit write failed for ${pendingUser.email}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
+    }
+
+    return employee;
   }
 
   async update(id: string, dto: UpdateEmployeeDto, user: AuthenticatedUser) {

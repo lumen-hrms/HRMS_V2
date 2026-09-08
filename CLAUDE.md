@@ -111,21 +111,25 @@ blueprint — check there before reviving one.
 ## V1 module scope
 
 **Done, merged to `main`, test-verified against real Postgres:** Auth +
-RBAC + tenant isolation (RLS), Platform Admin console (tenant
+RBAC + tenant isolation (RLS), the Identity & Access *management* surface
+(NestJS `access` module — `GET /api/access/users` · `/access/me` ·
+`PATCH .../role` · `PATCH .../status` · `POST .../password-reset` ·
+`GET /api/access/audit` · `.../:id/activity` — plus the `LoginAuditEntry`
+table and append-only login-audit writes on every server-observed
+`POST /api/auth/session` outcome; e2e-tested in `test/access.e2e-spec.ts`;
+`VITE_ACCESS_MOCK` defaults **off**), Platform Admin console (tenant
 onboarding/enable-disable/metadata only), Employee Master, Leave
 Management, role-aware Dashboard — backend and frontend both. See
 `docs/BACKEND_ARCHITECTURE.md` for the full traced reference and its §8
 for known gaps within these modules (line-manager leave-visibility scoping
-is a known-permissive placeholder; audit log tables exist but aren't
-written to yet).
+is a known-permissive placeholder; the generic `audit_log` is now written
+to for access-change events but has no aggregation/UI yet).
 
-**In progress (frontend ahead of backend):** the Identity & Access
-*management* surface — `apps/web/src/pages/access` (Users list, change
-role / activate-deactivate / send-reset, login + access-change audit,
-My Account). Built against `apps/web/src/lib/access` behind
-`VITE_ACCESS_MOCK` (default on); the NestJS `access` module and
-`LoginAuditEntry` table are not built yet. See
-`docs/modules/01_IDENTITY_AND_ACCESS.md` §9.
+**Identity & Access — remaining gaps** (`docs/modules/01_IDENTITY_AND_ACCESS.md`
+§9): `BAD_CREDENTIALS` and `TENANT_SUSPENDED` sign-in failures aren't
+server-observable so aren't in the login trail (suspend/resume is logged
+once in `platform_audit_log` instead); no 2-year retention purge job yet;
+line-manager leave scoping still permissive.
 
 **Not started:** Payroll, Attendance, Compliance exports are the next
 slice — see the blueprint's 12-week plan for sequencing (payroll is the

@@ -68,8 +68,44 @@ export class PlatformAdminService {
     });
   }
 
-  async updateTenantStatus(tenantId: string, status: 'ACTIVE' | 'SUSPENDED' | 'TRIAL') {
-    return this.platformPrisma.tenant.update({ where: { id: tenantId }, data: { status } });
+  async updateTenantStatus(
+    tenantId: string,
+    status: 'ACTIVE' | 'SUSPENDED' | 'TRIAL',
+    actorEmail?: string,
+  ) {
+    const current = await this.platformPrisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { status: true, name: true },
+    });
+    const updated = await this.platformPrisma.tenant.update({
+      where: { id: tenantId },
+      data: { status },
+    });
+
+    // One row per operator action — the "who suspended/resumed this tenant
+    // and when" record. Per-request TENANT_SUSPENDED 403s are deliberately
+    // NOT logged (docs/modules/01_IDENTITY_AND_ACCESS.md §9). Non-fatal.
+    if (current && current.status !== status) {
+      try {
+        await this.platformPrisma.platformAuditLog.create({
+          data: {
+            actorEmail: actorEmail ?? 'unknown',
+            action: 'tenant.status_changed',
+            targetType: 'tenant',
+            targetId: tenantId,
+            metadata: {
+              tenantName: current.name,
+              from: current.status,
+              to: status,
+            },
+          },
+        });
+      } catch {
+        // best-effort — the status change itself already succeeded.
+      }
+    }
+
+    return updated;
   }
 
   async createTenant(dto: CreateTenantDto) {
