@@ -200,3 +200,12 @@ docs/
   internals.
 - Prefer the simpler, more boring option on any judgment call not covered
   above — keep the codebase approachable for the whole team.
+- **Dev database is shared** — one Supabase Postgres the whole team connects
+  to (via the Supavisor pooler), so everyone sees the same data. Schema is
+  owned centrally: the migration owner runs `./scripts/dev.sh migrate`;
+  everyone else pulls + `prisma generate`. The three-role RLS isolation
+  model is unchanged (created there by `20260101000002_roles_and_rls`).
+  Local Docker Postgres is now used **only** by the e2e suite (it
+  creates/drops tenants — never point it at the shared DB). Connection
+  strings live in the team vault, not git. This is a dev-infra choice; prod
+  is still RDS ap-south-1 per the Stack table.

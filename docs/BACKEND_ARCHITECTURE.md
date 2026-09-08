@@ -206,7 +206,11 @@ Every tenant table has `@@index([tenantId])` at minimum — necessary since RLS 
 
 ## 7. Local dev environment
 
-`docker-compose.yml` brings up Postgres 16 (`hrms_superuser`/`hrms`) and MinIO (S3-compatible, console on `:9001`). `TENANT_RESOLUTION_MODE=header` lets you develop without real subdomains — send `X-Tenant-Subdomain: <subdomain>` on every request instead of DNS/hosts-file entries. Two separate `DATABASE_URL`-equivalents are needed at runtime (`TENANT_DATABASE_URL` using `hrms_app`, `PLATFORM_DATABASE_URL` using `hrms_platform`), plus a third implicit one (whatever role runs `prisma migrate deploy`, e.g. `hrms_superuser`) — three distinct connection strings, not one, is intentional and load-bearing for the isolation model.
+**Database:** the team shares **one Postgres — a Supabase project** (`fayiwvnyqwgqkbudgeut`, ap-northeast-1, PG 17). Connections go through Supabase's Supavisor pooler: the **session pooler** (`:5432`, user `postgres`) for `prisma migrate`, the **transaction pooler** (`:6543`, users `hrms_app.<ref>` / `hrms_platform.<ref>`, `?pgbouncer=true`) for the running API. The three-role isolation model (`hrms_app` NOBYPASSRLS, `hrms_platform` zero grants on `public`, RLS `FORCE`) is created by `20260101000002_roles_and_rls` there exactly as it is locally — verified through the pooler (`hrms_app` with no tenant context → 0 rows; `hrms_platform` → permission denied on `public.users`). Schema is owned centrally: the migration owner runs `./scripts/dev.sh migrate`; everyone else pulls + `prisma generate`. Connection strings live in the team vault, not git (`apps/api/.env` is gitignored).
+
+**Local Docker (`docker-compose.yml`):** Postgres 16 + MinIO. Postgres here is used **only by the e2e suite** (`apps/api/.env.test`) — the suite creates and drops tenants, so it must not touch the shared DB. MinIO (S3-compatible, console `:9001`) is the local object store for both dev and tests.
+
+`TENANT_RESOLUTION_MODE=header` lets you develop without real subdomains — send `X-Tenant-Subdomain: <subdomain>` on every request. Three distinct connection strings at runtime (`DATABASE_URL` for migrations, `TENANT_DATABASE_URL` as `hrms_app`, `PLATFORM_DATABASE_URL` as `hrms_platform`), not one, is intentional and load-bearing for the isolation model.
 
 ## 8. What's done, and what's genuinely still missing
 

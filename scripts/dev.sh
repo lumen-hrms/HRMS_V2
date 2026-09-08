@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
 #
-# One entry point for local dev: brings up Postgres+MinIO, installs deps,
-# runs migrations/seed, and either starts both dev servers ("up", default)
-# or runs the full test suite ("test") — same steps CI runs, just local.
+# One entry point for local dev.
 #
-# Auth is real Firebase everywhere — there is no local Auth emulator. You
-# need a Firebase project's service-account JSON + web API key in
-# apps/api/.env and the web config in apps/web/.env (see the .env.example
-# files). e2e tests sign in against that same project and clean up after
-# themselves.
+# DATABASE: the team shares ONE Postgres (Supabase) — set the three
+# *_DATABASE_URL vars in apps/api/.env from the team vault. Schema is owned
+# centrally: the migration owner runs `dev.sh migrate`; everyone else just
+# pulls + `prisma generate`. Local Docker Postgres is used ONLY by the e2e
+# suite ("dev.sh test", via apps/api/.env.test).
+#
+# AUTH: real Firebase everywhere — no local emulator. Needs a Firebase
+# service-account JSON + web API key in apps/api/.env and the web config in
+# apps/web/.env (see the .env.example files).
 #
 # Usage:
-#   ./scripts/dev.sh          # start Postgres+MinIO, migrate, seed, run API+web
+#   ./scripts/dev.sh          # MinIO up, deps, generate client, run API+web
 #   ./scripts/dev.sh up       # same as above
-#   ./scripts/dev.sh test     # migrate, run unit+e2e+lint+build
-#   ./scripts/dev.sh seed     # (re)run the seed script only
-#   ./scripts/dev.sh down     # stop Postgres+MinIO (data volume is kept)
+#   ./scripts/dev.sh migrate  # apply pending migrations to the shared DB (owner only)
+#   ./scripts/dev.sh test     # local Docker Postgres + unit+e2e+lint+build
+#   ./scripts/dev.sh seed     # seed the shared DB (owner only — creates demo tenants)
+#   ./scripts/dev.sh down     # stop local Docker services (data volume is kept)
 
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -80,17 +83,23 @@ wait_for_postgres() {
   exit 1
 }
 
+# DATABASE_URL for the LOCAL Docker Postgres (docker-compose.yml defaults —
+# not secret). Used by the "test" path so `prisma migrate deploy` targets
+# the local DB, not the shared Supabase one in apps/api/.env.
+LOCAL_DB_URL="postgresql://hrms_superuser:hrms_superuser_pw@localhost:5432/hrms?schema=public"
+
 case "$ACTION" in
   up)
     check_docker
     ensure_env
     check_firebase_config
-    docker compose up -d
-    wait_for_postgres
+    # Only MinIO locally now — the database is the shared Supabase one.
+    docker compose up -d minio
     npm run install:all
     npm run prisma:generate
-    npm run prisma:migrate
-    npm run prisma:seed || echo "Seed skipped (likely already seeded — safe to ignore)."
+    # Informational only — never blocks `up`.
+    ( cd apps/api && npx prisma migrate status ) || \
+      echo "NOTE: shared DB may have pending migrations — the migration owner runs './scripts/dev.sh migrate'."
     echo ""
     echo "Starting API (http://localhost:3000/api) and web (http://localhost:5173)."
     echo "Ctrl+C stops both."
@@ -100,21 +109,32 @@ case "$ACTION" in
     wait
     ;;
 
+  migrate)
+    # Migration owner only: apply pending migrations to the SHARED database
+    # (apps/api/.env DATABASE_URL -> Supabase session pooler).
+    ensure_env
+    echo "Applying pending migrations to the shared database…"
+    npm run prisma:generate
+    npm run prisma:migrate
+    ;;
+
   test)
     check_docker
     ensure_env
     check_firebase_config
+    # e2e runs against LOCAL Docker Postgres (apps/api/.env.test), never the
+    # shared DB — the suite creates and drops tenants.
     docker compose up -d
     wait_for_postgres
     npm run install:all
     npm run prisma:generate
-    npm run prisma:migrate
+    DATABASE_URL="$LOCAL_DB_URL" npm run prisma:migrate
     echo ""
     echo "==> Backend unit tests"
     npm run test:api
     echo ""
     echo "==> Backend e2e tests (tenant isolation + auth + identity & access,"
-    echo "    against real Postgres + real Firebase)"
+    echo "    against local Postgres + real Firebase)"
     npm run test:api:e2e
     echo ""
     echo "==> Lint + build (api + web)"
@@ -125,20 +145,24 @@ case "$ACTION" in
     ;;
 
   seed)
+    # Owner only: seeds the SHARED database + creates the demo tenants'
+    # Firebase users in the shared project.
     ensure_env
     check_firebase_config
+    read -r -p "Seed the SHARED database (creates demo tenants + Firebase users)? [y/N] " ans
+    [ "$ans" = "y" ] || [ "$ans" = "Y" ] || { echo "Aborted."; exit 0; }
     npm run prisma:seed
     ;;
 
   down)
-    # No -v: the hrms_pg_data / hrms_minio_data volumes are kept so data
-    # survives a stop/start and a reboot. `docker compose down -v` (manual)
-    # is the only thing that wipes them.
+    # No -v: the hrms_pg_data / hrms_minio_data volumes are kept so local
+    # test data survives a stop/start. `docker compose down -v` (manual) is
+    # the only thing that wipes them.
     docker compose down
     ;;
 
   *)
-    echo "Usage: $0 [up|test|seed|down]"
+    echo "Usage: $0 [up|migrate|test|seed|down]"
     exit 1
     ;;
 esac
