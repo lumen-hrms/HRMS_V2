@@ -1,19 +1,23 @@
 @echo off
-REM One entry point for local dev on Windows. It stands up everything needed
-REM for a working app and starts the API + web dev servers.
+REM One entry point for local dev on Windows.
 REM
-REM Auth is real Firebase everywhere - there is no local Auth emulator. You
-REM need a Firebase project's service-account JSON + web API key in
-REM apps\api\.env and the web config in apps\web\.env (see the .env.example
-REM files). This script verifies the config is filled in and stops with
-REM instructions if not.
+REM DATABASE: the team shares ONE Postgres (Supabase) - set the three
+REM *_DATABASE_URL vars in apps\api\.env from the team vault. Schema is owned
+REM centrally: the migration owner runs "dev.bat migrate"; everyone else just
+REM pulls + prisma generate. Local Docker Postgres is used ONLY by the e2e
+REM suite ("dev.bat test", via apps\api\.env.test).
+REM
+REM AUTH: real Firebase everywhere - no local emulator. Needs a Firebase
+REM service-account JSON + web API key in apps\api\.env and the web config in
+REM apps\web\.env (see the .env.example files).
 REM
 REM Usage:
-REM   scripts\dev.bat          rem stand up infra, migrate, seed, run API+web
+REM   scripts\dev.bat          rem MinIO up, deps, generate client, run API+web
 REM   scripts\dev.bat up       rem same as above
-REM   scripts\dev.bat test     rem migrate, run unit+e2e+lint+build
-REM   scripts\dev.bat seed     rem (re)run the seed script only
-REM   scripts\dev.bat down     rem stop Postgres+MinIO (data volume is kept)
+REM   scripts\dev.bat migrate  rem apply pending migrations to the shared DB (owner)
+REM   scripts\dev.bat test     rem local Docker Postgres + unit+e2e+lint+build
+REM   scripts\dev.bat seed     rem seed the shared DB (owner - creates demo tenants)
+REM   scripts\dev.bat down     rem stop local Docker services (data volume kept)
 
 setlocal enabledelayedexpansion
 cd /d "%~dp0.."
@@ -52,55 +56,54 @@ call :check_firebase_config
 if errorlevel 1 exit /b 1
 
 if /I "%ACTION%"=="seed" (
+  set /p ANS=Seed the SHARED database ^(creates demo tenants + Firebase users^)? [y/N]
+  if /I not "!ANS!"=="y" ( echo Aborted. & goto :eof )
   call npm run prisma:seed
   goto :eof
 )
 
-REM ---------------------------------------------------------------------------
-REM 3. Infra + schema
-REM ---------------------------------------------------------------------------
-docker compose up -d
-
-echo Waiting for Postgres to be ready...
-set READY=0
-for /L %%i in (1,1,30) do (
-  docker compose exec -T postgres pg_isready -U hrms_superuser -d hrms >nul 2>&1
-  if not errorlevel 1 (
-    set READY=1
-    goto :ready
-  )
-  timeout /t 1 /nobreak >nul
-)
-:ready
-if "!READY!"=="0" (
-  echo Postgres didn't become ready in time. Check: docker compose logs postgres
-  exit /b 1
-)
-echo Postgres is ready.
-
-call npm run install:all
-if errorlevel 1 exit /b 1
-call npm run prisma:generate
-if errorlevel 1 exit /b 1
-call npm run prisma:migrate
-if errorlevel 1 (
-  echo.
-  echo prisma migrate deploy failed. If it reports a FAILED migration ^(P3009^),
-  echo reset the local DB with:  cd apps\api ^&^& npx prisma migrate reset
-  exit /b 1
+if /I "%ACTION%"=="migrate" (
+  echo Applying pending migrations to the shared database...
+  call npm run prisma:generate
+  if errorlevel 1 exit /b 1
+  call npm run prisma:migrate
+  if errorlevel 1 exit /b 1
+  goto :eof
 )
 
 REM ---------------------------------------------------------------------------
-REM 4a. test: full suite, then stop
+REM 3. test: LOCAL Docker Postgres (apps\api\.env.test), full suite
 REM ---------------------------------------------------------------------------
 if /I "%ACTION%"=="test" (
+  docker compose up -d
+  echo Waiting for Postgres to be ready...
+  set READY=0
+  for /L %%i in (1,1,30) do (
+    docker compose exec -T postgres pg_isready -U hrms_superuser -d hrms >nul 2>&1
+    if not errorlevel 1 ( set READY=1 & goto :ready )
+    timeout /t 1 /nobreak >nul
+  )
+  :ready
+  if "!READY!"=="0" (
+    echo Postgres didn't become ready in time. Check: docker compose logs postgres
+    exit /b 1
+  )
+  echo Postgres is ready.
+  call npm run install:all
+  if errorlevel 1 exit /b 1
+  call npm run prisma:generate
+  if errorlevel 1 exit /b 1
+  set "DATABASE_URL=postgresql://hrms_superuser:hrms_superuser_pw@localhost:5432/hrms?schema=public"
+  call npm run prisma:migrate
+  if errorlevel 1 exit /b 1
+  set "DATABASE_URL="
   echo.
   echo ==^> Backend unit tests
   call npm run test:api
   if errorlevel 1 exit /b 1
   echo.
   echo ==^> Backend e2e tests ^(tenant isolation + auth + identity ^& access,
-  echo     against real Postgres + real Firebase^)
+  echo     against local Postgres + real Firebase^)
   call npm run test:api:e2e
   if errorlevel 1 exit /b 1
   echo.
@@ -115,9 +118,13 @@ if /I "%ACTION%"=="test" (
 )
 
 REM ---------------------------------------------------------------------------
-REM 4b. up: seed + run both dev servers
+REM 4. up: MinIO only (DB is the shared Supabase one), then run dev servers
 REM ---------------------------------------------------------------------------
-call npm run prisma:seed
+docker compose up -d minio
+call npm run install:all
+if errorlevel 1 exit /b 1
+call npm run prisma:generate
+if errorlevel 1 exit /b 1
 
 echo.
 echo Starting API and web in separate windows.
