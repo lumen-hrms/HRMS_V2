@@ -1,5 +1,8 @@
 import {
+  IsBoolean,
   IsDateString,
+  IsIn,
+  IsInt,
   IsNumber,
   IsOptional,
   IsString,
@@ -7,6 +10,8 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+
+const ACCRUAL_FREQUENCIES = ['ANNUAL', 'MONTHLY', 'QUARTERLY'];
 
 export class CreateLeaveTypeDto {
   @IsString()
@@ -21,6 +26,31 @@ export class CreateLeaveTypeDto {
   @IsNumber()
   @Min(0)
   carryForwardCap?: number;
+
+  @IsOptional()
+  @IsIn(ACCRUAL_FREQUENCIES)
+  accrualFrequency?: 'ANNUAL' | 'MONTHLY' | 'QUARTERLY';
+}
+
+export class UpdateLeaveTypeDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  name?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  annualQuota?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  carryForwardCap?: number;
+
+  @IsOptional()
+  @IsIn(ACCRUAL_FREQUENCIES)
+  accrualFrequency?: 'ANNUAL' | 'MONTHLY' | 'QUARTERLY';
 }
 
 export class ApplyLeaveDto {
@@ -42,4 +72,62 @@ export class DecideLeaveDto {
   @IsOptional()
   @IsString()
   comment?: string;
+}
+
+export class CreateHolidayDto {
+  @IsDateString()
+  date!: string;
+
+  @IsString()
+  @MinLength(1)
+  name!: string;
+
+  // Named to match the frontend's Holiday.optional field (apps/web/src/lib/leave/types.ts).
+  @IsOptional()
+  @IsBoolean()
+  optional?: boolean;
+}
+
+export class UpdateHolidayDto {
+  @IsOptional()
+  @IsDateString()
+  date?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  name?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  optional?: boolean;
+}
+
+export class BalanceAdjustmentDto {
+  @IsUUID()
+  employeeId!: string;
+
+  @IsUUID()
+  leaveTypeId!: string;
+
+  @IsInt()
+  year!: number;
+
+  @IsNumber()
+  delta!: number;
+
+  @IsString()
+  @MinLength(1)
+  note!: string;
+}
+
+export class UpdateLeaveSettingsDto {
+  @IsOptional()
+  @IsIn([1, 2])
+  leaveApprovalLevels?: 1 | 2;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  leaveEscalationDays?: number;
 }

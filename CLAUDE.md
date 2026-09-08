@@ -118,18 +118,32 @@ RBAC + tenant isolation (RLS), the Identity & Access *management* surface
 table and append-only login-audit writes on every server-observed
 `POST /api/auth/session` outcome; e2e-tested in `test/access.e2e-spec.ts`;
 `VITE_ACCESS_MOCK` defaults **off**), Platform Admin console (tenant
-onboarding/enable-disable/metadata only), Employee Master, Leave
-Management, role-aware Dashboard — backend and frontend both. See
-`docs/BACKEND_ARCHITECTURE.md` for the full traced reference and its §8
-for known gaps within these modules (line-manager leave-visibility scoping
-is a known-permissive placeholder; the generic `audit_log` is now written
-to for access-change events but has no aggregation/UI yet).
+onboarding/enable-disable/metadata only), Employee Master, role-aware
+Dashboard — backend and frontend both. See `docs/BACKEND_ARCHITECTURE.md`
+for the full traced reference and its §8 for known gaps within these
+modules (the generic `audit_log` is now written to for access-change
+events but has no aggregation/UI yet).
+
+**Leave Management (backend ~95% done, frontend mid-rebuild):** all six
+backend gaps tracked in `docs/MODULE_SPECS.md` §4 are closed — the
+line-manager leave-visibility placeholder is now a real
+`reportingManagerId` check, holiday-aware working-day counts, request
+attachments, a tenant-configurable 1-or-2-level approval chain with
+escalation timers (new BullMQ `leave` queue / Redis — first use of BullMQ
+in this repo), a minimal monthly/quarterly accrual job, and the remaining
+planned endpoints (team balances, balance adjustments, ledger, settings).
+Frontend is still being rebuilt role-by-role against
+`apps/web/src/lib/leave` behind `VITE_LEAVE_MOCK` (default on): Employee
+and Line Manager screens are done; HR/Company Admin screens (All
+Requests, Leave Types CRUD, Balance Adjustments, Ledger, Settings) exist
+in code but aren't wired into `pages/leave/index.tsx` yet, and the Auditor
+slice hasn't been built. See `docs/MODULE_SPECS.md` §4 and
+`docs/LEAVE_UI_SPECS.md`.
 
 **Identity & Access — remaining gaps** (`docs/modules/01_IDENTITY_AND_ACCESS.md`
 §9): `BAD_CREDENTIALS` and `TENANT_SUSPENDED` sign-in failures aren't
 server-observable so aren't in the login trail (suspend/resume is logged
-once in `platform_audit_log` instead); no 2-year retention purge job yet;
-line-manager leave scoping still permissive.
+once in `platform_audit_log` instead); no 2-year retention purge job yet.
 
 **Not started:** Payroll, Attendance, Compliance exports are the next
 slice — see the blueprint's 12-week plan for sequencing (payroll is the

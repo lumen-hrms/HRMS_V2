@@ -319,6 +319,8 @@ model Employee {
 
   leaveBalances            LeaveBalance[]
   leaveRequestsAsApplicant LeaveRequest[]          @relation("Applicant")
+  leaveLedgerEntries       LeaveLedgerEntry[]
+  leaveApprovalsGiven      LeaveApproval[]         @relation("LeaveApprover")
   documents                Document[]
   attendanceRecords        AttendanceRecord[]
   regularizationRequests   RegularizationRequest[]
@@ -349,21 +351,33 @@ model Document {
 }
 
 model LeaveType {
-  id               String   @id @default(uuid()) @db.Uuid
-  tenantId         String   @map("tenant_id") @db.Uuid
+  id               String           @id @default(uuid()) @db.Uuid
+  tenantId         String           @map("tenant_id") @db.Uuid
   name             String
-  annualQuota      Decimal  @map("annual_quota") @db.Decimal(6, 2)
-  carryForwardCap  Decimal  @default(0) @map("carry_forward_cap") @db.Decimal(6, 2)
-  requiresApproval Boolean  @default(true) @map("requires_approval")
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime @updatedAt @map("updated_at")
+  annualQuota      Decimal          @map("annual_quota") @db.Decimal(6, 2)
+  carryForwardCap  Decimal          @default(0) @map("carry_forward_cap") @db.Decimal(6, 2)
+  requiresApproval Boolean          @default(true) @map("requires_approval")
+  // Periodic credit schedule the accrual job follows; ANNUAL types are still
+  // seeded manually via the initialize-year endpoint.
+  accrualFrequency AccrualFrequency @default(ANNUAL) @map("accrual_frequency")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
 
   balances LeaveBalance[]
   requests LeaveRequest[]
+  ledgerEntries LeaveLedgerEntry[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
   @@map("leave_types")
+  @@schema("public")
+}
+
+enum AccrualFrequency {
+  ANNUAL
+  MONTHLY
+  QUARTERLY
+
   @@schema("public")
 }
 
@@ -409,12 +423,91 @@ model LeaveRequest {
   l2ApproverId String?   @map("l2_approver_id") @db.Uuid
   l2DecidedAt  DateTime? @map("l2_decided_at")
 
+  // Single supporting document (e.g. a medical certificate). Nullable — most
+  // requests carry none. Stored the same way Employee documents are.
+  attachmentKey       String? @map("attachment_key")
+  attachmentName      String? @map("attachment_name")
+  attachmentMimeType  String? @map("attachment_mime_type")
+  attachmentSizeBytes Int?    @map("attachment_size_bytes")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
+
+  approvals LeaveApproval[]
 
   @@index([tenantId])
   @@index([tenantId, employeeId])
   @@map("leave_requests")
+  @@schema("public")
+}
+
+/// Append-only decision/escalation history — backs the request detail timeline.
+model LeaveApproval {
+  id String @id @default(uuid()) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+
+  leaveRequestId String       @map("leave_request_id") @db.Uuid
+  leaveRequest   LeaveRequest @relation(fields: [leaveRequestId], references: [id], onDelete: Cascade)
+
+  level Int
+  // Null approverId marks a system-generated escalation entry.
+  approverId String?   @map("approver_id") @db.Uuid
+  approver   Employee? @relation("LeaveApprover", fields: [approverId], references: [id], onDelete: SetNull)
+  decision   LeaveApprovalDecision
+  decidedAt  DateTime             @default(now()) @map("decided_at")
+  comment    String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([tenantId, leaveRequestId])
+  @@map("leave_approvals")
+  @@schema("public")
+}
+
+enum LeaveApprovalDecision {
+  APPROVED
+  REJECTED
+  ESCALATED
+
+  @@schema("public")
+}
+
+/// Append-only balance movement audit trail: accrual, carry-forward, request lifecycle, HR adjustment.
+model LeaveLedgerEntry {
+  id String @id @default(uuid()) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+
+  employeeId String   @map("employee_id") @db.Uuid
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  leaveTypeId String    @map("leave_type_id") @db.Uuid
+  leaveType   LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+
+  occurredAt   DateTime          @default(now()) @map("occurred_at")
+  delta        Decimal           @db.Decimal(6, 2)
+  balanceAfter Decimal           @map("balance_after") @db.Decimal(6, 2)
+  source       LeaveLedgerSource
+  note         String?
+  actorUserId  String?           @map("actor_user_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([tenantId, employeeId, leaveTypeId])
+  @@map("leave_ledger_entries")
+  @@schema("public")
+}
+
+enum LeaveLedgerSource {
+  ACCRUAL
+  CARRY_FORWARD
+  REQUEST_APPROVED
+  REQUEST_CANCELLED
+  HR_ADJUSTMENT
+
   @@schema("public")
 }
 
@@ -547,6 +640,9 @@ model TenantSettings {
   payrollCutoffDay    Int    @default(25) @map("payroll_cutoff_day")
   // Leave approval chain depth (1 or 2 for V1).
   leaveApprovalLevels Int    @default(2) @map("leave_approval_levels")
+  // Days a leave request may sit undecided at a level before the escalation
+  // job flags it (see apps/api/src/leave/leave-escalation.processor.ts).
+  leaveEscalationDays Int    @default(3) @map("leave_escalation_days")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

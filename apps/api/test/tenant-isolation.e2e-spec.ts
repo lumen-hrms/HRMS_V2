@@ -183,6 +183,22 @@ describe('Tenant isolation (e2e)', () => {
     }
   });
 
+  it('fails closed on the new leave tables too: no tenant context set sees zero rows', async () => {
+    const rawAppClient = new PrismaClient({
+      datasources: { db: { url: process.env.TENANT_DATABASE_URL } },
+    });
+    try {
+      // Deliberately do NOT call set_config first — mirrors the `users`
+      // check above for the two tables this module added (leave_approvals,
+      // leave_ledger_entries): RLS must fail closed on these exactly the
+      // same way it does on every other tenant table.
+      expect(await rawAppClient.leaveApproval.count()).toBe(0);
+      expect(await rawAppClient.leaveLedgerEntry.count()).toBe(0);
+    } finally {
+      await rawAppClient.$disconnect();
+    }
+  });
+
   it('the tenant app DB role cannot query platform tables at all', async () => {
     const rawAppClient = new PrismaClient({
       datasources: { db: { url: process.env.TENANT_DATABASE_URL } },

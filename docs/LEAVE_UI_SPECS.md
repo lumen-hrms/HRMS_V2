@@ -5,7 +5,7 @@
 > is the contract the backend builds to and the tester writes cases against.
 >
 > Read alongside `docs/MODULE_SPECS.md` §4 (product behaviour + known gaps) and
-> `CLAUDE.md` (guard chain, tenancy). **Last updated:** 2026-09-07.
+> `CLAUDE.md` (guard chain, tenancy). **Last updated:** 2026-09-08.
 
 ## How the frontend runs today
 
@@ -23,44 +23,55 @@ Each `leaveApi` method's JSDoc names its endpoint and marks it `live` or
 
 ## Endpoint inventory
 
-### Live today (`apps/api/src/leave`)
+All endpoints below are now **live** in `apps/api/src/leave` — flip
+`VITE_LEAVE_MOCK=false` to point the frontend at them. A few response-shape
+deltas remain (see below) that the frontend's `leaveApi` client will need
+light adapter code for, rather than a raw pass-through.
+
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/api/leave/types` | |
-| POST | `/api/leave/types` | Admin/HR. Frontend now sends more fields than the API stores (see gaps). |
+| POST | `/api/leave/types` | Admin/HR. Accepts `accrualFrequency` now; other FE-only fields still not stored (see deltas). |
+| PATCH | `/api/leave/types/:id` | Admin/HR |
 | POST | `/api/leave/types/:id/initialize/:year` | Admin/HR |
-| GET | `/api/leave/balances/:employeeId` | row-scoped. Frontend expects `?year=`. |
+| GET | `/api/leave/holidays?year=` | any (read) |
+| POST · PATCH · DELETE | `/api/leave/holidays(/:id)` | Admin/HR |
+| GET | `/api/leave/settings` | any (read) |
+| PATCH | `/api/leave/settings` | Company Admin only (per the role matrix below — HR reads, Company Admin edits) |
+| GET | `/api/leave/balances/:employeeId` | row-scoped. Does **not** yet take `?year=` (returns all years, `orderBy year desc`) — frontend can filter client-side. |
+| GET | `/api/leave/team/balances?year=` | scoped: direct reports (Line Manager) / everyone (HR, Admin) |
+| POST | `/api/leave/balances/adjust` | Admin/HR — body `BalanceAdjustmentInput` → returns a `LeaveLedgerEntry` (raw Prisma shape, see deltas) |
+| GET | `/api/leave/balances/ledger?employeeId=&leaveTypeId=` | Admin/HR/Auditor — note **`leaveTypeId`**, not `leaveTypeCode` (no `code` field exists yet) |
 | POST | `/api/leave/requests` | |
-| POST | `/api/leave/requests/:id/cancel` | owner |
-| POST | `/api/leave/requests/:id/approve` · `/reject` | approver. Frontend wants an optional `{ comment }` body. |
+| GET | `/api/leave/requests?status=&leaveTypeId=&department=&from=&to=` | Admin/HR/Auditor. No `q=` free-text search yet — do client-side filtering on the returned page for now. |
+| GET | `/api/leave/requests/:id` | row-scoped, includes `approvals` (raw `LeaveApproval[]` — see deltas) |
+| POST | `/api/leave/requests/:id/attachment` | owner or Admin/HR — multipart `file`, mirrors the Employee Documents upload |
+| POST | `/api/leave/requests/:id/cancel` | owner or Admin/HR |
+| POST | `/api/leave/requests/:id/approve` · `/reject` | approver — accepts an optional `{ comment }` body, recorded on the `LeaveApproval` row |
 | GET | `/api/leave/requests/employee/:employeeId` | row-scoped |
 | GET | `/api/leave/requests/pending-approvals` | `[]` for non-approvers |
 | GET | `/api/leave/calendar?from=&to=` | frontend maps rows to `TeamCalendarEntry` |
 
-### Planned — needed by screens in this module
-| Method | Path | Consumed by | Shape |
-|---|---|---|---|
-| GET | `/api/leave/requests?status=&leaveTypeId=&department=&from=&to=&q=` | All Requests | `LeaveRequest[]` |
-| GET | `/api/leave/requests/:id` | detail sheet (deep link) | `LeaveRequest` |
-| PATCH | `/api/leave/types/:id` | Leave Types edit | `LeaveType` |
-| GET · POST · PATCH · DELETE | `/api/leave/holidays` (`?year=`) | Holidays | `Holiday` |
-| GET | `/api/leave/team/balances?year=` | Team Balances | `TeamBalanceRow[]` |
-| POST | `/api/leave/balances/adjust` | Balance Adjustments | body `BalanceAdjustmentInput` → `LeaveLedgerEntry` |
-| GET | `/api/leave/balances/ledger?employeeId=&leaveTypeCode=` | Balance Ledger | `LeaveLedgerEntry[]` |
-| GET · PATCH | `/api/leave/settings` | Settings | `LeaveSettings` (backed by `tenant_settings.leave_approval_levels` + new columns) |
-
-### Contract deltas the backend must close
-- **`LeaveType`** — frontend model adds `code`, `accrualFrequency`,
-  `genderRestriction`, `minNoticeDays`, `paid`, `requiresApproval`, `active`,
-  `colorToken`. Some map to FR-LVE-002 fields not yet modelled. Agree the
-  subset for V1; the form can hide the rest.
-- **`LeaveBalance`** — frontend expects `{ accrued, carriedForward, used,
-  pending, year }` per type; `pending` = approved-but-future + in-flight days.
-- **approve/reject** — accept optional `{ comment }`; echo it back on the
-  `LeaveApprovalStep`.
-- **`LeaveRequest.approvals`** — array of `{ level, approverName, approverRole,
-  decidedAt, decision, comment }` so the timeline can render without extra
-  calls.
+### Contract deltas still open
+- **`LeaveType`** — frontend model additionally wants `code`,
+  `genderRestriction`, `minNoticeDays`, `paid`, `active`, `colorToken`.
+  `accrualFrequency` is now modelled; the rest are still frontend-only —
+  low priority until a customer asks (`docs/MODULE_SPECS.md` §4 gap 4).
+- **`LeaveBalance`** — backend returns the raw `{ accrued, used, year,
+  leaveType }` row; it does **not** compute `carriedForward` or `pending`
+  (approved-but-future + in-flight days) — the frontend's client-side
+  `pending` math is still load-bearing here.
+- **`LeaveRequest.approvals`** — backend returns raw `LeaveApproval` rows
+  (`{ level, approverId, approver: Employee | null, decision, decidedAt,
+  comment }`) rather than the frontend's flattened `{ approverName,
+  approverRole, ... }` — the client needs a small mapper (approverRole
+  isn't stored on the approval row at all; look it up from the approver's
+  employee/user record, or omit it).
+- **`LeaveLedgerEntry` / balance-adjust response** — backend returns the
+  raw Prisma row (`employeeId`, `leaveTypeId`, `occurredAt`, `actorUserId`)
+  rather than the frontend's denormalized `{ employeeName, leaveTypeCode,
+  at, actorName }` — needs a join/mapper on the client or a future backend
+  denormalization pass.
 
 ## Screens by role
 

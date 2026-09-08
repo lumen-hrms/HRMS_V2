@@ -26,8 +26,12 @@
 > `PATCH .../role` · `PATCH .../status` · `POST .../password-reset` ·
 > `GET /api/access/audit` · `.../:id/activity`), `LoginAuditEntry` table +
 > append-only login-audit writes on `POST /api/auth/session`,
-> `VITE_ACCESS_MOCK` now defaults **off**; + in-progress Leave UI rebuild,
-> see `docs/LEAVE_UI_SPECS.md`).
+> `VITE_ACCESS_MOCK` now defaults **off**; + Leave Management backend gap
+> closure — Line Manager visibility, holiday calendar, attachments,
+> configurable approval levels + escalation timers (new BullMQ `leave`
+> queue / Redis), a minimal accrual job, and the remaining planned
+> endpoints, see §4; + in-progress Leave UI rebuild, see
+> `docs/LEAVE_UI_SPECS.md`).
 >
 > **Keep the status table + per-module progress bars current on every change** —
 > if a commit moves a module, move its bar (status mark, ASCII bar, %), its
@@ -47,10 +51,10 @@
 
 | Module | Status | Progress |
 |---|---|---|
-| 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ | `███████████████████░` 97% — auth/RBAC/tenancy live; `access` module wired (Users, role/status/reset, login+access audit, My Account) with e2e RBAC + append-only tests; `LoginAuditEntry` table written on every session outcome. Remaining: `BAD_CREDENTIALS`/`TENANT_SUSPENDED` not server-observable (§1 gaps); Line-Manager leave scoping (§4) |
+| 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ | `███████████████████░` 97% — auth/RBAC/tenancy live; `access` module wired (Users, role/status/reset, login+access audit, My Account) with e2e RBAC + append-only tests; `LoginAuditEntry` table written on every session outcome. Remaining: `BAD_CREDENTIALS`/`TENANT_SUSPENDED` not server-observable (§1 gaps) |
 | 2. Platform Admin | ✅ | `██████████████████░░` 90% |
 | 3. Employee Master + Org Structure | 🟡 | `█████████████████░░░` 85% |
-| 4. Leave Management | 🟡 | `█████████████████░░░` 86% — BE ~80%; FE rebuild underway (foundation + Employee + Line Manager screens done; HR / Company Admin / Auditor screens next) |
+| 4. Leave Management | 🟡 | `███████████████████░` 93% — BE ~95% (all 6 tracked backend gaps closed: LM visibility, holidays, attachments, configurable approval levels + escalation timers, accrual job, missing endpoints); FE rebuild underway (foundation + Employee + Line Manager screens done; HR / Company Admin / Auditor screens next, still on `VITE_LEAVE_MOCK`) |
 | 5. Attendance & Time Tracking | 🟡 | `███████████░░░░░░░░░░` 55% |
 | 6. Dashboard | ✅ | `█████████████████░░░` 85% |
 | 7. Payroll Engine | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
@@ -182,7 +186,6 @@ creation) and on every role change. Never trust a claim the client could set.
   operator's suspend/resume action (module 02).
 - **Retention purge** — `LoginAuditEntry` has a 2-year retention
   requirement; the scheduled purge job is not built yet.
-- Tighten the Line-Manager visibility placeholder in Leave (see §4).
 - Decide if/when SSO (FR-AUTH-003) re-enters scope for the hospital pilot.
 
 ---
@@ -335,53 +338,59 @@ must validate and report per-row rather than fail the batch.
 **Deep spec:** `docs/modules/04_LEAVE_MANAGEMENT.md` *(pending)* ·
 **UI prompt:** `docs/ui-build-prompts/04-leave-management.md` ·
 **API contract:** `docs/LEAVE_UI_SPECS.md`
-**Status:** 🟡 — BE ~80%; FE being rebuilt role-by-role (UI-first, ahead of the
-remaining BE). Progress + per-screen contract: `docs/LEAVE_UI_SPECS.md`.
-**Code:** `apps/api/src/leave`, `apps/web/src/pages/leave`,
-`apps/web/src/lib/leave` (typed client + fixture/mock layer — screens run
-without the `planned` endpoints; `VITE_LEAVE_MOCK=false` switches to live)
+**Status:** 🟡 — BE ~95% (the 6 tracked backend gaps are closed; remaining
+gap is FE wiring + comp-off/attendance-sync, deliberately deferred); FE
+being rebuilt role-by-role (UI-first). Progress + per-screen contract:
+`docs/LEAVE_UI_SPECS.md`.
+**Code:** `apps/api/src/leave` (service/controller + `leave-escalation.processor.ts` /
+`leave-accrual.processor.ts` on a new BullMQ `leave` queue — see `docker-compose.yml`'s
+`redis` service), `apps/web/src/pages/leave`, `apps/web/src/lib/leave` (typed
+client + fixture/mock layer — `VITE_LEAVE_MOCK=false` switches to live)
 
 ### Expectation
 
 Configurable leave types with quotas and carry-forward; per-employee
 per-year balances; a multi-level approval workflow; balance deduction
-only on final approval; and (eventually) a holiday calendar so day counts
-are working-days, not raw calendar days. Approved leave must reconcile
-with attendance and flag LOP when the balance is short.
+only on final approval; and a holiday calendar so day counts are
+working-days, not raw calendar days. Approved leave must reconcile with
+attendance and flag LOP when the balance is short.
 
 ### Feature list
 
 | Feature | SRS | V1 status |
 |---|---|---|
-| Leave type definitions (CL/SL/EL/…); quota + carry-forward cap | FR-LVE-001 | 🟡 `LeaveType` has `annualQuota`, `carryForwardCap`; **gender restriction, accrual frequency, encashment, min-notice not modelled** (FR-LVE-002) |
-| Per-employee per-year balances; init for a year | FR-LVE-004 | 🟡 `initializeYearlyBalances()` upserts; **no auto-accrual on a date, no mid-year proration** |
-| Company holiday calendar (national + state optional) | FR-LVE-003 | 🔴 **not built** — `apply()` counts inclusive calendar days |
-| Apply for leave (dates, type, reason, attachment) | FR-LVE-005 | 🟡 dates/type/reason ✅; **attachment not wired** |
-| Multi-level approval (up to 4) + escalation timers | FR-LVE-006 | 🟡 **2 levels** (`PENDING_L1 → PENDING_L2 → APPROVED`); no escalation timers. No L1 manager ⇒ starts at L2 |
-| Team calendar shown before submitting | FR-LVE-007 | 🟡 `GET /leave/calendar` exists; **no frontend screen consumes it** |
-| Approved leave syncs to attendance; flags LOP | FR-LVE-008 | 🟡 `isLop` computed on apply; **no attendance sync** (Attendance module is young) |
-| Comp-off credit for holiday/weekend work | FR-LVE-009 | 🔴 |
+| Leave type definitions (CL/SL/EL/…); quota + carry-forward cap + accrual frequency | FR-LVE-001 | 🟡 `LeaveType` has `annualQuota`, `carryForwardCap`, `accrualFrequency` (ANNUAL/MONTHLY/QUARTERLY); **gender restriction, encashment, min-notice, short `code` still not modelled** (FR-LVE-002 — deliberately out of scope, frontend-only fields for now) |
+| Per-employee per-year balances; init for a year | FR-LVE-004 | 🟡 `initializeYearlyBalances()` upserts ANNUAL types; MONTHLY/QUARTERLY types now auto-accrue via `LeaveAccrualProcessor` (daily BullMQ job, idempotent via `LeaveLedgerEntry`); **no mid-year proration for new joiners** |
+| Company holiday calendar (national + state optional) | FR-LVE-003 | ✅ `Holiday` table + full CRUD (`/api/leave/holidays`); `apply()` counts working days (holidays + `TenantSettings.weeklyOffDays` excluded) |
+| Apply for leave (dates, type, reason, attachment) | FR-LVE-005 | ✅ dates/type/reason/attachment all wired (`POST /api/leave/requests/:id/attachment`, reuses `StorageService`) |
+| Multi-level approval (1 or 2, tenant-configurable) + escalation timers | FR-LVE-006 | ✅ `TenantSettings.leaveApprovalLevels` (1 or 2) now actually read by `apply()` — previously hardcoded to 2. `LeaveEscalationProcessor` auto-escalates an undecided L1 to L2 after `leaveEscalationDays`, and flags an undecided L2 for manual HR follow-up (no auto-approve). *(The old SRS's "up to 4 levels" is stale — the schema/FE contract cap V1 at 2; see `CLAUDE.md`.)* |
+| Team calendar shown before submitting | FR-LVE-007 | 🟡 `GET /leave/calendar` exists; **no frontend screen consumes it on the Apply tab** (Team Calendar tab does) |
+| Approved leave syncs to attendance; flags LOP | FR-LVE-008 | 🟡 `isLop` computed on apply; **no attendance sync** (Attendance module is young — deliberately deferred) |
+| Comp-off credit for holiday/weekend work | FR-LVE-009 | 🔴 deliberately deferred |
 | Notifications (apply/approve/reject/expiry) | FR-LVE-010 | 🔴 (see §10) |
-| Cancel — reverses an approved non-LOP deduction | — | ✅ `cancel()` |
-
-**Scope cut:** day count is an *inclusive calendar-day* count (documented
-in `apply()`), not working days — acceptable for demo, fix before a
-paying customer runs payroll off it.
+| Cancel — reverses an approved non-LOP deduction | — | ✅ `cancel()`, now also logs a `LeaveLedgerEntry` |
+| Decision/escalation history, HR balance adjustments, ledger | — | ✅ new `LeaveApproval` (append-only decision/escalation log) and `LeaveLedgerEntry` (balance-movement audit trail) tables |
 
 ### Happy path (employee applies)
 
 1. Employee → **Leave** → sees balances per type (`accrued − used`).
-2. Clicks **Apply**, picks type + from/to dates + reason.
-3. `POST /api/leave/requests` → server computes inclusive day count,
-   compares to available balance, sets `isLop = true` if short (but still
-   creates the request), routes to `PENDING_L1` (or `PENDING_L2` if the
-   employee has no `reportingManagerId`).
+2. Clicks **Apply**, picks type + from/to dates + reason (+ optional attachment).
+3. `POST /api/leave/requests` → server computes a **working-day** count
+   (holidays + weekly-offs excluded), compares to available balance, sets
+   `isLop = true` if short (but still creates the request), and routes to
+   `PENDING_L1` (or straight to `PENDING_L2` if the tenant is configured
+   for 1 approval level, or if the employee has no `reportingManagerId`).
+   A delayed escalation job is scheduled for `leaveEscalationDays` out.
 4. Line Manager → **Leave** → **Pending approvals** → `POST
-   .../requests/:id/approve` → status → `PENDING_L2`.
-5. HR Manager approves → status → `APPROVED`; `adjustBalance()` deducts
-   the days **only now**, and **only if** `!isLop`.
+   .../requests/:id/approve` (optional `{ comment }`) → status →
+   `PENDING_L2`; a fresh L2 escalation job is scheduled. If the manager
+   doesn't act in time, the escalation job auto-advances the request to
+   `PENDING_L2` and logs an `ESCALATED` `LeaveApproval` entry instead.
+5. HR Manager approves → status → `APPROVED`; the balance is deducted
+   **only now**, and **only if** `!isLop` — logged as a `LeaveLedgerEntry`.
 6. Employee sees the request as approved; balance reflects the deduction.
-   If they later cancel, a non-LOP approved deduction is added back.
+   If they later cancel, a non-LOP approved deduction is added back (also
+   ledgered).
 
 ### Functionalities / API
 
@@ -389,10 +398,20 @@ paying customer runs payroll off it.
 |---|---|---|
 | `GET` | `/api/leave/types` | any (tenant) |
 | `POST` | `/api/leave/types` | Company Admin, HR Manager |
+| `PATCH` | `/api/leave/types/:id` | Company Admin, HR Manager |
 | `POST` | `/api/leave/types/:id/initialize/:year` | Company Admin, HR Manager |
+| `GET` · `POST` | `/api/leave/holidays?year=` | any (read) · Company Admin/HR Manager (write) |
+| `PATCH` · `DELETE` | `/api/leave/holidays/:id` | Company Admin, HR Manager |
+| `GET` · `PATCH` | `/api/leave/settings` | any (read) · Company Admin (write) |
 | `GET` | `/api/leave/balances/:employeeId` | any (row-scoped) |
+| `GET` | `/api/leave/team/balances?year=` | any (scoped: direct reports for Line Manager, all for HR/Admin) |
+| `POST` | `/api/leave/balances/adjust` | Company Admin, HR Manager |
+| `GET` | `/api/leave/balances/ledger?employeeId=&leaveTypeId=` | Company Admin, HR Manager, Auditor |
 | `POST` | `/api/leave/requests` | any (tenant) |
-| `POST` | `/api/leave/requests/:id/cancel` | any (owner) |
+| `GET` | `/api/leave/requests?status=&leaveTypeId=&department=&from=&to=` | Company Admin, HR Manager, Auditor |
+| `GET` | `/api/leave/requests/:id` | row-scoped (includes `approvals[]` history) |
+| `POST` | `/api/leave/requests/:id/attachment` | owner or Company Admin/HR Manager |
+| `POST` | `/api/leave/requests/:id/cancel` | any (owner) or Company Admin/HR Manager |
 | `POST` | `/api/leave/requests/:id/approve` | Line Manager, HR Manager, Company Admin |
 | `POST` | `/api/leave/requests/:id/reject` | Line Manager, HR Manager, Company Admin |
 | `GET` | `/api/leave/requests/employee/:employeeId` | any (row-scoped) |
@@ -401,16 +420,18 @@ paying customer runs payroll off it.
 
 ### Known gaps / TODO (priority order)
 
-1. **Tighten `assertCanViewEmployee()` `LINE_MANAGER` branch** — currently
-   permissive ("MVP scope"); must verify `reportingManagerId` chain.
-   P1 before real customer data.
-2. **Holiday calendar** — new `Holiday` table (tenant + date + optional +
-   state); `apply()` counts working days.
-3. Attachment upload on a leave request (reuse `StorageService`).
-4. Team-calendar frontend on the apply screen.
-5. Leave ↔ attendance reconciliation once Attendance matures (§5).
-6. Richer `LeaveType` config (accrual frequency, gender, min notice,
-   encashment) + scheduled accrual job (BullMQ).
+1. Leave ↔ attendance reconciliation once Attendance matures (§5) —
+   deliberately deferred.
+2. Comp-off credit for holiday/weekend work — deliberately deferred.
+3. Team-calendar preview on the Apply tab itself (the dedicated Team
+   Calendar tab already works).
+4. Richer `LeaveType` config (gender restriction, min notice, encashment,
+   short `code`) — frontend-only today; low priority until a customer asks.
+5. Mid-year proration for new joiners in the accrual job.
+6. Flip `apps/web/src/lib/leave` off `VITE_LEAVE_MOCK` now that the backend
+   contract is live, and wire `all-requests.tsx` / Leave Types CRUD /
+   Balance Adjustments / Ledger / Settings tabs into `pages/leave/index.tsx`
+   (currently placeholder — see `docs/LEAVE_UI_SPECS.md`).
 
 ---
 
