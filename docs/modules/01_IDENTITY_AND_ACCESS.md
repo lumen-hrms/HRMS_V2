@@ -6,11 +6,13 @@
 > permission matrix, acceptance criteria.
 >
 > **Status:** ✅ auth / RBAC / tenant-isolation live and test-verified ·
-> 🟡 login audit trail not wired (backend) · 🟡 access-management screens built
-> against a mock client (`VITE_ACCESS_MOCK`) — `/api/access/*` endpoints pending ·
-> 🟡 Line-Manager row-scoping permissive in Leave.
-> **Progress:** ~90% (see `docs/MODULE_SPECS.md` status table — keep both in sync).
-> **Code:** `apps/api/src/auth`, `apps/api/src/firebase`,
+> ✅ login audit trail wired — append-only `LoginAuditEntry` written on every
+> server-observed `POST /api/auth/session` outcome ·
+> ✅ `access` module wired (`/api/access/*`), e2e-tested; `VITE_ACCESS_MOCK`
+> now defaults **off** · 🟡 Line-Manager row-scoping permissive in Leave ·
+> 🟡 `BAD_CREDENTIALS` / `TENANT_SUSPENDED` not server-observable (§9).
+> **Progress:** ~97% (see `docs/MODULE_SPECS.md` status table — keep both in sync).
+> **Code:** `apps/api/src/auth`, `apps/api/src/access`, `apps/api/src/firebase`,
 > `apps/api/src/common/{guards,decorators,tenancy}`, `apps/api/src/prisma`,
 > `apps/web/src/lib/auth`, `apps/web/src/context/auth-context.tsx`,
 > `apps/web/src/components/protected-route.tsx` (route guard),
@@ -40,8 +42,8 @@ reach any tenant data. It answers three questions on every call:
 **In scope:** tenant login (Firebase hosted), platform-admin login (separate
 Firebase project/claim), subdomain→tenant resolution, the request guard
 chain, Postgres Row-Level Security (RLS) session-variable wiring, the fixed
-V1 role set, service-layer row scoping, and the (not-yet-built) login audit
-log.
+V1 role set, service-layer row scoping, the login audit log, and the
+`access` module (user administration + audit read APIs).
 
 **Out of scope / deferred** (do not build without a scope discussion —
 `CLAUDE.md` → "Explicitly deferred"): MFA/TOTP, SSO (Google / Azure AD),
@@ -189,23 +191,35 @@ colleague's salary) layered **on top of** RLS, not instead of it.
   `employeeId` → `Employee`. `@@index([tenantId])`, `@@unique([tenantId, email])`.
 - `UserRole` enum — `COMPANY_ADMIN · HR_MANAGER · LINE_MANAGER · EMPLOYEE ·
   AUDITOR` (no `PLATFORM_ADMIN` here — that persona is not a tenant row).
-- **`LoginAuditEntry`** *(TODO — not in schema yet)* — `id`, `tenantId`,
-  `email`, `userId?`, `outcome` (`SUCCESS|BAD_CREDENTIALS|USER_INACTIVE|
-  TENANT_SUSPENDED|CLAIM_MISMATCH`), `ip`, `userAgent`, `at`. Append-only
-  (no `UPDATE`/`DELETE` grant for `hrms_app`), 2-year retention.
+- **`LoginAuditEntry`** ✅ (migration `20260908074457_identity_access_audit`)
+  — `id`, `tenantId`, `email`, `userId?`, `outcome`
+  (`SUCCESS|USER_INACTIVE|CLAIM_MISMATCH|TOKEN_EXPIRED` — only server-observed
+  outcomes; `BAD_CREDENTIALS`/`TENANT_SUSPENDED` never reach the session
+  handler, see §9), `ipAddress`, `userAgent`, `at`. Append-only: `hrms_app`
+  holds `SELECT, INSERT` only — no `UPDATE`/`DELETE` grant — plus the usual
+  `FORCE` RLS. 2-year retention (purge job TODO). The same migration also
+  retro-revokes `UPDATE, DELETE` on `public.audit_log` from `hrms_app`.
+- **Access-change events** reuse `public.audit_log` — action namespaced
+  `access.role_changed` / `access.user_activated` / `access.user_deactivated`
+  / `access.password_reset_sent` / `access.user_created`, with a
+  self-contained `metadata` snapshot (`module: "identity-access"`,
+  `actorName`, `actorRole`, `targetEmail`, `before`, `after`, `note`) so
+  `GET /api/access/audit?feed=access` maps straight to the frontend
+  `AccessAuditEntry` shape with no joins.
 
 ### 4.4 API surface
 
 | Method | Path | Guard | Notes |
 |---|---|---|---|
-| `POST` | `/api/auth/session` | `@Public` (tenant-scoped) | Body `{ idToken }`. Verifies the Firebase token, reads `tenantId`/`role` claims, confirms an active `public.users` row in the resolved tenant, returns the session user. Writes a `LoginAuditEntry` (TODO). |
+| `POST` | `/api/auth/session` | `@Public` (tenant-scoped) | Body `{ idToken }`. Verifies the Firebase token, reads `tenantId`/`role` claims, confirms an active `public.users` row in the resolved tenant, returns the session user. ✅ Writes one append-only `LoginAuditEntry` per outcome (`req.ip` needs `trust proxy`, set in `main.ts`). |
 | `GET` | `/api/auth/me` | `JwtAuthGuard` + `TenantGuard` | Current `AuthenticatedUser` from the token + `users` row. |
-| `POST` | `/api/auth/logout` | `JwtAuthGuard` | Client-side Firebase sign-out; server records the event (TODO audit). |
-| `GET` | `/api/access/users` | `@Roles(COMPANY_ADMIN, HR_MANAGER, AUDITOR)` | List tenant users: email, role, linked employee, `isActive`, last login. *(TODO — thin wrapper over `users` + audit.)* |
-| `PATCH` | `/api/access/users/:id/role` | `@Roles(COMPANY_ADMIN)` | Change role. HR Manager cannot call this in V1. Sets the Firebase custom claim + updates the row + audit. *(TODO.)* |
-| `PATCH` | `/api/access/users/:id/status` | `@Roles(COMPANY_ADMIN, HR_MANAGER)` | Activate / deactivate a login. *(TODO — today handled implicitly via employee lifecycle.)* |
-| `POST` | `/api/access/users/:id/password-reset` | `@Roles(COMPANY_ADMIN, HR_MANAGER)` | Trigger the Firebase hosted reset email. *(TODO.)* |
-| `GET` | `/api/access/audit` | `@Roles(COMPANY_ADMIN, AUDITOR)` | Login + role-change trail, filterable. *(TODO — depends on `LoginAuditEntry`.)* |
+| `GET` | `/api/access/me` | `JwtAuthGuard` + `TenantGuard` | ✅ Signed-in user's own row as `AccessUser` + `tenantName` (My Account). Any tenant role. |
+| `GET` | `/api/access/users` | `@Roles(COMPANY_ADMIN, HR_MANAGER, AUDITOR)` | ✅ `users` ⨝ `employee` ⨝ `department` + latest `SUCCESS` `LoginAuditEntry` (→ `lastLoginAt/Ip/Device`). |
+| `PATCH` | `/api/access/users/:id/role` | `@Roles(COMPANY_ADMIN)` | ✅ RULE-2 ceiling; rejects a no-op change; blocks demoting the last active Company Admin; sets the Firebase `role` claim, then updates the row + writes `access.role_changed`. |
+| `PATCH` | `/api/access/users/:id/status` | `@Roles(COMPANY_ADMIN, HR_MANAGER)` | ✅ No self-deactivation; keeps ≥1 active Company Admin; sets Firebase `disabled` + `revokeRefreshTokens` on deactivate; writes `access.user_activated/deactivated`. |
+| `POST` | `/api/access/users/:id/password-reset` | `@Roles(COMPANY_ADMIN, HR_MANAGER)` | ✅ Sends Firebase's hosted reset email via the Identity Toolkit REST API (`accounts:sendOobCode`, `FIREBASE_WEB_API_KEY`); writes `access.password_reset_sent`. |
+| `GET` | `/api/access/audit?feed=login\|access` | `@Roles(COMPANY_ADMIN, AUDITOR)` | ✅ `login` = `LoginAuditEntry` feed (outcome-coded); `access` = `audit_log` `access.*` feed. Filters: `outcome`/`action`, `from`, `to`, `q`. |
+| `GET` | `/api/access/users/:id/activity` | `@Roles(COMPANY_ADMIN, HR_MANAGER, AUDITOR)` | ✅ Merged last-N login + access-change items for the detail drawer. |
 
 Custom claims (`tenantId`, `role`, and for the operator `type:
 platform_admin`) are **set server-side via the Admin SDK** at user creation
@@ -246,10 +260,11 @@ trust a claim the client could set.
   - Role predicates: `apps/web/src/lib/roles.ts` — `canViewAccessModule`,
     `canManageUsers`, `canChangeUserRole`, `canReadAudit`, `assignableRoles`
     (RULE-2 ceiling).
-  - **All mutations run through `apps/web/src/lib/access/client.ts` behind
-    `VITE_ACCESS_MOCK` (default on)** — fixture store mirrors the server
-    rules (privilege ceiling, keep ≥1 active Company Admin, no self-
-    deactivation) so the screens round-trip before the API exists.
+  - **All calls run through `apps/web/src/lib/access/client.ts`, which now
+    hits the real `/api/access/*` endpoints by default.**
+    `VITE_ACCESS_MOCK=true` forces the in-memory fixture store back on
+    (design review / offline); the fixtures still mirror the server rules
+    (privilege ceiling, keep ≥1 active Company Admin, no self-deactivation).
 
 ### 4.6 Configuration & environment
 
@@ -259,6 +274,17 @@ trust a claim the client could set.
   connection string for `prisma migrate deploy` only.
 - Firebase: tenant project + separate platform-admin project; Admin SDK
   service-account credentials server-side only.
+- `FIREBASE_WEB_API_KEY` — the project's Web API key (not a secret; also in
+  the web client). Used server-side by `POST /api/access/users/:id/password-reset`
+  to call the Identity Toolkit REST endpoint that sends Firebase's hosted
+  reset email (the Admin SDK can only *generate* the link, not send it).
+- `trust proxy` is enabled in `apps/api/src/main.ts` so `req.ip` (written to
+  `LoginAuditEntry`) is the real client behind CloudFront/ALB, not the proxy.
+- **No Firebase Auth emulator.** Dev, tests and CI all use a real Firebase
+  project (`FIREBASE_SERVICE_ACCOUNT_JSON` + `FIREBASE_WEB_API_KEY` +
+  `FIREBASE_PROJECT_ID`). The e2e suite signs in against it and cleans up
+  its `e2e-*@example.test` users in `afterAll` (`test/utils/fixtures.ts`,
+  with retry/backoff for Firebase's burst-auth throttling).
 
 ---
 
@@ -275,21 +301,25 @@ trust a claim the client could set.
 4. Backend: verify token → read `tenantId` / `role` claims → assert
    `claims.tenantId === req.tenantId` → confirm an **active** `public.users`
    row for that `firebaseUid` in `acme` → return the session user →
-   write a `SUCCESS` `LoginAuditEntry` *(TODO)*.
+   write a `SUCCESS` `LoginAuditEntry` (append-only).
 5. SPA stores nothing secret; the Firebase SDK holds the session and
    auto-refreshes the token. Every API call carries
    `Authorization: Bearer <idToken>`.
 6. Each subsequent request runs the full pipeline in §4.1.
 
-### 5.2 Login failure paths (all must record an audit entry — TODO)
+### 5.2 Login failure paths
 
-| Situation | Result |
-|---|---|
-| Wrong password / unknown email | Firebase rejects client-side; SPA shows a generic "invalid credentials" (no account-existence leak). No server call. |
-| Valid Firebase user, but `tenantId` claim ≠ subdomain | `POST /api/auth/session` → 403 `CLAIM_MISMATCH`. |
-| Valid user, `isActive = false` | 403 `USER_INACTIVE`. |
-| Tenant `SUSPENDED` | 403 `TENANT_SUSPENDED` at `TenantResolutionMiddleware` — before auth even runs. |
-| Token expired mid-session | SDK refreshes silently; if refresh fails (user disabled in Firebase), SPA routes to login. |
+Every outcome that **reaches `POST /api/auth/session`** is recorded as one
+append-only `LoginAuditEntry` (with IP + user-agent). The two that don't
+are noted below and in §9.
+
+| Situation | Result | Audited? |
+|---|---|---|
+| Wrong password / unknown email | Firebase rejects client-side; SPA shows a generic "invalid credentials" (no account-existence leak). No server call. | ❌ `BAD_CREDENTIALS` — server never sees it (§9) |
+| Valid Firebase user, but `tenantId` claim ≠ subdomain | `POST /api/auth/session` → 401 `CLAIM_MISMATCH`. | ✅ `CLAIM_MISMATCH` |
+| Valid user, `isActive = false` | 401 `USER_INACTIVE`. | ✅ `USER_INACTIVE` |
+| `verifyIdToken` rejects the token (expired / revoked / disabled user) | `POST /api/auth/session` → 401. | ✅ `TOKEN_EXPIRED` (email best-effort from the unverified payload) |
+| Tenant `SUSPENDED` | 403 at `TenantResolutionMiddleware` — before the session handler. | ❌ per-request; instead one `tenant.status_changed` row in `platform_audit_log` on suspend/resume (§9) |
 
 ### 5.3 HR Manager creates an employee with a login
 
@@ -387,28 +417,45 @@ stateless per request. No server session store to expire.
 
 ## 9. Known gaps / TODO (priority order)
 
-1. **Login audit log** (functional exp. #8) — **backend still open.** Add
-   `LoginAuditEntry` table + append-only grant + write on every
-   `POST /api/auth/session` outcome (success and every failure code), with
-   IP + user-agent + tenant. 2-year retention. **Highest-value gap.** Feeds
-   module 12 and the Auditor screens. *(The Auditor/Admin UI for it is built —
-   `apps/web/src/pages/access` `Audit` tab — reading a fixture store until
-   this lands.)*
-2. **Tighten Line-Manager row scoping in Leave** — replace the permissive
+**Closed** since the last sync (commit adding `apps/api/src/access`):
+- ✅ **Login audit log** (functional exp. #8) — `LoginAuditEntry` table +
+  append-only grant + `AuthService.session()` writes one row per outcome
+  with IP + user-agent. `main.ts` sets `trust proxy` for a real `req.ip`.
+- ✅ **Access-management API** — the NestJS `access` module is built
+  (`/access/users`, `/access/me`, `PATCH .../role`, `PATCH .../status`,
+  `POST .../password-reset`, `/access/audit`, `.../:id/activity`), e2e-tested
+  (`test/access.e2e-spec.ts`: RBAC matrix, RULE-2 ceiling, last-admin block,
+  self-deactivation block, append-only enforcement, tenant isolation).
+  `VITE_ACCESS_MOCK` now defaults **off**.
+- ✅ **Access-change trail** — role / status / reset / login-created events
+  land in append-only `audit_log` (`access.*` actions).
+
+**Still open:**
+
+1. **`BAD_CREDENTIALS` is not audited** — wrong password / unknown email is
+   rejected entirely inside the Firebase client SDK; there is no server
+   call, so the server cannot record it. Owner-approved for V1: record only
+   server-observed outcomes. (A future SPA "login-failed" beacon could
+   close this.)
+2. **`TENANT_SUSPENDED` is not audited per-request** — rejected pre-auth in
+   `TenantResolutionMiddleware`. Instead, `PlatformAdminService.updateTenantStatus()`
+   writes one `tenant.status_changed` row to `platform_audit_log` on the
+   operator's suspend/resume action. (`platform_audit_log` is append-only
+   by convention only — tighten its grants in module 02/12.)
+3. **`LoginAuditEntry` retention purge** — the 2-year retention requirement
+   needs a scheduled purge job (not built).
+4. **Tighten Line-Manager row scoping in Leave** — replace the permissive
    `assertCanViewEmployee()` `LINE_MANAGER` branch with a real
    `reportingManagerId`-chain check. P1 before real customer data.
-3. **Access-management API** — `GET /api/access/users`, `PATCH .../role`,
-   `PATCH .../status`, `POST .../password-reset`, `GET /api/access/audit`.
-   **Screens done** (`apps/web/src/pages/access`, built to this contract
-   behind `VITE_ACCESS_MOCK`); the NestJS `access` module is the remaining
-   work — flip the mock flag off once it exists. Today role/login management
-   is still only a side-effect of Employee Master server-side.
-4. **Role-change propagation window** — document (and surface in the UI) the
-   ≤ 1 h claim-refresh delay; consider a force-refresh signal later.
-5. **Update `docs/BACKEND_ARCHITECTURE.md` §3** — it still documents the
+5. **Role-change propagation window** — document (and surface in the UI) the
+   ≤ 1 h claim-refresh delay; consider a force-refresh signal later. The
+   `access` module updates the DB `users.role` immediately (authoritative
+   for authorization — `JwtAuthGuard` reads role from the row, not the
+   token), so only the token *claim* lags.
+6. **Update `docs/BACKEND_ARCHITECTURE.md` §3** — it still documents the
    removed self-issued-JWT/bcrypt/MFA/refresh-cookie stack. Rewrite to the
    Firebase model to keep the traced reference honest.
-6. **Decide SSO re-entry** for the hospital pilot (`FR-AUTH-003`) — currently
+7. **Decide SSO re-entry** for the hospital pilot (`FR-AUTH-003`) — currently
    deferred; hospitals often require Azure AD.
 
 ---
@@ -441,9 +488,17 @@ stateless per request. No server session store to expire.
       `SELECT` from `public.*`.
 - [ ] Suspending a tenant 403s an already-authenticated user's next request.
 - [ ] Deactivating a user 403s their next request with a still-valid token.
-- [ ] HR Manager cannot assign `COMPANY_ADMIN` (API rejects, UI hides it).
-- [ ] Every `POST /api/auth/session` outcome writes exactly one append-only
-      audit entry (once #9.1 lands).
+- [x] HR Manager cannot assign `COMPANY_ADMIN` (API rejects, UI hides it) —
+      `test/access.e2e-spec.ts`.
+- [x] Every `POST /api/auth/session` outcome the server observes writes
+      exactly one append-only `LoginAuditEntry` (`test/access.e2e-spec.ts`,
+      `test/auth.e2e-spec.ts`). `BAD_CREDENTIALS`/`TENANT_SUSPENDED` excluded
+      by design (§9).
+- [x] `access` module RBAC + invariants: `test/access.e2e-spec.ts` (role
+      ceiling, last-active-Company-Admin block on role + status,
+      self-deactivation block, `reason` min-length, `hrms_app` cannot
+      `UPDATE`/`DELETE` `login_audit_entries` or `audit_log`, no
+      cross-tenant login/audit leakage).
 
 ---
 

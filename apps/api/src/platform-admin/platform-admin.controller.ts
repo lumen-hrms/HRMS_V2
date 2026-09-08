@@ -1,5 +1,7 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import type { Request } from 'express';
 import { PlatformJwtAuthGuard } from '../common/guards/platform-jwt-auth.guard';
+import type { AuthenticatedPlatformAdmin } from './platform-admin.types';
 import { PlatformAdminService } from './platform-admin.service';
 import {
   CreateTenantDto,
@@ -33,7 +35,11 @@ export class PlatformAdminController {
 
   @UseGuards(PlatformJwtAuthGuard)
   @Patch('tenants/:id/status')
-  updateStatus(@Param('id') id: string, @Body() dto: UpdateTenantStatusDto) {
-    return this.service.updateTenantStatus(id, dto.status);
+  updateStatus(
+    @Param('id') id: string,
+    @Body() dto: UpdateTenantStatusDto,
+    @Req() req: Request & { user?: AuthenticatedPlatformAdmin },
+  ) {
+    return this.service.updateTenantStatus(id, dto.status, req.user?.email);
   }
 }

@@ -37,7 +37,7 @@ if (!admin.apps.length) {
 const firebaseAuth = admin.auth();
 
 /** Creates the Firebase user if it doesn't exist yet, otherwise reuses it —
- * makes the seed script safe to re-run against the same emulator/project. */
+ * makes the seed script safe to re-run against the same project. */
 async function upsertFirebaseUser(
   email: string,
   password: string,
@@ -130,8 +130,8 @@ async function seedTenant(name: string, subdomain: string, employees: SeedEmploy
     // Pass 1: create users + employees without manager links, using the
     // Firebase uid resolved up front (see below) — external network calls
     // must never happen inside this DB transaction, or a slow round-trip to
-    // a real Firebase project (unlike the near-instant local emulator) can
-    // outlast Prisma's interactive-transaction timeout.
+    // a real Firebase project can outlast Prisma's interactive-transaction
+    // timeout.
     for (const spec of employees) {
       const firebaseUid = firebaseUidByCode.get(spec.code)!;
       const user = await tx.user.upsert({
@@ -311,9 +311,8 @@ async function main() {
 
   // eslint-disable-next-line no-console
   console.log(`
-Seed complete. Every account below is a real Firebase Auth user
-(FIREBASE_AUTH_EMULATOR_HOST must be set for local dev, or these land in
-your real Firebase project).
+Seed complete. Every account below is a real Firebase Auth user in the
+project configured by FIREBASE_PROJECT_ID / FIREBASE_SERVICE_ACCOUNT_JSON.
 
 Platform admin console:
   email:    ${founderEmail}

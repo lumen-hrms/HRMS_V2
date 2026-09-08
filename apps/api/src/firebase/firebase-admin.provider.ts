@@ -10,15 +10,11 @@ import type { AppConfig } from '../config/configuration';
  * this app now — there is no app-issued JWT to separately configure.
  *
  * Credential resolution:
- *   - `FIREBASE_SERVICE_ACCOUNT_JSON` (a full service-account JSON blob, as
- *     a single env var) is used when present — the real path in staging/
- *     production.
- *   - Otherwise falls back to Application Default Credentials. Against the
- *     Firebase Auth Emulator (`FIREBASE_AUTH_EMULATOR_HOST` set — dev/CI),
- *     the Admin SDK talks to the emulator over plain HTTP and doesn't
- *     actually need valid credentials for the operations this app uses
- *     (verifyIdToken, createUser, setCustomUserClaims), so this is safe to
- *     leave unconfigured locally.
+ *   - `FIREBASE_SERVICE_ACCOUNT_JSON` (a full service-account JSON blob as a
+ *     single env var) is used when present — the required path everywhere
+ *     (local dev, CI, staging, production; there is no emulator anymore).
+ *   - Otherwise falls back to Application Default Credentials (e.g. a
+ *     workload-identity setup on the host).
  */
 export const FIREBASE_AUTH = 'FIREBASE_AUTH';
 

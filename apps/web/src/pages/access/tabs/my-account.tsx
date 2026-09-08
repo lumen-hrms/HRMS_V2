@@ -8,8 +8,7 @@ import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/context/auth-context';
 import { auth } from '@/lib/firebase';
 import { accessApi } from '@/lib/access/client';
-import type { AccessUser } from '@/lib/access/types';
-import { MOCK_TENANT_NAME } from '@/lib/access/fixtures';
+import type { AccessSelf } from '@/lib/access/types';
 import { RoleBadge, UserStatusBadge, fmtDateTimeIST, fmtDateIST, fmtRelative, humanizeEmail } from '../shared';
 
 /**
@@ -20,16 +19,17 @@ import { RoleBadge, UserStatusBadge, fmtDateTimeIST, fmtDateIST, fmtRelative, hu
 export function MyAccountTab() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [me, setMe] = React.useState<AccessUser | null>(null);
+  const [me, setMe] = React.useState<AccessSelf | null>(null);
   const [loaded, setLoaded] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
 
   React.useEffect(() => {
     if (!user) return;
-    accessApi.listUsers().then((list) => {
-      setMe(list.find((u) => u.email === user.email) ?? null);
-      setLoaded(true);
-    });
+    accessApi
+      .getMe()
+      .then(setMe)
+      .catch(() => setMe(null))
+      .finally(() => setLoaded(true));
   }, [user?.email]);
 
   if (!user) return null;
@@ -37,7 +37,7 @@ export function MyAccountTab() {
   const displayName = me?.employee
     ? `${me.employee.firstName} ${me.employee.lastName}`
     : humanizeEmail(user.email);
-  const tenantName = MOCK_TENANT_NAME;
+  const tenantName = me?.tenantName ?? '—';
 
   async function changePassword() {
     if (!user) return;

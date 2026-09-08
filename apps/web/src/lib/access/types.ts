@@ -38,10 +38,13 @@ export interface AccessUser {
   /** True once the Firebase user itself is disabled (mirrors isActive). */
   firebaseDisabled: boolean;
   createdAt: string; // ISO UTC
-  lastLoginAt: string | null; // ISO UTC
-  lastLoginIp: string | null; // planned — from LoginAuditEntry
-  lastLoginDevice: string | null; // planned — parsed UA
+  lastLoginAt: string | null; // ISO UTC — latest SUCCESS LoginAuditEntry
+  lastLoginIp: string | null; // from that LoginAuditEntry
+  lastLoginDevice: string | null; // parsed from that entry's user-agent
 }
+
+/** `GET /api/access/me` — the signed-in user's own row + the workspace name. */
+export type AccessSelf = AccessUser & { tenantName: string };
 
 export interface ChangeRoleInput {
   userId: string;

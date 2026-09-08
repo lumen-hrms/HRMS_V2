@@ -42,8 +42,8 @@ export class EmployeesController {
 
   @Post()
   @Roles('COMPANY_ADMIN', 'HR_MANAGER')
-  create(@Body() dto: CreateEmployeeDto) {
-    return this.service.create(dto);
+  create(@Body() dto: CreateEmployeeDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.service.create(dto, user);
   }
 
   @Patch(':id')

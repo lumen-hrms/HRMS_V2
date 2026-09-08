@@ -3,6 +3,7 @@ import request from 'supertest';
 import { createTestApp } from './utils/test-app';
 import {
   cleanupTenantFixture,
+  deleteTrackedFirebaseUsers,
   createTenantFixture,
   getIdTokenForEmail,
   superuserPrisma,
@@ -27,6 +28,7 @@ describe('Auth: session exchange (e2e)', () => {
 
   afterAll(async () => {
     await cleanupTenantFixture(tenant.tenantId);
+    await deleteTrackedFirebaseUsers();
     await superuserPrisma.$disconnect();
     await app.close();
   });

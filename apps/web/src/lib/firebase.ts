@@ -10,7 +10,7 @@
  * (see .env.example) or your hosting provider's env config.
  */
 import { initializeApp } from 'firebase/app';
-import { connectAuthEmulator, getAuth } from 'firebase/auth';
+import { getAuth } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -20,8 +20,3 @@ const firebaseConfig = {
 
 export const firebaseApp = initializeApp(firebaseConfig);
 export const auth = getAuth(firebaseApp);
-
-const emulatorHost = import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_HOST;
-if (emulatorHost) {
-  connectAuthEmulator(auth, `http://${emulatorHost}`, { disableWarnings: true });
-}

@@ -6,6 +6,7 @@ import { FirebaseModule } from './firebase/firebase.module';
 import { StorageModule } from './storage/storage.module';
 import { TenantResolutionMiddleware } from './common/tenancy/tenant-resolution.middleware';
 import { AuthModule } from './auth/auth.module';
+import { AccessModule } from './access/access.module';
 import { PlatformAdminModule } from './platform-admin/platform-admin.module';
 import { EmployeesModule } from './employees/employees.module';
 import { LeaveModule } from './leave/leave.module';
@@ -23,6 +24,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     FirebaseModule,
     StorageModule,
     AuthModule,
+    AccessModule,
     PlatformAdminModule,
     EmployeesModule,
     LeaveModule,

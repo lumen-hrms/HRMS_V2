@@ -2,8 +2,13 @@ node_modules/
 dist/
 build/
 
+.env
 .env.*
 !.env.example
+
+# Firebase service-account private keys — never commit these.
+*firebase-adminsdk*.json
+*-service-account*.json
 
 
 *.log
