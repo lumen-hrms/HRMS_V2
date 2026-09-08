@@ -1,25 +1,40 @@
+import { randomBytes } from 'crypto';
 import {
   BadRequestException,
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type * as admin from 'firebase-admin';
 import { FIREBASE_AUTH } from '../firebase/firebase-admin.provider';
+import { sendFirebasePasswordResetEmail } from '../firebase/send-reset-email';
 import { PlatformPrismaClientProvider } from '../prisma/platform-prisma-client.provider';
 import { TenantPrismaClientProvider } from '../prisma/tenant-prisma-client.provider';
 import { Prisma } from '@prisma/client';
 import { withTenantContext } from '../prisma/with-tenant-context';
-import { entitlementsForPlan } from './entitlements';
+import type { AppConfig } from '../config/configuration';
+import { entitlementsForPlan, type SellablePlan } from './entitlements';
 import type { CreateTenantDto } from './dto/platform-admin.dto';
 import type { AuthenticatedPlatformAdmin } from './platform-admin.types';
 
+/** Seat ceiling a plan ships with when the operator doesn't override it. */
+const PLAN_DEFAULT_SEATS: Record<SellablePlan, number> = {
+  STARTER: 50,
+  GROWTH: 200,
+  ENTERPRISE: 500,
+};
+
 @Injectable()
 export class PlatformAdminService {
+  private readonly logger = new Logger(PlatformAdminService.name);
+
   constructor(
     private readonly platformPrisma: PlatformPrismaClientProvider,
     private readonly tenantPrismaRaw: TenantPrismaClientProvider,
+    private readonly config: ConfigService<AppConfig, true>,
     @Inject(FIREBASE_AUTH) private readonly firebaseAuth: admin.auth.Auth,
   ) {}
 
@@ -72,11 +87,13 @@ export class PlatformAdminService {
     tenantId: string,
     status: 'ACTIVE' | 'SUSPENDED' | 'TRIAL',
     actorEmail?: string,
+    reason?: string,
   ) {
     const current = await this.platformPrisma.tenant.findUnique({
       where: { id: tenantId },
       select: { status: true, name: true },
     });
+    if (!current) throw new BadRequestException('Tenant not found');
     const updated = await this.platformPrisma.tenant.update({
       where: { id: tenantId },
       data: { status },
@@ -97,6 +114,7 @@ export class PlatformAdminService {
               tenantName: current.name,
               from: current.status,
               to: status,
+              reason: reason ?? null,
             },
           },
         });
@@ -108,13 +126,14 @@ export class PlatformAdminService {
     return updated;
   }
 
-  async createTenant(dto: CreateTenantDto) {
+  async createTenant(dto: CreateTenantDto, actorEmail?: string) {
     const subdomain = dto.subdomain.toLowerCase().trim();
     const existing = await this.platformPrisma.tenant.findUnique({ where: { subdomain } });
     if (existing) throw new ConflictException('Subdomain already in use');
 
     const plan = dto.plan ?? 'STARTER';
     const { enabledModules, features } = entitlementsForPlan(plan);
+    const seats = dto.seats ?? PLAN_DEFAULT_SEATS[plan];
 
     const tenant = await this.platformPrisma.tenant.create({
       data: {
@@ -124,7 +143,7 @@ export class PlatformAdminService {
         subscription: {
           create: {
             plan,
-            seats: 50,
+            seats,
             enabledModules,
             features: features as unknown as Prisma.InputJsonValue,
           },
@@ -133,7 +152,7 @@ export class PlatformAdminService {
     });
 
     try {
-      await this.seedCompanyAdmin(tenant.id, dto.adminEmail, dto.adminTempPassword);
+      await this.seedCompanyAdmin(tenant.id, dto.adminEmail, dto.adminName);
       // Working HR-config defaults so the tenant functions before anyone
       // opens Settings (see docs/TENANT_CONFIGURATION.md).
       await this.seedTenantDefaults(tenant.id);
@@ -145,13 +164,33 @@ export class PlatformAdminService {
     }
 
     await this.refreshHeadcount(tenant.id);
+
+    try {
+      await this.platformPrisma.platformAuditLog.create({
+        data: {
+          actorEmail: actorEmail ?? 'unknown',
+          action: 'tenant.created',
+          targetType: 'tenant',
+          targetId: tenant.id,
+          metadata: { tenantName: tenant.name, subdomain, plan, seats },
+        },
+      });
+    } catch {
+      // best-effort — the tenant is already provisioned.
+    }
+
     return this.platformPrisma.tenant.findUnique({
       where: { id: tenant.id },
       include: { subscription: true },
     });
   }
 
-  private async seedCompanyAdmin(tenantId: string, email: string, tempPassword: string) {
+  /**
+   * Creates the tenant's first COMPANY_ADMIN: a Firebase user with a random
+   * password (never shown to anyone) + a hosted password-reset email so the
+   * customer sets their own password on first sign-in.
+   */
+  private async seedCompanyAdmin(tenantId: string, email: string, name: string) {
     const scoped = withTenantContext(this.tenantPrismaRaw, tenantId);
 
     const existing = await scoped.user.findFirst({ where: { tenantId, email } });
@@ -159,7 +198,11 @@ export class PlatformAdminService {
 
     let firebaseUid: string;
     try {
-      const created = await this.firebaseAuth.createUser({ email, password: tempPassword });
+      const created = await this.firebaseAuth.createUser({
+        email,
+        displayName: name,
+        password: randomBytes(24).toString('base64url'),
+      });
       firebaseUid = created.uid;
     } catch (err: any) {
       if (err?.code === 'auth/email-already-exists') {
@@ -169,9 +212,25 @@ export class PlatformAdminService {
     }
     await this.firebaseAuth.setCustomUserClaims(firebaseUid, { tenantId, role: 'COMPANY_ADMIN' });
 
-    return scoped.user.create({
+    const user = await scoped.user.create({
       data: { tenantId, email, firebaseUid, role: 'COMPANY_ADMIN' },
     });
+
+    // Non-fatal: the login exists; the operator can re-send the reset link
+    // from the console if the email didn't go out.
+    try {
+      await sendFirebasePasswordResetEmail(
+        this.config.get('firebase.webApiKey', { infer: true }),
+        email,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Tenant admin ${email} created but the password-reset email failed to send`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
+
+    return user;
   }
 
   /**

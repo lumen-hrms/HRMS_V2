@@ -1,4 +1,5 @@
-import { IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsEmail, IsIn, IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
 
 export class PlatformSessionDto {
   @IsString()
@@ -18,9 +19,10 @@ export class CreateTenantDto {
   @IsEmail()
   adminEmail!: string;
 
+  /** First Company Admin's name — set as the Firebase user's displayName. */
   @IsString()
-  @MinLength(8)
-  adminTempPassword!: string;
+  @MinLength(2)
+  adminName!: string;
 
   /**
    * Sold plan the tenant starts on. Drives the subscription's entitlements
@@ -30,9 +32,25 @@ export class CreateTenantDto {
   @IsOptional()
   @IsIn(['STARTER', 'GROWTH', 'ENTERPRISE'])
   plan?: 'STARTER' | 'GROWTH' | 'ENTERPRISE';
+
+  /** Seat ceiling. Omitted → the plan's default. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(100000)
+  seats?: number;
 }
+
+const trim = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
 
 export class UpdateTenantStatusDto {
   @IsIn(['ACTIVE', 'SUSPENDED', 'TRIAL'])
   status!: 'ACTIVE' | 'SUSPENDED' | 'TRIAL';
+
+  /** Operator justification — recorded on the platform audit row. */
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MinLength(5)
+  reason?: string;
 }

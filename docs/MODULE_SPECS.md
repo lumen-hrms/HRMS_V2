@@ -21,13 +21,14 @@
 > spec draft that is no longer maintained — ignore them; this file and the
 > code are the source of truth.)
 >
-> **Last synced to code:** 2026-09-08 (commit `dbd71f2` + Identity & Access
-> **backend**: `access` module (`GET /api/access/users` · `/access/me` ·
-> `PATCH .../role` · `PATCH .../status` · `POST .../password-reset` ·
-> `GET /api/access/audit` · `.../:id/activity`), `LoginAuditEntry` table +
-> append-only login-audit writes on `POST /api/auth/session`,
-> `VITE_ACCESS_MOCK` now defaults **off**; + in-progress Leave UI rebuild,
-> see `docs/LEAVE_UI_SPECS.md`).
+> **Last synced to code:** 2026-09-08 (commit `ceaccac` + Identity & Access
+> `access` module & `LoginAuditEntry`; Firebase emulator removed
+> (dev/tests/CI all real Firebase); shared **Supabase** dev DB; + **Platform
+> Admin operator console** — full UI at `/platform-admin/*` (tenants list,
+> new-tenant wizard, tenant detail 4 tabs, audit screen), onboarding via
+> reset-link email, `tenant.created` + `tenant.status_changed` written to
+> `platform_audit_log`; + in-progress Leave UI rebuild, see
+> `docs/LEAVE_UI_SPECS.md`).
 >
 > **Keep the status table + per-module progress bars current on every change** —
 > if a commit moves a module, move its bar (status mark, ASCII bar, %), its
@@ -48,7 +49,7 @@
 | Module | Status | Progress |
 |---|---|---|
 | 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ | `███████████████████░` 97% — auth/RBAC/tenancy live; `access` module wired (Users, role/status/reset, login+access audit, My Account) with e2e RBAC + append-only tests; `LoginAuditEntry` table written on every session outcome. Remaining: `BAD_CREDENTIALS`/`TENANT_SUSPENDED` not server-observable (§1 gaps); Line-Manager leave scoping (§4) |
-| 2. Platform Admin | ✅ | `██████████████████░░` 90% |
+| 2. Platform Admin | ✅ | `███████████████████░` 94% — full operator console UI (tenants list, new-tenant wizard, tenant detail tabs, audit screen); onboarding now emails a reset link; `tenant.created` + `tenant.status_changed` written to `platform_audit_log`. Pending: audit *read* API, `PATCH .../plan`, refresh-headcount API, break-glass |
 | 3. Employee Master + Org Structure | 🟡 | `█████████████████░░░` 85% |
 | 4. Leave Management | 🟡 | `█████████████████░░░` 86% — BE ~80%; FE rebuild underway (foundation + Employee + Line Manager screens done; HR / Company Admin / Auditor screens next) |
 | 5. Attendance & Time Tracking | 🟡 | `███████████░░░░░░░░░░` 55% |
@@ -191,8 +192,14 @@ creation) and on every role change. Never trust a claim the client could set.
 
 **Deep spec:** `docs/modules/02_PLATFORM_ADMIN.md` ·
 **UI prompt:** `docs/ui-build-prompts/02-platform-admin.md`
-**Status:** ✅
+**Status:** ✅ core live · full operator console UI built (`/platform-admin/*`
+— login, tenants list, new-tenant wizard, tenant detail w/ 4 tabs, audit
+screen); `PlatformAuditLog` written for tenant create + status change · 🔴
+plan-change / audit-read / break-glass backends pending
 **Code:** `apps/api/src/platform-admin`, `apps/web/src/pages/platform-admin`
+(`console.tsx` auth gate → `shell.tsx` + `tenants` / `tenant-new` /
+`tenant-detail` / `audit` + `components/`, `lib/{types,plan-catalog,format,
+platform-auth}`)
 
 ### Expectation
 
@@ -209,11 +216,12 @@ future logged, time-boxed break-glass flow, not a standing grant.
 | Feature | V1 status |
 |---|---|
 | Platform-admin login (separate from tenant login) | ✅ Firebase, `type: platform_admin` claim, `PlatformJwtAuthGuard` |
-| Create tenant (name, subdomain, plan) + seed first Company Admin | ✅ `createTenant()` — creates `Tenant` + `Subscription`, seeds the admin login via the `hrms_app` connection; rolls back the tenant row if seeding fails |
+| Create tenant (name, subdomain, plan, seats, first admin name+email) | ✅ `createTenant()` — creates `Tenant` + `Subscription` (seat ceiling per plan or override), seeds the Company Admin via the `hrms_app` connection with a **random password + a hosted password-reset email** (no operator-typed password); rolls back the tenant row if seeding fails |
 | List tenants with subscription info | ✅ |
-| Enable / suspend / set trial | ✅ `PATCH .../status` — `SUSPENDED` locks out every user of that tenant immediately at the resolution layer |
-| Denormalized employee headcount per tenant | ✅ `refreshHeadcount()` writes `platform.tenants.employeeCount` |
-| Platform audit log | 🟡 `PlatformAuditLog` table exists, **not written to** |
+| Enable / suspend / set trial | ✅ `PATCH .../status` — `SUSPENDED` locks out every user of that tenant immediately at the resolution layer; carries an audit `reason` |
+| Denormalized employee headcount per tenant | ✅ `refreshHeadcount()` writes `platform.tenants.employeeCount` (on-demand internal call; the `POST .../refresh-headcount` route is TODO) |
+| Platform audit log | 🟡 written for `tenant.created` + `tenant.status_changed` (actor email, before/after, reason in `metadata`); other events + the read API pending |
+| Operator console UI | ✅ full multi-screen console — see Status line |
 | Billing / plan enforcement (seat limits, dunning) | 🔴 not started |
 | Break-glass support access to tenant data | 🔴 not started (deliberate — design before building) |
 
@@ -232,18 +240,36 @@ future logged, time-boxed break-glass flow, not a standing grant.
 
 ### Functionalities / API
 
-| Method | Path | Guard |
-|---|---|---|
-| `POST` | `/api/platform-admin/auth/session` | public |
-| `GET` | `/api/platform-admin/tenants` | `PlatformJwtAuthGuard` |
-| `POST` | `/api/platform-admin/tenants` | `PlatformJwtAuthGuard` |
-| `PATCH` | `/api/platform-admin/tenants/:id/status` | `PlatformJwtAuthGuard` |
+| Method | Path | Guard | State |
+|---|---|---|---|
+| `POST` | `/api/platform-admin/auth/session` | public | ✅ |
+| `GET` | `/api/platform-admin/tenants` | `PlatformJwtAuthGuard` | ✅ |
+| `POST` | `/api/platform-admin/tenants` | `PlatformJwtAuthGuard` | ✅ body `{companyName, subdomain, adminEmail, adminName, plan?, seats?}` — sends the admin a reset link; writes `tenant.created` |
+| `PATCH` | `/api/platform-admin/tenants/:id/status` | `PlatformJwtAuthGuard` | ✅ body `{status, reason?}`; writes `tenant.status_changed` |
+| `GET` | `/api/platform-admin/tenants/:id` | `PlatformJwtAuthGuard` | 🔴 TODO(api) |
+| `PATCH` | `/api/platform-admin/tenants/:id/plan` | `PlatformJwtAuthGuard` | 🔴 TODO(api) |
+| `POST` | `/api/platform-admin/tenants/:id/refresh-headcount` | `PlatformJwtAuthGuard` | 🔴 TODO(api) |
+| `GET` | `/api/platform-admin/audit` | `PlatformJwtAuthGuard` | 🔴 TODO(api) |
+| `POST` | `/api/platform-admin/tenants/:id/breakglass` | `PlatformJwtAuthGuard` | 🔴 TODO(api) — design first |
 
 ### Known gaps / TODO
 
-- Write `PlatformAuditLog` rows on every tenant create / status change
-  (actor, action, target, before/after).
+- **Audit read API** — `GET /api/platform-admin/audit`. Rows are being
+  written (`tenant.created`, `tenant.status_changed`); the console's Audit
+  screen + tenant-detail Activity tab are built and degrade gracefully
+  until this lands.
+- **`PATCH /api/platform-admin/tenants/:id/plan`** — re-derive
+  `enabledModules` / `seats` / `features`; write `tenant.plan_changed`.
+  Change-plan dialog is built (calls it, handles 404).
+- **`POST /api/platform-admin/tenants/:id/refresh-headcount`** — expose the
+  existing `refreshHeadcount()` as a route; also a scheduled BullMQ job.
+- **`GET /api/platform-admin/tenants/:id`** — detail endpoint (the console
+  currently falls back to filtering the list).
+- **Break-glass** — the whole flow (`BreakGlassGrant`, audited read-only
+  tenant context, TTL). Console dialog + status sheet built as `TODO(api)`.
 - Subscription lifecycle: seat counting vs plan, expiry → auto-suspend.
+- Tighten `platform_audit_log` grants to true append-only (no
+  `UPDATE`/`DELETE` for `hrms_platform`).
 
 ---
 

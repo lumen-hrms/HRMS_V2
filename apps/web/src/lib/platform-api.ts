@@ -2,8 +2,19 @@
  * NOT share state with lib/api.ts beyond the shared Firebase Auth instance
  * (see lib/firebase.ts) — a platform admin session and a tenant user
  * session are different Firebase custom-claim shapes that must never be
- * conflated, even though both come from the one Firebase project. */
+ * conflated, even though both come from the one Firebase project.
+ *
+ * No `X-Tenant-Subdomain` header on any request — the operator console has
+ * no tenant concept.
+ */
 import { auth } from './firebase';
+import type {
+  CreateTenantInput,
+  PlatformAuditEntry,
+  TenantDetail,
+  TenantRow,
+  TenantStatus,
+} from '@/pages/platform-admin/lib/types';
 
 export class PlatformApiError extends Error {
   status: number;
@@ -13,6 +24,10 @@ export class PlatformApiError extends Error {
     this.status = status;
     this.body = body;
   }
+}
+
+export function isPlatformApiError(e: unknown): e is PlatformApiError {
+  return e instanceof PlatformApiError;
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -29,10 +44,78 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
-export const platformApi = {
+const raw = {
   get: <T>(path: string) => request<T>(path, { method: 'GET' }),
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined }),
   patch: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'PATCH', body: body ? JSON.stringify(body) : undefined }),
+};
+
+export const platformApi = {
+  ...raw,
+
+  /** `POST /auth/session` — exchange a platform-admin ID token for a session. */
+  session(idToken: string) {
+    return raw.post<{ status: string; admin: { sub: string; email: string } }>('/auth/session', {
+      idToken,
+    });
+  },
+
+  /** `GET /tenants` — the fleet. */
+  listTenants() {
+    return raw.get<TenantRow[]>('/tenants');
+  },
+
+  /** `POST /tenants` — create tenant + seed first Company Admin (reset email). */
+  createTenant(input: CreateTenantInput) {
+    return raw.post<TenantRow>('/tenants', {
+      companyName: input.name,
+      subdomain: input.subdomain,
+      adminEmail: input.firstAdminEmail,
+      adminName: input.firstAdminName,
+      plan: input.plan,
+      seats: input.seats,
+    });
+  },
+
+  /** `PATCH /tenants/:id/status` — ACTIVE / SUSPENDED / TRIAL + audit reason. */
+  setStatus(id: string, status: TenantStatus, reason: string) {
+    return raw.patch<TenantRow>(`/tenants/${id}/status`, { status, reason });
+  },
+
+  // ---- TODO(api): endpoints not built yet — these will 404 until the
+  //      backend catches up (docs/modules/02_PLATFORM_ADMIN.md §9). Screens
+  //      call them and degrade gracefully.
+
+  /** TODO(api) `GET /tenants/:id` */
+  getTenant(id: string) {
+    return raw.get<TenantDetail>(`/tenants/${id}`);
+  },
+
+  /** TODO(api) `PATCH /tenants/:id/plan` */
+  changePlan(id: string, plan: string, reason: string) {
+    return raw.patch<TenantRow>(`/tenants/${id}/plan`, { plan, reason });
+  },
+
+  /** TODO(api) `POST /tenants/:id/refresh-headcount` */
+  refreshHeadcount(id: string) {
+    return raw.post<{ employeeCount: number }>(`/tenants/${id}/refresh-headcount`);
+  },
+
+  /** TODO(api) `GET /audit` */
+  getAudit(params: { tenantId?: string; action?: string; from?: string; to?: string; q?: string }) {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v) as [string, string][],
+    ).toString();
+    return raw.get<PlatformAuditEntry[]>(`/audit${qs ? `?${qs}` : ''}`);
+  },
+
+  /** TODO(api) `POST /tenants/:id/breakglass` */
+  requestBreakGlass(id: string, reason: string, ttlMinutes: number) {
+    return raw.post<{ id: string; expiresAt: string }>(`/tenants/${id}/breakglass`, {
+      reason,
+      ttlMinutes,
+    });
+  },
 };

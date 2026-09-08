@@ -29,8 +29,11 @@ export class PlatformAdminController {
 
   @UseGuards(PlatformJwtAuthGuard)
   @Post('tenants')
-  createTenant(@Body() dto: CreateTenantDto) {
-    return this.service.createTenant(dto);
+  createTenant(
+    @Body() dto: CreateTenantDto,
+    @Req() req: Request & { user?: AuthenticatedPlatformAdmin },
+  ) {
+    return this.service.createTenant(dto, req.user?.email);
   }
 
   @UseGuards(PlatformJwtAuthGuard)
@@ -40,6 +43,6 @@ export class PlatformAdminController {
     @Body() dto: UpdateTenantStatusDto,
     @Req() req: Request & { user?: AuthenticatedPlatformAdmin },
   ) {
-    return this.service.updateTenantStatus(id, dto.status, req.user?.email);
+    return this.service.updateTenantStatus(id, dto.status, req.user?.email, dto.reason);
   }
 }

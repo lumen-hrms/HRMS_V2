@@ -3,18 +3,23 @@
 > **This file is the authoritative, detailed spec for further development of
 > this module.** `docs/MODULE_SPECS.md` §2 is the one-page summary.
 >
-> **Status:** ✅ tenant onboarding / enable-disable / metadata live ·
-> 🟡 platform audit log table exists, not written · 🔴 billing / seat
-> enforcement · 🔴 break-glass support access.
-> **Progress:** ~90% of the intended V1 slice (see `docs/MODULE_SPECS.md`).
+> **Status:** ✅ tenant onboarding (now via a hosted reset-link email — no
+> operator-typed password) / enable-disable / metadata live ·
+> ✅ full operator console UI (`/platform-admin/*`: login, tenants list,
+> new-tenant wizard, tenant detail w/ Overview·Subscription·Activity·Danger
+> tabs, audit screen) · 🟡 `PlatformAuditLog` written for `tenant.created` +
+> `tenant.status_changed` only · 🔴 audit read API · 🔴 plan-change API · 🔴
+> refresh-headcount route · 🔴 billing / seat enforcement · 🔴 break-glass.
+> **Progress:** ~94% of the intended V1 slice (see `docs/MODULE_SPECS.md`).
 > **Code:** `apps/api/src/platform-admin`, `apps/api/src/prisma`
-> (`PlatformPrismaClientProvider`), `apps/web/src/routes/platform`,
-> `apps/web/src/pages/platform-admin`.
+> (`PlatformPrismaClientProvider`), `apps/web/src/pages/platform-admin`
+> (`console.tsx` gate → `shell.tsx` + `tenants`/`tenant-new`/`tenant-detail`/
+> `audit` + `components/` + `lib/`).
 > **Related:** `CLAUDE.md` ("Platform Admin is structurally separate") ·
 > `docs/BACKEND_ARCHITECTURE.md` §2.5–2.6, §3, §5 ·
 > `docs/TENANT_CONFIGURATION.md` (layer 1 = plan entitlements, set here) ·
 > module `01_IDENTITY_AND_ACCESS.md`.
-> **Last synced to code:** 2026-09-08.
+> **Last synced to code:** 2026-09-08 (operator console UI + reset-link onboarding).
 
 ---
 
@@ -301,9 +306,25 @@ New-tenant wizard, Tenant detail, (next) Audit log, (next) Break-glass.
 
 ## 9. Known gaps / TODO (priority order)
 
-1. **Write `PlatformAuditLog` rows** on every tenant create / status change /
-   plan change (actor, action, target, before/after, ip). Enforce
-   append-only in the roles migration. Unblocks the console's Audit screen.
+**Closed** since the last sync:
+- ✅ **Operator console UI** — full multi-screen console at `/platform-admin/*`
+  (login, tenants list + stat tiles + filters, 3-section new-tenant wizard,
+  tenant detail with 4 tabs, operator audit screen), on the real design
+  system. `apps/web/src/pages/platform-admin`.
+- ✅ **Onboarding via reset link** — `createTenant` seeds the Company Admin
+  with a random password + a hosted password-reset email (no operator-typed
+  temp password). `adminName` → Firebase `displayName`; `seats` overridable
+  per plan.
+- ✅ **`PlatformAuditLog` writes** for `tenant.created` and
+  `tenant.status_changed` (actor email, before/after, reason in `metadata`).
+
+**Still open:**
+
+1. **Remaining `PlatformAuditLog` writes** (`tenant.plan_changed`,
+   `headcount.refreshed`, break-glass events) + the **read API**
+   (`GET /api/platform-admin/audit`) that the console's Audit screen and the
+   tenant-detail Activity tab consume. Also: enforce append-only in the
+   roles migration (`hrms_platform` has no `UPDATE`/`DELETE` on it yet).
 2. **Subscription lifecycle** — seat counting vs `seats`; `trialEndsAt` /
    `renewsAt` handling; `PAST_DUE` → grace → auto-suspend (BullMQ scheduled
    job).
