@@ -5,7 +5,7 @@
 > is the contract the backend builds to and the tester writes cases against.
 >
 > Read alongside `docs/MODULE_SPECS.md` §4 (product behaviour + known gaps) and
-> `CLAUDE.md` (guard chain, tenancy). **Last updated:** 2026-09-08.
+> `CLAUDE.md` (guard chain, tenancy). **Last updated:** 2026-09-09.
 
 ## How the frontend runs today
 
@@ -15,7 +15,7 @@ never `api` directly. That client has two modes:
 | Mode | Trigger | Behaviour |
 |---|---|---|
 | **Mock** (default) | `VITE_LEAVE_MOCK` unset or `!= "false"` | All calls served from `apps/web/src/lib/leave/fixtures.ts`, mutations persist in-memory for the session. A "Mock data" chip shows in the page header. |
-| **Live** | `VITE_LEAVE_MOCK=false` | `live` endpoints hit the real API; `planned` ones 404 until built. |
+| **Live** | `VITE_LEAVE_MOCK=false` | Every `leaveApi` method now hits a real, mapped endpoint — no `planned` ones remain. Set this in `apps/web/.env`. |
 
 Each `leaveApi` method's JSDoc names its endpoint and marks it `live` or
 `planned`. Types are in `apps/web/src/lib/leave/types.ts` — promote these into
@@ -23,28 +23,30 @@ Each `leaveApi` method's JSDoc names its endpoint and marks it `live` or
 
 ## Endpoint inventory
 
-All endpoints below are now **live** in `apps/api/src/leave` — flip
-`VITE_LEAVE_MOCK=false` to point the frontend at them. A few response-shape
-deltas remain (see below) that the frontend's `leaveApi` client will need
-light adapter code for, rather than a raw pass-through.
+All endpoints below are **live** in `apps/api/src/leave`, with
+`apps/web/.env` now setting `VITE_LEAVE_MOCK=false` so the frontend actually
+talks to them. `LeaveService` now maps every response into the frontend's
+denormalized shape itself (`toRequestDto`/`toApprovalStep`/`toBalanceDto`/
+`toLedgerDto`) — the "contract deltas" that used to require client-side
+adapter code are closed (see below).
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/leave/types` | |
-| POST | `/api/leave/types` | Admin/HR. Accepts `accrualFrequency` now; other FE-only fields still not stored (see deltas). |
-| PATCH | `/api/leave/types/:id` | Admin/HR |
+| GET | `/api/leave/types` | `?includeInactive=true` to include soft-deleted types |
+| POST | `/api/leave/types` | Admin/HR. Persists the full frontend `LeaveType` shape, including `requiresApproval` and `isCompOff`. |
+| PATCH | `/api/leave/types/:id` | Admin/HR — same field set as create |
 | POST | `/api/leave/types/:id/initialize/:year` | Admin/HR |
 | GET | `/api/leave/holidays?year=` | any (read) |
 | POST · PATCH · DELETE | `/api/leave/holidays(/:id)` | Admin/HR |
 | GET | `/api/leave/settings` | any (read) |
-| PATCH | `/api/leave/settings` | Company Admin only (per the role matrix below — HR reads, Company Admin edits) |
-| GET | `/api/leave/balances/:employeeId` | row-scoped. Does **not** yet take `?year=` (returns all years, `orderBy year desc`) — frontend can filter client-side. |
-| GET | `/api/leave/team/balances?year=` | scoped: direct reports (Line Manager) / everyone (HR, Admin) |
-| POST | `/api/leave/balances/adjust` | Admin/HR — body `BalanceAdjustmentInput` → returns a `LeaveLedgerEntry` (raw Prisma shape, see deltas) |
-| GET | `/api/leave/balances/ledger?employeeId=&leaveTypeId=` | Admin/HR/Auditor — note **`leaveTypeId`**, not `leaveTypeCode` (no `code` field exists yet) |
-| POST | `/api/leave/requests` | |
+| PATCH | `/api/leave/settings` | Company Admin only (per the role matrix below — HR reads, Company Admin edits). `allowLopRequests` and `fyStartMonth` are now enforced by `apply()`, not just stored. |
+| GET | `/api/leave/balances/:employeeId?year=` | row-scoped. `year` optional — defaults to the tenant's current leave year via `fyStartMonth` (see `resolveLeaveYear` in `leave-year.util.ts`), not the calendar year. |
+| GET | `/api/leave/team/balances?year=` | scoped: direct reports (Line Manager) / everyone (HR, Admin); same `year` default as above |
+| POST | `/api/leave/balances/adjust` | Admin/HR — body `BalanceAdjustmentInput` → returns a denormalized `LeaveLedgerEntry` |
+| GET | `/api/leave/balances/ledger?employeeId=&leaveTypeCode=` | Admin/HR/Auditor — note **`leaveTypeCode`**, matching the frontend field name |
+| POST | `/api/leave/requests` | Enforces `LeaveType.minNoticeDays`, `TenantSettings.allowLopRequests`, and `LeaveType.genderRestriction` (fails open if `Employee.gender` doesn't normalize to `MALE`/`FEMALE`) — all 400 on violation. On final (L2) approval, also writes `AttendanceRecord.ON_LEAVE` for the request's working days (reversed on cancel). |
 | GET | `/api/leave/requests?status=&leaveTypeId=&department=&from=&to=` | Admin/HR/Auditor. No `q=` free-text search yet — do client-side filtering on the returned page for now. |
-| GET | `/api/leave/requests/:id` | row-scoped, includes `approvals` (raw `LeaveApproval[]` — see deltas) |
+| GET | `/api/leave/requests/:id` | row-scoped, `approvals` returned flattened (`approverName`/`approverRole`/...) |
 | POST | `/api/leave/requests/:id/attachment` | owner or Admin/HR — multipart `file`, mirrors the Employee Documents upload |
 | POST | `/api/leave/requests/:id/cancel` | owner or Admin/HR |
 | POST | `/api/leave/requests/:id/approve` · `/reject` | approver — accepts an optional `{ comment }` body, recorded on the `LeaveApproval` row |
@@ -52,26 +54,21 @@ light adapter code for, rather than a raw pass-through.
 | GET | `/api/leave/requests/pending-approvals` | `[]` for non-approvers |
 | GET | `/api/leave/calendar?from=&to=` | frontend maps rows to `TeamCalendarEntry` |
 
-### Contract deltas still open
-- **`LeaveType`** — frontend model additionally wants `code`,
-  `genderRestriction`, `minNoticeDays`, `paid`, `active`, `colorToken`.
-  `accrualFrequency` is now modelled; the rest are still frontend-only —
-  low priority until a customer asks (`docs/MODULE_SPECS.md` §4 gap 4).
-- **`LeaveBalance`** — backend returns the raw `{ accrued, used, year,
-  leaveType }` row; it does **not** compute `carriedForward` or `pending`
-  (approved-but-future + in-flight days) — the frontend's client-side
-  `pending` math is still load-bearing here.
-- **`LeaveRequest.approvals`** — backend returns raw `LeaveApproval` rows
-  (`{ level, approverId, approver: Employee | null, decision, decidedAt,
-  comment }`) rather than the frontend's flattened `{ approverName,
-  approverRole, ... }` — the client needs a small mapper (approverRole
-  isn't stored on the approval row at all; look it up from the approver's
-  employee/user record, or omit it).
-- **`LeaveLedgerEntry` / balance-adjust response** — backend returns the
-  raw Prisma row (`employeeId`, `leaveTypeId`, `occurredAt`, `actorUserId`)
-  rather than the frontend's denormalized `{ employeeName, leaveTypeCode,
-  at, actorName }` — needs a join/mapper on the client or a future backend
-  denormalization pass.
+> **Route-order note:** `leave.controller.ts` declares the static
+> `balances/ledger` / `balances/adjust` / `team/balances` routes *before*
+> the dynamic `balances/:employeeId` — Nest matches in declaration order,
+> so the static routes must come first or `:employeeId` silently swallows
+> them (this was a live bug, found and fixed while wiring the frontend to
+> the live API — see git history).
+
+### Contract deltas — closed
+
+`LeaveType` (`code`, `colorToken`, `minNoticeDays`, `active`,
+`genderRestriction`, `paid`, `requiresApproval`, `isCompOff`),
+`LeaveBalance` (`carriedForward`/`pending` now computed server-side),
+`LeaveRequest.approvals` (flattened), and `LeaveLedgerEntry`/balance-adjust
+response (denormalized) all round-trip correctly now — no client-side
+adapter needed beyond what `leaveApi` already does. Nothing remains open.
 
 ## Screens by role
 
@@ -107,9 +104,9 @@ Tab visibility is centralised in `apps/web/src/pages/leave/index.tsx`
 | HR / Company Admin — All Requests, Approvals (L2), Leave Types CRUD + initialize, Holidays manage, Balance Adjustments, Settings | `████████████████████` 100% | ✅ done |
 | Auditor — read-only All Requests, Leave Types, Balance Ledger, Settings | `████████████████████` 100% | ✅ done (same components, `readOnly` prop) |
 
-All 12 role×tab cells are now wired to `leaveApi` — still running against the
-mock client by default (`VITE_LEAVE_MOCK`); see "Contract deltas still open"
-above for the response-shape gaps to resolve when flipping to live.
+All 12 role×tab cells are now wired to `leaveApi` and running **live**
+(`VITE_LEAVE_MOCK=false` in `apps/web/.env`) — the response-shape deltas
+that used to block this are closed (see above).
 
 When a slice completes, also move the module bar in `docs/MODULE_SPECS.md` §
 status table (row 4) to match.
@@ -161,7 +158,7 @@ day; pending entries rendered faded) with a side list of the month's entries
 HR / Company Admin → whole company.
 
 **Team Balances** (`tabs/team-balances.tsx`)
-`GET team/balances?year` (planned) + `GET types` for columns. Matrix: row per
+`GET team/balances?year` + `GET types` for columns. Matrix: row per
 report, column per leave type, cell = days available
 (`accrued + carried − used − pending`). Amber ≤ 2 days, red < 0. Row expands to
 the per-type accrued/carried/used/pending breakdown. Year switcher.
@@ -176,11 +173,15 @@ the detail sheet's decide action for Auditor.
 **Leave Types** (`tabs/leave-types.tsx`)
 `GET types` table (name, annual quota, carry-forward cap, accrual frequency,
 requires-approval). Admin-only: **Add type** / **Edit** dialogs (`POST`/`PATCH
-types`) exposing only the 4 backend-persisted fields — the rest of the
-frontend `LeaveType` shape (`code`, `colorToken`, `genderRestriction`, …) is
-auto-derived on create rather than surfaced as form fields (contract delta,
-see above). Per-row **Initialize year** dialog → `POST
-types/:id/initialize/:year`. Auditor: table only, no actions.
+types`) expose 6 fields as form inputs (name, annual quota, carry-forward
+cap, accrual frequency, requires-approval, "this is the comp-off type") —
+`code`/`colorToken` are auto-derived on create,
+`genderRestriction`/`paid`/`minNoticeDays`/`active` still default silently
+(`ANY`/`true`/`0`/`true`). All of these persist correctly server-side (no
+contract delta), there's just no form UI for the latter four yet — add one
+if a customer needs to configure them directly. Per-row **Initialize
+year** dialog → `POST types/:id/initialize/:year`. Auditor: table only, no
+actions.
 
 **Balance Adjustments** (`tabs/balance-adjustments.tsx`, Admin-only — not
 shown to Auditor)
@@ -225,3 +226,10 @@ reach the tab (Auditor) sees the same form disabled, no Save button.
   with no Save button.
 - Verified end-to-end against a real login (Firebase + seeded `acme` tenant)
   as HR Manager, Company Admin, and Auditor — not just mock-mode unit checks.
+- Live-mode (`VITE_LEAVE_MOCK=false`) apply → L1 approve → L2 approve →
+  cancel round-trip verified directly against the API, including the
+  ledger entry and balance credit/reversal.
+- `allowLopRequests=false` blocks an LOP-inducing apply with a 400;
+  `LeaveType.minNoticeDays` blocks a too-soon apply with a 400.
+- Creating a leave type with `genderRestriction`/`paid` set now persists
+  and round-trips through `GET types`.

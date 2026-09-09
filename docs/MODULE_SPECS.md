@@ -21,8 +21,9 @@
 > spec draft that is no longer maintained — ignore them; this file and the
 > code are the source of truth.)
 >
-> **Last synced to code:** 2026-09-08 (commit `dbd71f2` + Identity & Access
-> **backend**: `access` module (`GET /api/access/users` · `/access/me` ·
+> **Last synced to code:** 2026-09-09 (uncommitted `leave-management-module`
+> branch work, on top of commit `dbd71f2` + Identity & Access **backend**:
+> `access` module (`GET /api/access/users` · `/access/me` ·
 > `PATCH .../role` · `PATCH .../status` · `POST .../password-reset` ·
 > `GET /api/access/audit` · `.../:id/activity`), `LoginAuditEntry` table +
 > append-only login-audit writes on `POST /api/auth/session`,
@@ -32,7 +33,18 @@
 > queue / Redis), a minimal accrual job, and the remaining planned
 > endpoints; + the Leave Management HR/Company Admin/Auditor frontend
 > screens (Leave Types, Balance Adjustments, Ledger, Settings, and wiring
-> `all-requests.tsx` in), closing the frontend role×tab matrix — see §4).
+> `all-requests.tsx` in), closing the frontend role×tab matrix; + flipping
+> Leave Management fully live — response-mapper work
+> (`toRequestDto`/`toBalanceDto`/`toLedgerDto`/`toApprovalStep`),
+> `VITE_LEAVE_MOCK=false`, `allowLopRequests`/`minNoticeDays`/`fyStartMonth`
+> enforcement, accrual-job proration, `genderRestriction`/`paid` columns,
+> and a route-order bug fix (`balances/:employeeId` was shadowing
+> `balances/ledger`); + closing Leave Management's last 4 gaps —
+> `requiresApproval` DTO field, `genderRestriction` enforcement in
+> `apply()`, comp-off credit (`LeaveType.isCompOff`, `LeaveService
+> .creditCompOff()`, wired from `AttendanceService.clockIn()`), and
+> leave→attendance reconciliation (`LeaveService.syncAttendanceForLeave()`
+> writing `AttendanceRecord.ON_LEAVE` on approve/cancel) — see §4).
 >
 > **Keep the status table + per-module progress bars current on every change** —
 > if a commit moves a module, move its bar (status mark, ASCII bar, %), its
@@ -55,7 +67,7 @@
 | 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ | `███████████████████░` 97% — auth/RBAC/tenancy live; `access` module wired (Users, role/status/reset, login+access audit, My Account) with e2e RBAC + append-only tests; `LoginAuditEntry` table written on every session outcome. Remaining: `BAD_CREDENTIALS`/`TENANT_SUSPENDED` not server-observable (§1 gaps) |
 | 2. Platform Admin | ✅ | `██████████████████░░` 90% |
 | 3. Employee Master + Org Structure | 🟡 | `█████████████████░░░` 85% |
-| 4. Leave Management | 🟡 | `████████████████████` 97% — BE ~95% (all 6 tracked backend gaps closed: LM visibility, holidays, attachments, configurable approval levels + escalation timers, accrual job, missing endpoints); FE 100% of the role×tab matrix wired to `leaveApi` (still on `VITE_LEAVE_MOCK`, and a few response-shape contract deltas remain before flipping to live — see `docs/LEAVE_UI_SPECS.md`) |
+| 4. Leave Management | ✅ | `████████████████████` 100% — BE/FE fully wired live (`VITE_LEAVE_MOCK=false`); `allowLopRequests`/`minNoticeDays`/`fyStartMonth`/`genderRestriction`/`requiresApproval` all enforced/settable; mid-year-joiner proration; comp-off credit on holiday/weekly-off clock-in; approved leave reconciles into `AttendanceRecord.ON_LEAVE` |
 | 5. Attendance & Time Tracking | 🟡 | `███████████░░░░░░░░░░` 55% |
 | 6. Dashboard | ✅ | `█████████████████░░░` 85% |
 | 7. Payroll Engine | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
@@ -339,11 +351,16 @@ must validate and report per-row rather than fail the batch.
 **Deep spec:** `docs/modules/04_LEAVE_MANAGEMENT.md` *(pending)* ·
 **UI prompt:** `docs/ui-build-prompts/04-leave-management.md` ·
 **API contract:** `docs/LEAVE_UI_SPECS.md`
-**Status:** 🟡 — BE ~95% (the 6 tracked backend gaps are closed; remaining
-gap is comp-off/attendance-sync, deliberately deferred); FE 100% of the
-role×tab matrix wired to `leaveApi` (all screens built, still running
-against the mock client — see `docs/LEAVE_UI_SPECS.md` for the
-response-shape deltas to close before flipping `VITE_LEAVE_MOCK` off).
+**Status:** ✅ — BE/FE fully wired and running **live**
+(`VITE_LEAVE_MOCK=false`); every originally-tracked gap is closed.
+`TenantSettings.allowLopRequests`/`fyStartMonth` and
+`LeaveType.minNoticeDays`/`genderRestriction`/`requiresApproval` are all
+enforced/settable, the accrual job prorates a new joiner's first period,
+comp-off credits automatically on holiday/weekly-off clock-ins, and
+approved leave reconciles into `AttendanceRecord` (`ON_LEAVE`, reversed on
+cancel). Comp-off/reconciliation are **synchronous** (at clock-in and
+approve/cancel time) rather than a nightly finalization job — see the
+note under "Known gaps" below. See `docs/LEAVE_UI_SPECS.md`.
 **Code:** `apps/api/src/leave` (service/controller + `leave-escalation.processor.ts` /
 `leave-accrual.processor.ts` on a new BullMQ `leave` queue — see `docker-compose.yml`'s
 `redis` service), `apps/web/src/pages/leave`, `apps/web/src/lib/leave` (typed
@@ -361,14 +378,14 @@ attendance and flag LOP when the balance is short.
 
 | Feature | SRS | V1 status |
 |---|---|---|
-| Leave type definitions (CL/SL/EL/…); quota + carry-forward cap + accrual frequency | FR-LVE-001 | 🟡 `LeaveType` has `annualQuota`, `carryForwardCap`, `accrualFrequency` (ANNUAL/MONTHLY/QUARTERLY); **gender restriction, encashment, min-notice, short `code` still not modelled** (FR-LVE-002 — deliberately out of scope, frontend-only fields for now) |
-| Per-employee per-year balances; init for a year | FR-LVE-004 | 🟡 `initializeYearlyBalances()` upserts ANNUAL types; MONTHLY/QUARTERLY types now auto-accrue via `LeaveAccrualProcessor` (daily BullMQ job, idempotent via `LeaveLedgerEntry`); **no mid-year proration for new joiners** |
+| Leave type definitions (CL/SL/EL/…); quota + carry-forward cap + accrual frequency | FR-LVE-001 | ✅ `LeaveType` has `annualQuota`, `carryForwardCap`, `accrualFrequency` (ANNUAL/MONTHLY/QUARTERLY), `code`, `colorToken`, `minNoticeDays` (enforced), `active`, `genderRestriction` (enforced in `apply()`, fails open on unrecognized `Employee.gender` — see below), `paid` (informational only), `requiresApproval` (settable via DTO), `isCompOff` (marks the tenant's comp-off type). No `encashment` field exists — that concept isn't modelled anywhere (it's unrelated Full & Final Settlement prose elsewhere in this doc) |
+| Per-employee per-year balances; init for a year | FR-LVE-004 | ✅ `initializeYearlyBalances()` upserts ANNUAL types; MONTHLY/QUARTERLY types auto-accrue via `LeaveAccrualProcessor` (daily BullMQ job, idempotent via `LeaveLedgerEntry`), now prorating a new joiner's first period by `Employee.dateOfJoining`; balance-year bucketing follows `TenantSettings.fyStartMonth` via `resolveLeaveYear()` |
 | Company holiday calendar (national + state optional) | FR-LVE-003 | ✅ `Holiday` table + full CRUD (`/api/leave/holidays`); `apply()` counts working days (holidays + `TenantSettings.weeklyOffDays` excluded) |
 | Apply for leave (dates, type, reason, attachment) | FR-LVE-005 | ✅ dates/type/reason/attachment all wired (`POST /api/leave/requests/:id/attachment`, reuses `StorageService`) |
 | Multi-level approval (1 or 2, tenant-configurable) + escalation timers | FR-LVE-006 | ✅ `TenantSettings.leaveApprovalLevels` (1 or 2) now actually read by `apply()` — previously hardcoded to 2. `LeaveEscalationProcessor` auto-escalates an undecided L1 to L2 after `leaveEscalationDays`, and flags an undecided L2 for manual HR follow-up (no auto-approve). *(The old SRS's "up to 4 levels" is stale — the schema/FE contract cap V1 at 2; see `CLAUDE.md`.)* |
-| Team calendar shown before submitting | FR-LVE-007 | 🟡 `GET /leave/calendar` exists; **no frontend screen consumes it on the Apply tab** (Team Calendar tab does) |
-| Approved leave syncs to attendance; flags LOP | FR-LVE-008 | 🟡 `isLop` computed on apply; **no attendance sync** (Attendance module is young — deliberately deferred) |
-| Comp-off credit for holiday/weekend work | FR-LVE-009 | 🔴 deliberately deferred |
+| Team calendar shown before submitting | FR-LVE-007 | ✅ `GET /leave/calendar` exists; the Apply tab renders it inline (`tabs/apply.tsx`) alongside the dedicated Team Calendar tab |
+| Approved leave syncs to attendance; flags LOP | FR-LVE-008 | ✅ `isLop` computed on apply; `LeaveService` writes `AttendanceRecord.status = 'ON_LEAVE'` for the request's working days on final approval (reversed on cancel) via direct Prisma access, not a nightly job — see "Known gaps" |
+| Comp-off credit for holiday/weekend work | FR-LVE-009 | ✅ `AttendanceService.clockIn()` detects a `Holiday`/`TenantSettings.weeklyOffDays` match and calls `LeaveService.creditCompOff()`, which credits +1 day to the tenant's `isCompOff` `LeaveType` (idempotent per employee/day, opt-in per tenant) |
 | Notifications (apply/approve/reject/expiry) | FR-LVE-010 | 🔴 (see §10) |
 | Cancel — reverses an approved non-LOP deduction | — | ✅ `cancel()`, now also logs a `LeaveLedgerEntry` |
 | Decision/escalation history, HR balance adjustments, ledger | — | ✅ new `LeaveApproval` (append-only decision/escalation log) and `LeaveLedgerEntry` (balance-movement audit trail) tables |
@@ -405,10 +422,10 @@ attendance and flag LOP when the balance is short.
 | `GET` · `POST` | `/api/leave/holidays?year=` | any (read) · Company Admin/HR Manager (write) |
 | `PATCH` · `DELETE` | `/api/leave/holidays/:id` | Company Admin, HR Manager |
 | `GET` · `PATCH` | `/api/leave/settings` | any (read) · Company Admin (write) |
-| `GET` | `/api/leave/balances/:employeeId` | any (row-scoped) |
+| `GET` | `/api/leave/balances/:employeeId?year=` | any (row-scoped); `year` defaults to the tenant's current leave year (`fyStartMonth`-aware) |
 | `GET` | `/api/leave/team/balances?year=` | any (scoped: direct reports for Line Manager, all for HR/Admin) |
 | `POST` | `/api/leave/balances/adjust` | Company Admin, HR Manager |
-| `GET` | `/api/leave/balances/ledger?employeeId=&leaveTypeId=` | Company Admin, HR Manager, Auditor |
+| `GET` | `/api/leave/balances/ledger?employeeId=&leaveTypeCode=` | Company Admin, HR Manager, Auditor |
 | `POST` | `/api/leave/requests` | any (tenant) |
 | `GET` | `/api/leave/requests?status=&leaveTypeId=&department=&from=&to=` | Company Admin, HR Manager, Auditor |
 | `GET` | `/api/leave/requests/:id` | row-scoped (includes `approvals[]` history) |
@@ -420,20 +437,25 @@ attendance and flag LOP when the balance is short.
 | `GET` | `/api/leave/requests/pending-approvals` | any (returns [] if not an approver) |
 | `GET` | `/api/leave/calendar?from=&to=` | any (tenant) |
 
-### Known gaps / TODO (priority order)
+### Known gaps / TODO
 
-1. Leave ↔ attendance reconciliation once Attendance matures (§5) —
-   deliberately deferred.
-2. Comp-off credit for holiday/weekend work — deliberately deferred.
-3. Team-calendar preview on the Apply tab itself (the dedicated Team
-   Calendar tab already works).
-4. Richer `LeaveType` config (gender restriction, min notice, encashment,
-   short `code`) — frontend-only today; low priority until a customer asks.
-5. Mid-year proration for new joiners in the accrual job.
-6. Flip `apps/web/src/lib/leave` off `VITE_LEAVE_MOCK` now that both the
-   backend and every frontend screen are wired — first reconcile the
-   response-shape deltas in `docs/LEAVE_UI_SPECS.md` (ledger/approvals
-   return raw Prisma shapes today, not the frontend's denormalized ones).
+All originally-tracked gaps are closed. What remains is a scope note, not
+a gap:
+
+- Comp-off crediting and leave→attendance reconciliation are
+  **synchronous** — comp-off checks the day at clock-in time, attendance
+  sync writes `ON_LEAVE` rows at approve/cancel time. Neither depends on
+  or duplicates Attendance's own much bigger "nightly finalization job"
+  gap (§5 gap #3: holiday → weekly-off → approved leave → punches ⇒ final
+  status, still unbuilt) — if that job is ever built, it should treat
+  `ON_LEAVE` rows Leave already wrote as authoritative rather than
+  recomputing them.
+- `genderRestriction` enforcement fails open when `Employee.gender`
+  (free-text, no schema enum) doesn't normalize to exactly `MALE`/
+  `FEMALE` — a data-quality gap must never block a legitimate employee.
+  The Employees module's own update DTO doesn't currently expose `gender`
+  as a settable field either (unrelated to Leave; noted here since it's
+  the only way to observe this in practice today).
 
 ---
 
@@ -518,13 +540,20 @@ route today is self-service for the calling employee.
 1. **Refactor `attendance.service.ts`** to read the tenant's default
    `Shift` + `tenant_settings` (timezone, weekly-off days) instead of the
    hardcoded `SHIFT_START_HOUR` / `GRACE_MINUTES` / `TARGET_HOURS`
-   constants.
+   constants. *(Partially done: `clockIn()` now reads `Holiday` and
+   `TenantSettings.weeklyOffDays` — needed for Leave's comp-off feature,
+   see §4 — and sets `HOLIDAY`/`WEEKLY_OFF` status accordingly. The
+   shift-based start-time/grace-period refactor is still outstanding.)*
 2. **Punch write-path** — web clock-in writes `punches` rows (`source:
    WEB`); `attendance_records.checkInAt/checkOutAt` become first-IN /
    last-OUT derived values.
 3. **Nightly finalization job** (BullMQ) — per employee/day: holiday →
    weekly-off → approved leave → punches ⇒ final status + hours. Clean
-   days auto-final, no human.
+   days auto-final, no human. *(Holiday/weekly-off detection on clock-in,
+   and `ON_LEAVE` rows for approved leave, are now written synchronously
+   by `AttendanceService.clockIn()`/`LeaveService` respectively — see §4 —
+   but there is still no job to finalize a day that has* **no** *clock-in
+   and no approved leave, e.g. a genuine unexplained absence.)*
 4. **Regularisation approval** — `POST .../regularization/:id/approve` &
    `/reject` for `LINE_MANAGER` / `HR_MANAGER`; enforce
    `attendance_settings.regularizationWindowDays` +

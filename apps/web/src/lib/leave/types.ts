@@ -39,6 +39,10 @@ export interface LeaveType {
   /** Soft-delete / hide from the apply form without losing history. */
   active: boolean;
   colorToken: string; // a --lumen-* / palette token for calendar chips
+  /** Marks this as the tenant's designated comp-off type — earned via
+   *  LeaveService.creditCompOff() when someone works a holiday/weekly-off
+   *  day, not applied for directly. At most one expected per tenant. */
+  isCompOff: boolean;
 }
 
 export interface LeaveBalance {

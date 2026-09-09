@@ -28,12 +28,12 @@ function deriveCode(name: string): string {
 }
 
 /**
- * Leave type configuration. Only name / annual quota / carry-forward cap /
- * accrual frequency are backend-persisted today — the form only exposes
- * those; the rest of the frontend LeaveType shape (code, colorToken,
- * genderRestriction, ...) gets sensible auto-derived defaults so
- * `createType`'s full-shape signature is still satisfied, without building
- * UI for fields the API silently drops (see docs/LEAVE_UI_SPECS.md).
+ * Leave type configuration. The form exposes name / annual quota /
+ * carry-forward cap / accrual frequency / requires-approval / comp-off flag;
+ * the rest of the frontend LeaveType shape (code, colorToken,
+ * genderRestriction, minNoticeDays, ...) gets sensible auto-derived
+ * defaults so `createType`'s full-shape signature is still satisfied,
+ * without building UI for every field yet (see docs/LEAVE_UI_SPECS.md).
  */
 export function LeaveTypesTab({ readOnly = false }: { readOnly?: boolean }) {
   const [rows, setRows] = React.useState<LeaveType[] | null>(null);
@@ -173,6 +173,8 @@ function TypeFormDialog({
     annualQuota: 12,
     carryForwardCap: 0,
     accrualFrequency: 'ANNUAL' as AccrualFrequency,
+    requiresApproval: true,
+    isCompOff: false,
   });
   const [busy, setBusy] = React.useState(false);
 
@@ -185,8 +187,17 @@ function TypeFormDialog({
             annualQuota: initial.annualQuota,
             carryForwardCap: initial.carryForwardCap,
             accrualFrequency: initial.accrualFrequency,
+            requiresApproval: initial.requiresApproval,
+            isCompOff: initial.isCompOff,
           }
-        : { name: '', annualQuota: 12, carryForwardCap: 0, accrualFrequency: 'ANNUAL' },
+        : {
+            name: '',
+            annualQuota: 12,
+            carryForwardCap: 0,
+            accrualFrequency: 'ANNUAL',
+            requiresApproval: true,
+            isCompOff: false,
+          },
     );
   }, [open, initial]);
 
@@ -200,12 +211,13 @@ function TypeFormDialog({
           annualQuota: form.annualQuota,
           carryForwardCap: form.carryForwardCap,
           accrualFrequency: form.accrualFrequency,
+          requiresApproval: form.requiresApproval,
+          isCompOff: form.isCompOff,
           code: deriveCode(form.name),
           colorToken: ACCRUAL_PALETTE[Math.floor(Math.random() * ACCRUAL_PALETTE.length)],
           genderRestriction: 'ANY',
           minNoticeDays: 0,
           paid: true,
-          requiresApproval: true,
           active: true,
         });
         toast({ title: `Added “${form.name}”` });
@@ -215,6 +227,8 @@ function TypeFormDialog({
           annualQuota: form.annualQuota,
           carryForwardCap: form.carryForwardCap,
           accrualFrequency: form.accrualFrequency,
+          requiresApproval: form.requiresApproval,
+          isCompOff: form.isCompOff,
         });
         toast({ title: `Updated “${form.name}”` });
       }
@@ -274,6 +288,27 @@ function TypeFormDialog({
               ))}
             </Select>
           </Field>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-input"
+              checked={form.requiresApproval}
+              onChange={(e) => setForm((f) => ({ ...f, requiresApproval: e.target.checked }))}
+            />
+            Requires approval
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-input"
+              checked={form.isCompOff}
+              onChange={(e) => setForm((f) => ({ ...f, isCompOff: e.target.checked }))}
+            />
+            This is the comp-off type
+            <span className="text-xs text-muted-foreground">
+              (earned automatically for holiday/weekly-off work, not applied for)
+            </span>
+          </label>
           <div className="mt-1 flex justify-end gap-2">
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel

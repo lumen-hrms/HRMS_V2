@@ -70,13 +70,24 @@ export class AttendanceService {
     }
 
     const now = new Date();
-    const status = this.isLate(now) ? 'LATE' : 'PRESENT';
+    const [holiday, settings] = await Promise.all([
+      this.tenantPrisma.client.holiday.findFirst({ where: { date } }),
+      this.tenantPrisma.client.tenantSettings.findUniqueOrThrow({ where: { tenantId } }),
+    ]);
+    const isWeeklyOff = settings.weeklyOffDays.includes(date.getUTCDay());
+    const status = holiday ? 'HOLIDAY' : isWeeklyOff ? 'WEEKLY_OFF' : this.isLate(now) ? 'LATE' : 'PRESENT';
 
-    return this.tenantPrisma.client.attendanceRecord.upsert({
+    const record = await this.tenantPrisma.client.attendanceRecord.upsert({
       where: { tenantId_employeeId_date: { tenantId, employeeId, date } },
       create: { tenantId, employeeId, date, checkInAt: now, source: 'WEB', status },
       update: { checkInAt: now, checkOutAt: null, source: 'WEB', status },
     });
+
+    if (holiday || isWeeklyOff) {
+      await this.leave.creditCompOff(employeeId, date, holiday?.name ?? 'weekly-off');
+    }
+
+    return record;
   }
 
   async clockOut(user: AuthenticatedUser) {
@@ -209,7 +220,7 @@ export class AttendanceService {
     });
 
     const workingDays = records.filter(
-      (r) => r.status !== 'WEEKLY_OFF' && r.status !== 'HOLIDAY',
+      (r) => r.status !== 'WEEKLY_OFF' && r.status !== 'HOLIDAY' && r.status !== 'ON_LEAVE',
     ).length;
     const presentDays = records.filter((r) => r.status === 'PRESENT' || r.status === 'LATE').length;
     const lateDays = records.filter((r) => r.status === 'LATE').length;

@@ -124,7 +124,7 @@ describe('Tenant isolation (e2e)', () => {
     // superuser fixture connection (arrange step, not part of what's under
     // test), then try to approve it as tenant A's manager.
     const leaveType = await superuserPrisma.leaveType.create({
-      data: { tenantId: tenantB.tenantId, name: 'E2E Leave', annualQuota: 10 },
+      data: { tenantId: tenantB.tenantId, name: 'E2E Leave', code: 'E2E', annualQuota: 10 },
     });
     const leaveRequest = await superuserPrisma.leaveRequest.create({
       data: {

@@ -35,8 +35,8 @@ export class LeaveController {
   constructor(private readonly service: LeaveService) {}
 
   @Get('types')
-  listTypes() {
-    return this.service.listTypes();
+  listTypes(@Query('includeInactive') includeInactive?: string) {
+    return this.service.listTypes(includeInactive === 'true');
   }
 
   @Post('types')
@@ -91,14 +91,13 @@ export class LeaveController {
     return this.service.updateSettings(dto);
   }
 
-  @Get('balances/:employeeId')
-  balances(@Param('employeeId') employeeId: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.service.getBalances(employeeId, user);
-  }
-
+  // Static `balances/...` routes must be declared before the dynamic
+  // `balances/:employeeId` below — Nest matches routes in declaration
+  // order, so a later static route would otherwise never be reached
+  // (e.g. `balances/ledger` would match `:employeeId = "ledger"`).
   @Get('team/balances')
   teamBalances(@Query('year') year: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.service.teamBalances(user, parseInt(year, 10) || new Date().getFullYear());
+    return this.service.teamBalances(user, parseInt(year, 10) || undefined);
   }
 
   @Post('balances/adjust')
@@ -109,8 +108,17 @@ export class LeaveController {
 
   @Get('balances/ledger')
   @Roles('COMPANY_ADMIN', 'HR_MANAGER', 'AUDITOR')
-  ledger(@Query('employeeId') employeeId?: string, @Query('leaveTypeId') leaveTypeId?: string) {
-    return this.service.ledger(employeeId, leaveTypeId);
+  ledger(@Query('employeeId') employeeId?: string, @Query('leaveTypeCode') leaveTypeCode?: string) {
+    return this.service.ledger(employeeId, leaveTypeCode);
+  }
+
+  @Get('balances/:employeeId')
+  balances(
+    @Param('employeeId') employeeId: string,
+    @Query('year') year: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.getBalances(employeeId, user, parseInt(year, 10) || undefined);
   }
 
   @Post('requests')

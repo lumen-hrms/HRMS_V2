@@ -20,13 +20,17 @@ function buildFakeTenantPrisma(overrides: Record<string, any> = {}) {
       findUniqueOrThrow: jest.fn(),
       update: jest.fn((args: any) => ({ id: args.where.id, ...args.data })),
     },
+    holiday: { findFirst: jest.fn().mockResolvedValue(null) },
+    tenantSettings: {
+      findUniqueOrThrow: jest.fn().mockResolvedValue({ weeklyOffDays: [0, 6] }),
+    },
     ...overrides,
   };
   return { tenantId: 'tenant-1', client };
 }
 
 function fakeLeave() {
-  return { getBalances: jest.fn().mockResolvedValue([]) };
+  return { getBalances: jest.fn().mockResolvedValue([]), creditCompOff: jest.fn() };
 }
 
 function user(overrides: Partial<AuthenticatedUser> = {}): AuthenticatedUser {
@@ -94,6 +98,38 @@ describe('AttendanceService', () => {
       await expect(service.clockIn(user({ employeeId: undefined }))).rejects.toThrow(
         BadRequestException,
       );
+    });
+
+    it('marks HOLIDAY and credits comp-off when clocking in on a company holiday', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        attendanceRecord: {
+          findUnique: jest.fn().mockResolvedValue(null),
+          upsert: jest.fn((args: any) => ({ id: 'rec-1', ...args.create })),
+        },
+        holiday: { findFirst: jest.fn().mockResolvedValue({ id: 'h-1', name: 'Republic Day' }) },
+      });
+      const leave = fakeLeave();
+      const service = new AttendanceService(tenantPrisma as any, leave as any);
+
+      const result = await service.clockIn(user());
+      expect(result.status).toBe('HOLIDAY');
+      expect(leave.creditCompOff).toHaveBeenCalledWith('emp-1', expect.any(Date), 'Republic Day');
+    });
+
+    it('marks WEEKLY_OFF and credits comp-off when clocking in on a weekly-off day', async () => {
+      jest.setSystemTime(new Date('2026-03-01T09:05:00Z')); // a Sunday
+      const tenantPrisma = buildFakeTenantPrisma({
+        attendanceRecord: {
+          findUnique: jest.fn().mockResolvedValue(null),
+          upsert: jest.fn((args: any) => ({ id: 'rec-1', ...args.create })),
+        },
+      });
+      const leave = fakeLeave();
+      const service = new AttendanceService(tenantPrisma as any, leave as any);
+
+      const result = await service.clockIn(user());
+      expect(result.status).toBe('WEEKLY_OFF');
+      expect(leave.creditCompOff).toHaveBeenCalledWith('emp-1', expect.any(Date), 'weekly-off');
     });
   });
 

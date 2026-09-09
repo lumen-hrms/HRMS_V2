@@ -12,11 +12,20 @@ import {
 } from 'class-validator';
 
 const ACCRUAL_FREQUENCIES = ['ANNUAL', 'MONTHLY', 'QUARTERLY'];
+const GENDER_RESTRICTIONS = ['ANY', 'MALE', 'FEMALE'];
 
 export class CreateLeaveTypeDto {
   @IsString()
   @MinLength(1)
   name!: string;
+
+  @IsString()
+  @MinLength(1)
+  code!: string;
+
+  @IsOptional()
+  @IsString()
+  colorToken?: string;
 
   @IsNumber()
   @Min(0)
@@ -28,8 +37,33 @@ export class CreateLeaveTypeDto {
   carryForwardCap?: number;
 
   @IsOptional()
+  @IsInt()
+  @Min(0)
+  minNoticeDays?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+
+  @IsOptional()
   @IsIn(ACCRUAL_FREQUENCIES)
   accrualFrequency?: 'ANNUAL' | 'MONTHLY' | 'QUARTERLY';
+
+  @IsOptional()
+  @IsIn(GENDER_RESTRICTIONS)
+  genderRestriction?: 'ANY' | 'MALE' | 'FEMALE';
+
+  @IsOptional()
+  @IsBoolean()
+  paid?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  requiresApproval?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isCompOff?: boolean;
 }
 
 export class UpdateLeaveTypeDto {
@@ -37,6 +71,15 @@ export class UpdateLeaveTypeDto {
   @IsString()
   @MinLength(1)
   name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  code?: string;
+
+  @IsOptional()
+  @IsString()
+  colorToken?: string;
 
   @IsOptional()
   @IsNumber()
@@ -49,8 +92,33 @@ export class UpdateLeaveTypeDto {
   carryForwardCap?: number;
 
   @IsOptional()
+  @IsInt()
+  @Min(0)
+  minNoticeDays?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+
+  @IsOptional()
   @IsIn(ACCRUAL_FREQUENCIES)
   accrualFrequency?: 'ANNUAL' | 'MONTHLY' | 'QUARTERLY';
+
+  @IsOptional()
+  @IsIn(GENDER_RESTRICTIONS)
+  genderRestriction?: 'ANY' | 'MALE' | 'FEMALE';
+
+  @IsOptional()
+  @IsBoolean()
+  paid?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  requiresApproval?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isCompOff?: boolean;
 }
 
 export class ApplyLeaveDto {
@@ -62,6 +130,10 @@ export class ApplyLeaveDto {
 
   @IsDateString()
   endDate!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  halfDay?: boolean;
 
   @IsOptional()
   @IsString()
@@ -130,4 +202,13 @@ export class UpdateLeaveSettingsDto {
   @IsInt()
   @Min(1)
   leaveEscalationDays?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  allowLopRequests?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  fyStartMonth?: number;
 }

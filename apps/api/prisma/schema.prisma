@@ -354,12 +354,28 @@ model LeaveType {
   id               String           @id @default(uuid()) @db.Uuid
   tenantId         String           @map("tenant_id") @db.Uuid
   name             String
+  // Short label for dense UI (e.g. "CL", "SL") — user-set, unique per tenant.
+  code             String
+  // A CSS color value for calendar chips / dots.
+  colorToken       String           @default("#2b5a8c") @map("color_token")
   annualQuota      Decimal          @map("annual_quota") @db.Decimal(6, 2)
   carryForwardCap  Decimal          @default(0) @map("carry_forward_cap") @db.Decimal(6, 2)
   requiresApproval Boolean          @default(true) @map("requires_approval")
+  // Minimum calendar-days notice; enforced by LeaveService.apply().
+  minNoticeDays    Int              @default(0) @map("min_notice_days")
+  // Soft-delete: hides the type from the apply dropdown without losing history.
+  active           Boolean          @default(true)
   // Periodic credit schedule the accrual job follows; ANNUAL types are still
   // seeded manually via the initialize-year endpoint.
-  accrualFrequency AccrualFrequency @default(ANNUAL) @map("accrual_frequency")
+  accrualFrequency AccrualFrequency  @default(ANNUAL) @map("accrual_frequency")
+  // Who may apply for this type; enforced by LeaveService.apply().
+  genderRestriction GenderRestriction @default(ANY) @map("gender_restriction")
+  // Whether this leave type is paid; informational only, no payroll linkage yet.
+  paid              Boolean           @default(true)
+  // Marks the tenant's designated comp-off type — LeaveService.creditCompOff()
+  // credits into whichever LeaveType has this set (at most one expected per
+  // tenant; not DB-enforced). No-op if a tenant hasn't configured one.
+  isCompOff         Boolean           @default(false) @map("is_comp_off")
   createdAt        DateTime         @default(now()) @map("created_at")
   updatedAt        DateTime         @updatedAt @map("updated_at")
 
@@ -368,8 +384,17 @@ model LeaveType {
   ledgerEntries LeaveLedgerEntry[]
 
   @@unique([tenantId, name])
+  @@unique([tenantId, code])
   @@index([tenantId])
   @@map("leave_types")
+  @@schema("public")
+}
+
+enum GenderRestriction {
+  ANY
+  MALE
+  FEMALE
+
   @@schema("public")
 }
 
@@ -413,6 +438,7 @@ model LeaveRequest {
   startDate DateTime @map("start_date")
   endDate   DateTime @map("end_date")
   days      Decimal  @db.Decimal(6, 2)
+  halfDay   Boolean  @default(false) @map("half_day")
   isLop     Boolean  @default(false) @map("is_lop")
   reason    String?
 
@@ -507,6 +533,7 @@ enum LeaveLedgerSource {
   REQUEST_APPROVED
   REQUEST_CANCELLED
   HR_ADJUSTMENT
+  COMP_OFF_CREDIT
 
   @@schema("public")
 }
@@ -643,6 +670,13 @@ model TenantSettings {
   // Days a leave request may sit undecided at a level before the escalation
   // job flags it (see apps/api/src/leave/leave-escalation.processor.ts).
   leaveEscalationDays Int    @default(3) @map("leave_escalation_days")
+  // Whether an employee may submit a request that will be Loss of Pay.
+  // Enforced by LeaveService.apply().
+  allowLopRequests    Boolean @default(true) @map("allow_lop_requests")
+  // Financial-year start month (1-12; India default April). Used by
+  // resolveLeaveYear() (apps/api/src/leave/leave-year.util.ts) to shift the
+  // balance-year boundary for apply()/getBalances()/teamBalances()/the accrual job.
+  fyStartMonth        Int    @default(4) @map("fy_start_month")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

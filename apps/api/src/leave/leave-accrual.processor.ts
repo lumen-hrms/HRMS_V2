@@ -6,6 +6,7 @@ import { PlatformPrismaClientProvider } from '../prisma/platform-prisma-client.p
 import { TenantPrismaClientProvider } from '../prisma/tenant-prisma-client.provider';
 import { withTenantContext } from '../prisma/with-tenant-context';
 import { LEAVE_QUEUE } from './leave.constants';
+import { resolveLeaveYear } from './leave-year.util';
 
 const ACCRUAL_DIVISOR: Record<'MONTHLY' | 'QUARTERLY', number> = { MONTHLY: 12, QUARTERLY: 4 };
 
@@ -70,15 +71,35 @@ export class LeaveAccrualProcessor extends WorkerHost implements OnModuleInit {
       where: { accrualFrequency: { in: frequencies } },
     });
     if (types.length === 0) return;
-    const employees = await client.employee.findMany({ select: { id: true } });
+    const settings = await client.tenantSettings.findUniqueOrThrow({ where: { tenantId } });
+    const leaveYear = resolveLeaveYear(today, settings.fyStartMonth);
+    const employees = await client.employee.findMany({
+      select: { id: true, dateOfJoining: true },
+    });
 
     for (const type of types) {
       const divisor = ACCRUAL_DIVISOR[type.accrualFrequency as 'MONTHLY' | 'QUARTERLY'];
-      const increment = Number(type.annualQuota) / divisor;
+      const fullIncrement = Number(type.annualQuota) / divisor;
       const periodStart = new Date(Date.UTC(year, month, 1));
       const periodEnd = new Date(Date.UTC(year, month + 1, 1));
 
       for (const emp of employees) {
+        // Not yet joined this period — no accrual at all.
+        if (emp.dateOfJoining && emp.dateOfJoining.getTime() >= periodEnd.getTime()) continue;
+
+        // Joined mid-period — prorate this period's increment by the days actually employed.
+        let increment = fullIncrement;
+        if (
+          emp.dateOfJoining &&
+          emp.dateOfJoining.getTime() >= periodStart.getTime() &&
+          emp.dateOfJoining.getTime() < periodEnd.getTime()
+        ) {
+          const fraction =
+            (periodEnd.getTime() - emp.dateOfJoining.getTime()) /
+            (periodEnd.getTime() - periodStart.getTime());
+          increment = fullIncrement * fraction;
+        }
+
         const already = await client.leaveLedgerEntry.findFirst({
           where: {
             employeeId: emp.id,
@@ -95,7 +116,7 @@ export class LeaveAccrualProcessor extends WorkerHost implements OnModuleInit {
               tenantId,
               employeeId: emp.id,
               leaveTypeId: type.id,
-              year,
+              year: leaveYear,
             },
           },
         });
@@ -110,14 +131,14 @@ export class LeaveAccrualProcessor extends WorkerHost implements OnModuleInit {
               tenantId,
               employeeId: emp.id,
               leaveTypeId: type.id,
-              year,
+              year: leaveYear,
             },
           },
           create: {
             tenantId,
             employeeId: emp.id,
             leaveTypeId: type.id,
-            year,
+            year: leaveYear,
             accrued: newAccrued,
             used: 0,
           },
