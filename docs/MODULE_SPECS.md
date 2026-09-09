@@ -21,30 +21,42 @@
 > spec draft that is no longer maintained — ignore them; this file and the
 > code are the source of truth.)
 >
-> **Last synced to code:** 2026-09-09 (uncommitted `leave-management-module`
-> branch work, on top of commit `dbd71f2` + Identity & Access **backend**:
-> `access` module (`GET /api/access/users` · `/access/me` ·
-> `PATCH .../role` · `PATCH .../status` · `POST .../password-reset` ·
-> `GET /api/access/audit` · `.../:id/activity`), `LoginAuditEntry` table +
-> append-only login-audit writes on `POST /api/auth/session`,
-> `VITE_ACCESS_MOCK` now defaults **off**; + Leave Management backend gap
-> closure — Line Manager visibility, holiday calendar, attachments,
-> configurable approval levels + escalation timers (new BullMQ `leave`
-> queue / Redis), a minimal accrual job, and the remaining planned
-> endpoints; + the Leave Management HR/Company Admin/Auditor frontend
-> screens (Leave Types, Balance Adjustments, Ledger, Settings, and wiring
-> `all-requests.tsx` in), closing the frontend role×tab matrix; + flipping
-> Leave Management fully live — response-mapper work
-> (`toRequestDto`/`toBalanceDto`/`toLedgerDto`/`toApprovalStep`),
-> `VITE_LEAVE_MOCK=false`, `allowLopRequests`/`minNoticeDays`/`fyStartMonth`
-> enforcement, accrual-job proration, `genderRestriction`/`paid` columns,
-> and a route-order bug fix (`balances/:employeeId` was shadowing
-> `balances/ledger`); + closing Leave Management's last 4 gaps —
-> `requiresApproval` DTO field, `genderRestriction` enforcement in
-> `apply()`, comp-off credit (`LeaveType.isCompOff`, `LeaveService
-> .creditCompOff()`, wired from `AttendanceService.clockIn()`), and
-> leave→attendance reconciliation (`LeaveService.syncAttendanceForLeave()`
-> writing `AttendanceRecord.ON_LEAVE` on approve/cancel) — see §4).
+> **Last synced to code:** 2026-09-09 — branch `dev` @ `2000bd5` (PRs #4
+> `platform-admin` + #5 `leave-management-module` merged). Landed since the
+> previous sync:
+>
+> - **Identity & Access backend** — the `access` module (`/api/access/*`:
+>   `users` · `me` · `PATCH .../role` · `PATCH .../status` ·
+>   `POST .../password-reset` · `GET .../audit` · `.../:id/activity`) with
+>   e2e RBAC + append-only tests; `LoginAuditEntry` table + append-only
+>   login-audit on every server-observed `POST /api/auth/session` outcome;
+>   `VITE_ACCESS_MOCK` defaults **off**.
+> - **Infra** — Firebase Auth **emulator removed** (real Firebase
+>   everywhere, tests included); dev DB moved to a **shared Supabase
+>   Postgres** via the Supavisor pooler (local Docker Postgres is now
+>   e2e-only); multi-tenancy decision rewritten to **hybrid** in `CLAUDE.md`
+>   (pooled default + dedicated DB-per-tenant as a plan-gated tier — a
+>   design target, not built). A **testing deploy** (API → Fly.io, web →
+>   Vercel, DB stays Supabase) is configured — `docs/DEPLOY.md`;
+>   `GET /api/health` added.
+> - **Platform Admin** — full operator console UI at `/platform-admin/*`
+>   (login, tenants list, new-tenant wizard, tenant detail w/ 4 tabs, Plans
+>   catalog, audit screen); operator-editable plan catalog `platform.plans`
+>   (`GET`/`PATCH /plans`); **per-seat pricing** — plans carry a list price
+>   *per seat / month*, each `Subscription` snapshots a **per-tenant
+>   negotiated rate**; `PATCH .../pricing` adjusts it, `PATCH .../plan` +
+>   `POST .../renew` re-snapshot; `PlatformAuditLog` written for
+>   create / status / plan-change / renewal / price-adjust / plan-edit.
+>   Migrations `20260909120000_plan_catalog` + `20260909130000_per_seat_pricing`.
+> - **Leave Management** — backend fully wired & tested, FE live path built;
+>   Line-Manager visibility, holiday calendar, attachments, configurable
+>   approval levels + escalation/accrual jobs on a new BullMQ `leave` queue
+>   (Redis — added to `docker-compose.yml` + CI), comp-off credit, and
+>   leave→attendance reconciliation. All feature gaps closed; the web client
+>   still **defaults to the mock** (`VITE_LEAVE_MOCK` unset) — see §4.
+> - **Audit Log** — `login_audit_entries`, `public.audit_log` (access-change
+>   events), and `platform.platform_audit_log` are all now written and
+>   append-only-enforced (see §12).
 >
 > **Keep the status table + per-module progress bars current on every change** —
 > if a commit moves a module, move its bar (status mark, ASCII bar, %), its
@@ -65,9 +77,9 @@
 | Module | Status | Progress |
 |---|---|---|
 | 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ | `███████████████████░` 97% — auth/RBAC/tenancy live; `access` module wired (Users, role/status/reset, login+access audit, My Account) with e2e RBAC + append-only tests; `LoginAuditEntry` table written on every session outcome. Remaining: `BAD_CREDENTIALS`/`TENANT_SUSPENDED` not server-observable (§1 gaps) |
-| 2. Platform Admin | ✅ | `██████████████████░░` 90% |
+| 2. Platform Admin | ✅ | `███████████████████░` 96% — full operator console UI (tenants list, new-tenant wizard, tenant detail tabs, **Plans catalog**, audit screen); onboarding emails a hosted reset link; **operator-editable `platform.plans`** (per-seat list price / default seats / modules / features / isolation tier) with snapshot-at-assign + re-snapshot-on-renewal; **per-tenant negotiated per-seat rate** (`PATCH .../pricing`; monthly = rate × seats, computed); `PATCH .../plan` + `POST .../renew` live; `PlatformAuditLog` written for create / status / plan-change / renewal / price-adjust / plan-edit. Pending: audit *read* API, `GET tenants/:id`, refresh-headcount route, scheduled renewal job, break-glass |
 | 3. Employee Master + Org Structure | 🟡 | `█████████████████░░░` 85% |
-| 4. Leave Management | ✅ | `████████████████████` 100% — BE/FE fully wired live (`VITE_LEAVE_MOCK=false`); `allowLopRequests`/`minNoticeDays`/`fyStartMonth`/`genderRestriction`/`requiresApproval` all enforced/settable; mid-year-joiner proration; comp-off credit on holiday/weekly-off clock-in; approved leave reconciles into `AttendanceRecord.ON_LEAVE` |
+| 4. Leave Management | ✅ | `███████████████████░` 98% — backend fully wired & tested; FE live path built and working against the real API; `allowLopRequests`/`minNoticeDays`/`fyStartMonth`/`genderRestriction`/`requiresApproval` all enforced/settable; mid-year-joiner proration; comp-off credit on holiday/weekly-off clock-in; approved leave reconciles into `AttendanceRecord.ON_LEAVE`. **Last step:** `apps/web` still defaults to the Leave **mock** (`client.ts`: `VITE_LEAVE_MOCK` unset ⇒ mock) — flip the default or add `VITE_LEAVE_MOCK=false` to `apps/web/.env` |
 | 5. Attendance & Time Tracking | 🟡 | `███████████░░░░░░░░░░` 55% |
 | 6. Dashboard | ✅ | `█████████████████░░░` 85% |
 | 7. Payroll Engine | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
@@ -75,7 +87,7 @@
 | 9. Documents | 🟡 | `████████████░░░░░░░░` 60% (lives inside Employee Master today) |
 | 10. Notifications | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
 | 11. Reports & Analytics | 🔴 | `██░░░░░░░░░░░░░░░░░░` 10% (only the Dashboard aggregates exist) |
-| 12. Audit Log | 🟡 | `█████░░░░░░░░░░░░░░░` 25% — `login_audit_entries` + `audit_log` are append-only (no `UPDATE`/`DELETE` grant) and written by Identity & Access (sign-in outcomes, role/status/reset/login-created); no aggregation/retention-purge/UI yet |
+| 12. Audit Log | 🟡 | `██████░░░░░░░░░░░░░░` 30% — three append-only trails live: `login_audit_entries` (sign-in outcomes), `public.audit_log` (`access.*` change events — role/status/reset/login-created), `platform.platform_audit_log` (tenant create/status/plan/renewal/price-adjust/plan-edit). `login_audit_entries` + `audit_log` have no `UPDATE`/`DELETE` grant. Missing: a generic audit interceptor, employee field/salary + attendance-decision coverage, an aggregation/query UI, retention-purge job |
 | 13. Tenant Configuration | 🟡 | `██████░░░░░░░░░░░░░░` 30% — schema + onboarding defaults landed; guard, Settings UI, engine wiring next. See `docs/TENANT_CONFIGURATION.md` |
 
 Deferred to a later phase — **do not build without a scope discussion**
@@ -283,9 +295,9 @@ future logged, time-boxed break-glass flow, not a standing grant.
 ### Known gaps / TODO
 
 - **Audit read API** — `GET /api/platform-admin/audit`. Rows are being
-  written (create / status / plan-change / renewal / plan-catalog-edit);
-  the console's Audit screen + tenant-detail Activity tab are built and
-  degrade gracefully until this lands.
+  written (create / status / plan-change / renewal / price-adjust /
+  plan-catalog-edit); the console's Audit screen + tenant-detail Activity
+  tab are built and degrade gracefully until this lands.
 - **`POST /api/platform-admin/tenants/:id/refresh-headcount`** — expose the
   existing `refreshHeadcount()` as a route; also a scheduled BullMQ job.
 - **`GET /api/platform-admin/tenants/:id`** — detail endpoint (the console
@@ -389,8 +401,14 @@ must validate and report per-row rather than fail the batch.
 **Deep spec:** `docs/modules/04_LEAVE_MANAGEMENT.md` *(pending)* ·
 **UI prompt:** `docs/ui-build-prompts/04-leave-management.md` ·
 **API contract:** `docs/LEAVE_UI_SPECS.md`
-**Status:** ✅ — BE/FE fully wired and running **live**
-(`VITE_LEAVE_MOCK=false`); every originally-tracked gap is closed.
+**Status:** ✅ — backend fully wired, tested, and serving the real API;
+the frontend live path is built and works against it; every
+originally-tracked feature gap is closed. **One flip remains:**
+`apps/web/src/lib/leave/client.ts` computes `USE_MOCK =
+import.meta.env.VITE_LEAVE_MOCK !== 'false'`, so with the var **unset**
+(it's not in `apps/web/.env`) a fresh checkout still renders the Leave
+**mock**. Set `VITE_LEAVE_MOCK=false` (or invert the default like
+`access/client.ts` does) to run live.
 `TenantSettings.allowLopRequests`/`fyStartMonth` and
 `LeaveType.minNoticeDays`/`genderRestriction`/`requiresApproval` are all
 enforced/settable, the accrual job prorates a new joiner's first period,
@@ -402,7 +420,8 @@ note under "Known gaps" below. See `docs/LEAVE_UI_SPECS.md`.
 **Code:** `apps/api/src/leave` (service/controller + `leave-escalation.processor.ts` /
 `leave-accrual.processor.ts` on a new BullMQ `leave` queue — see `docker-compose.yml`'s
 `redis` service), `apps/web/src/pages/leave`, `apps/web/src/lib/leave` (typed
-client + fixture/mock layer — `VITE_LEAVE_MOCK=false` switches to live)
+client + fixture/mock layer — `VITE_LEAVE_MOCK=false` switches to live;
+**currently defaults to mock** since the var is unset)
 
 ### Expectation
 
@@ -477,8 +496,16 @@ attendance and flag LOP when the balance is short.
 
 ### Known gaps / TODO
 
-All originally-tracked gaps are closed. What remains is a scope note, not
-a gap:
+All originally-tracked feature gaps are closed. What remains:
+
+- **Frontend still defaults to the mock.** `apps/web/src/lib/leave/client.ts`:
+  `USE_MOCK = import.meta.env.VITE_LEAVE_MOCK !== 'false'`, and the var is
+  set nowhere (`apps/web/.env` only carries `VITE_FIREBASE_*`). Either add
+  `VITE_LEAVE_MOCK=false` to `apps/web/.env` or invert the default to match
+  `access/client.ts` (`=== 'true'`). Until then a plain `npm run dev` /
+  build shows fixture data, not the live API.
+
+The rest is a scope note, not a gap:
 
 - Comp-off crediting and leave→attendance reconciliation are
   **synchronous** — comp-off checks the day at clock-in time, attendance
@@ -920,35 +947,75 @@ dashboards; later a custom report builder.
 
 ---
 
-## 12. Audit Log 🟡 (15%)
+## 12. Audit Log 🟡 (30%)
 
-**Status:** `AuditLog` (tenant) and `PlatformAuditLog` (platform) tables
-exist in the schema; **nothing writes to them**.
-**Code target:** an interceptor / service in `apps/api/src/audit` plus
-call sites in each mutating service.
+**Status:** three append-only trails are **live and written** — the generic
+cross-module interceptor is still the missing piece.
+- `public.login_audit_entries` — one row per server-observed
+  `POST /api/auth/session` outcome (Identity & Access, §1).
+- `public.audit_log` — access-change events (`access.*` actions,
+  `metadata.module = "identity-access"`): role change, activate/deactivate,
+  password-reset, login created. Written by `AccessService` **and**
+  `EmployeesService` via the shared `buildAccessAuditData()` helper
+  (`apps/api/src/access/access.support.ts`); read via
+  `GET /api/access/audit?feed=access`.
+- `platform.platform_audit_log` — tenant `created` / `status_changed` /
+  `plan_changed` / `subscription.renewed` / `subscription.price_adjusted` /
+  `plan.updated` (Platform Admin, §2).
+
+Leave keeps its own `LeaveApproval` (decision/escalation, append-only) and
+`LeaveLedgerEntry` (balance-movement) trails rather than writing the generic
+`audit_log`.
+
+**Code:** `apps/api/src/access/access.support.ts`
+(`buildAccessAuditData`), `apps/api/src/auth/auth.service.ts`,
+`apps/api/src/platform-admin/*`. A shared `apps/api/src/audit` module +
+interceptor is still the target for uniform coverage.
 
 ### Expectation
 
 Append-only from day one — the app's DB role has **no `UPDATE`/`DELETE`**
-grant on the audit tables (enforce in the roles/RLS migration if not
-already). Every state-changing action records: actor, action, target,
-before/after metadata, IP, timestamp.
+grant on the audit tables. Every state-changing action records: actor,
+action, target, before/after metadata, IP, timestamp.
+
+### Append-only enforcement
+
+`login_audit_entries` and `public.audit_log` have **no `UPDATE`/`DELETE`**
+grant for `hrms_app` (`20260908074457_identity_access_audit` also revoked
+them from the pre-existing `audit_log`). `platform_audit_log` still carries
+full CRUD for `hrms_platform` — tightening it to `INSERT`/`SELECT` only is a
+tracked gap (§2).
 
 ### Must-cover write points
 
-- Employee create / update / status change.
-- Leave approve / reject / cancel.
-- Attendance regularisation decision; manual mark.
-- Tenant create / status change (→ `PlatformAuditLog`).
-- Login outcomes (→ dedicated login audit, FR-AUTH-008).
-- Payroll run state transitions; compliance file generation (when built).
+| Write point | Status |
+|---|---|
+| Login outcomes (→ `login_audit_entries`, FR-AUTH-008) | ✅ |
+| Access change: role / status / reset / login-created (→ `audit_log`) | ✅ |
+| Tenant create / status / plan / pricing (→ `platform_audit_log`) | ✅ |
+| Leave approve / reject / cancel / escalate | ✅ via `LeaveApproval` (separate from `audit_log`) |
+| Employee create / update / status / **salary** change | 🟡 login-creation only; field & compensation edits **not** logged |
+| Attendance regularisation decision; manual mark | 🔴 |
+| Payroll run state transitions; compliance file generation | 🔴 (modules not built) |
 
 ### Happy path
 
-An HR Manager updates an employee's salary → `EmployeesService.update()`
-writes the row, then emits an audit entry `{ actor, action:
-'employee.update', target: employeeId, before, after, ip }`. An Auditor
-(read-only role) can later list the trail; no one can modify it.
+An HR Manager changes a user's role → `AccessService` writes the row via
+`buildAccessAuditData` (`action: 'access.role_changed'`, actor, target,
+before/after role) → an Auditor lists it through
+`GET /api/access/audit?feed=access`; the missing `UPDATE`/`DELETE` grant
+means no one can alter it.
+
+### Known gaps / TODO
+
+- **Generic audit interceptor** so every mutating service records uniformly
+  (a `@nestjs` interceptor + `apps/api/src/audit` service), instead of the
+  current hand-wired call sites.
+- **Employee field/salary edits** and **attendance decisions** into
+  `audit_log`.
+- **Aggregation / query UI** beyond the Identity & Access audit feed.
+- **Retention-purge job** (`LoginAuditEntry` 2-yr requirement, §1).
+- Tighten `platform_audit_log` grants to true append-only.
 
 ---
 

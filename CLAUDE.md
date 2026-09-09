@@ -283,3 +283,14 @@ docs/
   creates/drops tenants — never point it at the shared DB). Connection
   strings live in the team vault, not git. This is a dev-infra choice; prod
   is still RDS ap-south-1 per the Stack table.
+- **Testing / preview deploy** — the API runs in Docker on a single
+  free-tier **AWS EC2 `t3.micro`** (`apps/api/Dockerfile`, ap-northeast-1,
+  port 80, `--restart unless-stopped`, plain `node dist/main.js` + the Leave
+  BullMQ worker) and the web app on **Vercel** (`apps/web/vercel.json`,
+  static Vite build with a `/api/*` rewrite proxying to the box —
+  browser↔Vercel is HTTPS, Vercel↔EC2 is server-side HTTP). DB stays on
+  Supabase, Auth on Firebase. Full runbook + env-var lists in
+  `docs/DEPLOY.md`. This is *not* the production target — that's still AWS
+  ap-south-1 **with RDS** (migrate off Supabase) per the Stack table, built
+  as its own infra slice. Migrations are never run from the container; the
+  schema owner applies them to Supabase deliberately.

@@ -17,6 +17,7 @@ same commit that changes the behaviour they describe.
 | `MODULE_SPECS.md` | The **index**: per-module one-page summary (expectation, feature list, happy paths, API surface) + the live status table. Each module also links to its deep spec in `modules/`. |
 | `TENANT_CONFIGURATION.md` | The multi-tenant config model — where per-tenant rules live and who sets them. |
 | `LEAVE_UI_SPECS.md` | Leave module per-screen API contract + `live` vs `planned` endpoint inventory (the contract the backend builds to and tests assert against). |
+| `DEPLOY.md` | The testing/preview deploy runbook — API in Docker on a free-tier AWS EC2 box, web on Vercel, DB on Supabase. Step-by-step + env-var lists + troubleshooting. Not the production target (that's AWS ap-south-1 + RDS, per `CLAUDE.md`). |
 
 ### In `docs/modules/` — one deep spec per module
 
