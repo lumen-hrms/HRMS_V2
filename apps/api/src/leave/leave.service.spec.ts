@@ -17,9 +17,12 @@ function buildFakeTenantPrisma(overrides: Record<string, any> = {}) {
       findMany: jest.fn(),
       findFirst: jest.fn(),
       create: jest.fn(),
-      findUniqueOrThrow: jest
-        .fn()
-        .mockResolvedValue({ id: 'lt-1', name: 'Test Type', minNoticeDays: 0, genderRestriction: 'ANY' }),
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        id: 'lt-1',
+        name: 'Test Type',
+        minNoticeDays: 0,
+        genderRestriction: 'ANY',
+      }),
     },
     employee: { findMany: jest.fn(), findUniqueOrThrow: jest.fn(), findUnique: jest.fn() },
     leaveBalance: {
@@ -44,7 +47,10 @@ function buildFakeTenantPrisma(overrides: Record<string, any> = {}) {
         fyStartMonth: 1,
       }),
     },
-    holiday: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue(null) },
+    holiday: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
     attendanceRecord: { upsert: jest.fn(), deleteMany: jest.fn() },
     ...overrides,
   };

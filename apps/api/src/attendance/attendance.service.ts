@@ -75,7 +75,13 @@ export class AttendanceService {
       this.tenantPrisma.client.tenantSettings.findUniqueOrThrow({ where: { tenantId } }),
     ]);
     const isWeeklyOff = settings.weeklyOffDays.includes(date.getUTCDay());
-    const status = holiday ? 'HOLIDAY' : isWeeklyOff ? 'WEEKLY_OFF' : this.isLate(now) ? 'LATE' : 'PRESENT';
+    const status = holiday
+      ? 'HOLIDAY'
+      : isWeeklyOff
+        ? 'WEEKLY_OFF'
+        : this.isLate(now)
+          ? 'LATE'
+          : 'PRESENT';
 
     const record = await this.tenantPrisma.client.attendanceRecord.upsert({
       where: { tenantId_employeeId_date: { tenantId, employeeId, date } },
