@@ -167,27 +167,43 @@ RBAC + tenant isolation (RLS), the Identity & Access *management* surface
 `GET /api/access/audit` · `.../:id/activity` — plus the `LoginAuditEntry`
 table and append-only login-audit writes on every server-observed
 `POST /api/auth/session` outcome; e2e-tested in `test/access.e2e-spec.ts`;
-`VITE_ACCESS_MOCK` defaults **off**), Platform Admin operator console
-(`/platform-admin/*` — tenant onboarding via hosted reset-link, enable /
-suspend, denormalized metadata, an **operator-editable plan catalog**
-`platform.plans` with **per-seat list pricing** / default seats / modules /
-features / isolation tier and a snapshot-at-assign + re-snapshot-on-renewal
-model; a **per-tenant negotiated per-seat rate** on each `Subscription`
-(effective monthly = rate × seats, computed) with `PATCH .../pricing` as
-the negotiation lever; `PATCH .../plan` + `POST .../renew` (renewal keeps
-the negotiated rate); audit read API + break-glass still pending),
-Employee Master, Leave Management, role-aware Dashboard — backend and
-frontend both. See
-`docs/BACKEND_ARCHITECTURE.md` for the full traced reference and its §8
-for known gaps within these modules (line-manager leave-visibility scoping
-is a known-permissive placeholder; the generic `audit_log` is now written
-to for access-change events but has no aggregation/UI yet).
+`VITE_ACCESS_MOCK` defaults **off**), Platform Admin console (tenant
+onboarding/enable-disable/metadata only), Employee Master, role-aware
+Dashboard — backend and frontend both. See `docs/BACKEND_ARCHITECTURE.md`
+for the full traced reference and its §8 for known gaps within these
+modules (the generic `audit_log` is now written to for access-change
+events but has no aggregation/UI yet).
+
+**Leave Management — done, 100% of its originally-scoped gaps closed,
+running live:** the line-manager leave-visibility placeholder is a real
+`reportingManagerId` check, holiday-aware working-day counts, request
+attachments, a tenant-configurable 1-or-2-level approval chain with
+escalation timers (BullMQ `leave` queue / Redis — first use of BullMQ in
+this repo), a monthly/quarterly accrual job (proration-aware for mid-year
+joiners), and every endpoint (team balances, balance adjustments, ledger,
+settings). Every cell of the frontend's role×tab matrix is wired to
+`apps/web/src/lib/leave`, and `apps/web/.env` sets `VITE_LEAVE_MOCK=false`
+(`LeaveService` maps every response into the frontend's denormalized
+contract itself). `TenantSettings.allowLopRequests`/`fyStartMonth`,
+`LeaveType.minNoticeDays`/`genderRestriction`/`requiresApproval` are all
+enforced/settable (gender check fails open on unrecognized
+`Employee.gender` — free-text field, no schema enum). Two features closed
+last: **comp-off** — `LeaveType.isCompOff` marks a tenant's designated
+type; `AttendanceService.clockIn()` detects a holiday/weekly-off day and
+calls `LeaveService.creditCompOff()` (idempotent, opt-in per tenant) —
+and **leave↔attendance reconciliation** — approving a request writes
+`AttendanceRecord.status = 'ON_LEAVE'` for its working days (direct Prisma
+access from `LeaveService`, not an `AttendanceService` import, to avoid a
+circular module dependency; reversed on cancel). Both are synchronous
+(at clock-in / approve-cancel time), not a nightly finalization job —
+Attendance's own much bigger "nightly finalization" gap (§5 of
+`docs/MODULE_SPECS.md`) stays exactly as deferred as it was. See
+`docs/MODULE_SPECS.md` §4 and `docs/LEAVE_UI_SPECS.md`.
 
 **Identity & Access — remaining gaps** (`docs/modules/01_IDENTITY_AND_ACCESS.md`
 §9): `BAD_CREDENTIALS` and `TENANT_SUSPENDED` sign-in failures aren't
 server-observable so aren't in the login trail (suspend/resume is logged
-once in `platform_audit_log` instead); no 2-year retention purge job yet;
-line-manager leave scoping still permissive.
+once in `platform_audit_log` instead); no 2-year retention purge job yet.
 
 **Not started:** Payroll, Attendance, Compliance exports are the next
 slice — see the blueprint's 12-week plan for sequencing (payroll is the

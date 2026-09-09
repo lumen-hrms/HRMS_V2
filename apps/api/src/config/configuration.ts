@@ -26,6 +26,9 @@ export interface AppConfig {
     bucket: string;
     forcePathStyle: boolean;
   };
+  redis: {
+    url: string;
+  };
 }
 
 export default (): AppConfig => ({
@@ -48,5 +51,8 @@ export default (): AppConfig => ({
     secretKey: process.env.S3_SECRET_KEY ?? '',
     bucket: process.env.S3_BUCKET ?? 'hrms-documents',
     forcePathStyle: (process.env.S3_FORCE_PATH_STYLE ?? 'true') === 'true',
+  },
+  redis: {
+    url: process.env.REDIS_URL ?? 'redis://localhost:6379',
   },
 });

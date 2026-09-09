@@ -24,6 +24,19 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # Leave module's BullMQ queue (leave-escalation/leave-accrual processors)
+      # connects at app bootstrap — without this, app.init() hangs waiting on
+      # Redis and every e2e suite times out in beforeAll, regardless of what
+      # it actually tests.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     defaults:
       run:
@@ -33,6 +46,7 @@ jobs:
       DATABASE_URL: postgresql://hrms_superuser:hrms_superuser_pw@localhost:5432/hrms?schema=public
       TENANT_DATABASE_URL: postgresql://hrms_app:hrms_app_pw@localhost:5432/hrms?schema=public
       PLATFORM_DATABASE_URL: postgresql://hrms_platform:hrms_platform_pw@localhost:5432/hrms?schema=platform
+      REDIS_URL: redis://localhost:6379
       # Real Firebase — no emulator. These must be set as repo secrets:
       #   FIREBASE_PROJECT_ID          – the project id (e.g. a dedicated *-ci project)
       #   FIREBASE_WEB_API_KEY         – Project settings > General > Web API Key

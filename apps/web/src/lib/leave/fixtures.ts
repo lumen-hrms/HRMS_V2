@@ -55,22 +55,22 @@ export const MOCK_LEAVE_TYPES: LeaveType[] = [
   {
     id: 'lt-cl', name: 'Casual Leave', code: 'CL', annualQuota: 12, carryForwardCap: 0,
     accrualFrequency: 'MONTHLY', genderRestriction: 'ANY', minNoticeDays: 1, paid: true,
-    requiresApproval: true, active: true, colorToken: 'var(--lumen-info)',
+    requiresApproval: true, active: true, colorToken: 'var(--lumen-info)', isCompOff: false,
   },
   {
     id: 'lt-sl', name: 'Sick Leave', code: 'SL', annualQuota: 10, carryForwardCap: 0,
     accrualFrequency: 'ANNUAL', genderRestriction: 'ANY', minNoticeDays: 0, paid: true,
-    requiresApproval: true, active: true, colorToken: 'var(--lumen-warning)',
+    requiresApproval: true, active: true, colorToken: 'var(--lumen-warning)', isCompOff: false,
   },
   {
     id: 'lt-el', name: 'Earned Leave', code: 'EL', annualQuota: 18, carryForwardCap: 30,
     accrualFrequency: 'MONTHLY', genderRestriction: 'ANY', minNoticeDays: 7, paid: true,
-    requiresApproval: true, active: true, colorToken: 'var(--lumen-success)',
+    requiresApproval: true, active: true, colorToken: 'var(--lumen-success)', isCompOff: false,
   },
   {
     id: 'lt-ml', name: 'Maternity Leave', code: 'ML', annualQuota: 182, carryForwardCap: 0,
     accrualFrequency: 'ANNUAL', genderRestriction: 'FEMALE', minNoticeDays: 30, paid: true,
-    requiresApproval: true, active: true, colorToken: 'var(--lumen-purple)',
+    requiresApproval: true, active: true, colorToken: 'var(--lumen-purple)', isCompOff: false,
   },
 ];
 
