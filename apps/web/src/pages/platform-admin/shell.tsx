@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Building2, LogOut, Moon, ScrollText, Sun } from 'lucide-react';
+import { Building2, LogOut, Moon, ScrollText, Sun, Tag } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/context/theme-context';
 import { DropdownMenu, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
@@ -7,12 +7,14 @@ import { usePlatformAuth } from './lib/platform-auth';
 
 const NAV = [
   { to: '/platform-admin', label: 'Tenants', icon: Building2, end: true },
+  { to: '/platform-admin/plans', label: 'Plans', icon: Tag, end: false },
   { to: '/platform-admin/audit', label: 'Audit log', icon: ScrollText, end: false },
 ];
 
 const CRUMB: Record<string, string> = {
   '/platform-admin': 'Tenants',
   '/platform-admin/tenants/new': 'Tenants / New tenant',
+  '/platform-admin/plans': 'Plans',
   '/platform-admin/audit': 'Audit log',
 };
 

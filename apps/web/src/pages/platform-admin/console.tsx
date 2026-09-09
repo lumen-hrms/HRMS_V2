@@ -9,6 +9,7 @@ import { TenantsPage } from './tenants';
 import { TenantNewPage } from './tenant-new';
 import { TenantDetailPage } from './tenant-detail';
 import { PlatformAuditPage } from './audit';
+import { PlansPage } from './plans';
 
 /**
  * Operator console — a separate React sub-tree, mounted at `/platform-admin/*`
@@ -61,6 +62,7 @@ export function PlatformAdminConsole() {
           <Route index element={<TenantsPage />} />
           <Route path="tenants/new" element={<TenantNewPage />} />
           <Route path="tenants/:id" element={<TenantDetailPage />} />
+          <Route path="plans" element={<PlansPage />} />
           <Route path="audit" element={<PlatformAuditPage />} />
           <Route path="*" element={<Navigate to="/platform-admin" replace />} />
         </Route>

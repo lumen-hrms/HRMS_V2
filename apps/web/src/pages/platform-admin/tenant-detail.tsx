@@ -24,16 +24,17 @@ import {
   type PlatformAuditEntry,
   type TenantRow,
 } from './lib/types';
-import { PLAN_CATALOG, inr, moduleLabel } from './lib/plan-catalog';
+import { inr, moduleLabel, monthlyTotal } from './lib/plan-catalog';
 import { fmtDate, fmtDateTime } from './lib/format';
 import { TenantStatusPill } from './components/tenant-status-pill';
 import { SeatPressureBar } from './components/seat-pressure-bar';
 import { SuspendDialog } from './components/suspend-dialog';
 import { ChangePlanDialog } from './components/change-plan-dialog';
+import { AdjustPricingDialog } from './components/adjust-pricing-dialog';
 import { BreakGlassDialog } from './components/breakglass-dialog';
 
 type Tab = 'overview' | 'subscription' | 'activity' | 'danger';
-type Dialog = 'suspend' | 'resume' | 'plan' | 'breakglass' | null;
+type Dialog = 'suspend' | 'resume' | 'plan' | 'pricing' | 'breakglass' | null;
 
 export function TenantDetailPage() {
   const { id = '' } = useParams();
@@ -90,8 +91,23 @@ export function TenantDetailPage() {
   }
 
   const sub = tenant.subscription;
-  const catalog = sub && sub.plan !== 'TRIAL' ? PLAN_CATALOG[sub.plan] : null;
   const suspended = tenant.status === 'SUSPENDED';
+
+  async function renew() {
+    setBusy(true);
+    try {
+      await platformApi.renew(tenant!.id);
+      toast({ title: 'Subscription renewed', description: 'Latest plan terms applied.' });
+      load();
+    } catch (e) {
+      toast({
+        title: isPlatformApiError(e) ? e.message : 'Renew failed — retry',
+        tone: 'error',
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function refreshHeadcount() {
     setBusy(true);
@@ -149,6 +165,10 @@ export function TenantDetailPage() {
               }
             >
               <DropdownMenuItem onClick={() => setDialog('plan')}>Change plan</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setDialog('pricing')}>Adjust pricing</DropdownMenuItem>
+              <DropdownMenuItem disabled={busy} onClick={renew}>
+                <RefreshCw className="h-3.5 w-3.5" /> Renew (apply latest plan terms)
+              </DropdownMenuItem>
               <DropdownMenuItem disabled={busy} onClick={refreshHeadcount}>
                 <RefreshCw className="h-3.5 w-3.5" /> Refresh headcount
               </DropdownMenuItem>
@@ -211,21 +231,42 @@ export function TenantDetailPage() {
               <p className="text-sm font-semibold">Plan</p>
               <div className="flex items-baseline gap-2">
                 <span className="text-2xl font-semibold">{PLAN_LABEL[effectivePlan(tenant)]}</span>
-                {catalog && (
-                  <span className="text-sm text-muted-foreground">{inr(catalog.priceMonthly)}/mo</span>
+                {sub?.pricePerSeat != null && (
+                  <span className="text-sm text-muted-foreground">
+                    {inr(sub.pricePerSeat)}/seat/mo
+                  </span>
                 )}
               </div>
-              <p className="text-xs text-muted-foreground">
-                Seats {sub?.seats ?? '—'} · renews {fmtDate(sub?.renewsAt)}
-              </p>
-              <Button size="sm" variant="outline" className="w-fit" onClick={() => setDialog('plan')}>
-                Change plan
-              </Button>
-              {catalog && (
-                <p className="text-[11px] text-muted-foreground">
-                  Price is indicative — no billing integration.
+              {sub?.pricePerSeat != null && (
+                <p className="text-sm">
+                  <span className="font-semibold">
+                    {inr(monthlyTotal(sub.pricePerSeat, sub.seats))}/mo
+                  </span>{' '}
+                  <span className="text-muted-foreground">
+                    ({inr(sub.pricePerSeat)} × {sub.seats} seats)
+                  </span>
                 </p>
               )}
+              <p className="text-xs text-muted-foreground">
+                Seats {sub?.seats ?? '—'} · {sub?.isolationTier === 'DEDICATED' ? 'dedicated DB' : 'pooled'}{' '}
+                · renews {fmtDate(sub?.renewsAt)}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => setDialog('plan')}>
+                  Change plan
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setDialog('pricing')}>
+                  Adjust pricing
+                </Button>
+                <Button size="sm" variant="outline" disabled={busy} onClick={renew}>
+                  Renew
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                The per-seat rate is negotiated per tenant and snapshotted — a later catalog edit
+                doesn’t change it. Renewal keeps the negotiated rate and refreshes modules. No
+                billing integration.
+              </p>
             </Card>
 
             <Card className="flex flex-col gap-2 p-5">
@@ -313,6 +354,12 @@ export function TenantDetailPage() {
       <ChangePlanDialog
         tenant={dialog === 'plan' ? tenant : null}
         open={dialog === 'plan'}
+        onOpenChange={(v) => !v && setDialog(null)}
+        onDone={load}
+      />
+      <AdjustPricingDialog
+        tenant={dialog === 'pricing' ? tenant : null}
+        open={dialog === 'pricing'}
         onOpenChange={(v) => !v && setDialog(null)}
         onDone={load}
       />

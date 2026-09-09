@@ -10,10 +10,12 @@
 import { auth } from './firebase';
 import type {
   CreateTenantInput,
+  Plan,
   PlatformAuditEntry,
   TenantDetail,
   TenantRow,
   TenantStatus,
+  UpdatePlanInput,
 } from '@/pages/platform-admin/lib/types';
 
 export class PlatformApiError extends Error {
@@ -76,12 +78,41 @@ export const platformApi = {
       adminName: input.firstAdminName,
       plan: input.plan,
       seats: input.seats,
+      pricePerSeat: input.pricePerSeat,
     });
   },
 
   /** `PATCH /tenants/:id/status` — ACTIVE / SUSPENDED / TRIAL + audit reason. */
   setStatus(id: string, status: TenantStatus, reason: string) {
     return raw.patch<TenantRow>(`/tenants/${id}/status`, { status, reason });
+  },
+
+  /** `GET /plans` — the operator-editable plan catalog + per-plan tenant counts. */
+  listPlans() {
+    return raw.get<Plan[]>('/plans');
+  },
+
+  /** `PATCH /plans/:key` — edit pricing / seats / modules / features / isolation tier. */
+  updatePlan(key: string, input: UpdatePlanInput) {
+    return raw.patch<Plan>(`/plans/${key}`, input);
+  },
+
+  /** `PATCH /tenants/:id/plan` — re-snapshot the tenant onto a different plan. */
+  changePlan(id: string, plan: string, reason: string) {
+    return raw.patch<TenantRow>(`/tenants/${id}/plan`, { plan, reason });
+  },
+
+  /** `POST /tenants/:id/renew` — renew a term; re-snapshots the current plan definition. */
+  renew(id: string) {
+    return raw.post<TenantRow>(`/tenants/${id}/renew`);
+  },
+
+  /**
+   * `PATCH /tenants/:id/pricing` — the negotiation lever. Adjust the
+   * negotiated per-seat rate and/or seat count without a plan change.
+   */
+  adjustPricing(id: string, input: { pricePerSeat?: number; seats?: number; reason: string }) {
+    return raw.patch<TenantRow>(`/tenants/${id}/pricing`, input);
   },
 
   // ---- TODO(api): endpoints not built yet — these will 404 until the
@@ -91,11 +122,6 @@ export const platformApi = {
   /** TODO(api) `GET /tenants/:id` */
   getTenant(id: string) {
     return raw.get<TenantDetail>(`/tenants/${id}`);
-  },
-
-  /** TODO(api) `PATCH /tenants/:id/plan` */
-  changePlan(id: string, plan: string, reason: string) {
-    return raw.patch<TenantRow>(`/tenants/${id}/plan`, { plan, reason });
   },
 
   /** TODO(api) `POST /tenants/:id/refresh-headcount` */

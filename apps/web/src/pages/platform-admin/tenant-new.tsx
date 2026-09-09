@@ -7,10 +7,10 @@ import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
 import { useToast } from '@/components/ui/toast';
 import { platformApi, isPlatformApiError } from '@/lib/platform-api';
-import type { CreateTenantInput, SellablePlan } from './lib/types';
-import { PLAN_CATALOG } from './lib/plan-catalog';
+import type { CreateTenantInput, Plan, SellablePlan } from './lib/types';
 import { SubdomainField } from './components/subdomain-field';
 import { PlanPicker } from './components/plan-picker';
+import { inr, monthlyTotal } from './lib/plan-catalog';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -19,11 +19,13 @@ export function TenantNewPage() {
   const { toast } = useToast();
 
   const [taken, setTaken] = React.useState<string[]>([]);
+  const [plans, setPlans] = React.useState<Plan[]>([]);
   const [form, setForm] = React.useState<CreateTenantInput>({
     name: '',
     subdomain: '',
     plan: 'STARTER',
     seats: undefined,
+    pricePerSeat: undefined,
     firstAdminName: '',
     firstAdminEmail: '',
   });
@@ -36,7 +38,10 @@ export function TenantNewPage() {
       .listTenants()
       .then((ts) => setTaken(ts.map((t) => t.subdomain)))
       .catch(() => setTaken([]));
+    platformApi.listPlans().then(setPlans).catch(() => setPlans([]));
   }, []);
+
+  const pickedPlan = plans.find((p) => p.key === form.plan);
 
   const set = <K extends keyof CreateTenantInput>(k: K, v: CreateTenantInput[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
@@ -112,22 +117,65 @@ export function TenantNewPage() {
         </Card>
 
         <Card className="flex flex-col gap-4 p-5">
-          <SectionTitle n={2} title="Plan & seats" />
-          <PlanPicker value={form.plan} onChange={(p: SellablePlan) => set('plan', p)} />
-          <div className="flex flex-col gap-1.5 md:max-w-xs">
-            <Label htmlFor="seats">Seat ceiling (optional)</Label>
-            <Input
-              id="seats"
-              type="number"
-              min={1}
-              value={form.seats ?? ''}
-              onChange={(e) => set('seats', e.target.value ? Number(e.target.value) : undefined)}
-              placeholder={`${PLAN_CATALOG[form.plan].seatsIncluded} (plan default)`}
-            />
-            <p className="text-xs text-muted-foreground">
-              A soft limit — going over surfaces a warning, it doesn’t block existing employees.
-            </p>
+          <SectionTitle n={2} title="Plan, seats & price" />
+          <PlanPicker plans={plans} value={form.plan} onChange={(p: SellablePlan) => set('plan', p)} />
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="seats">Seats</Label>
+              <Input
+                id="seats"
+                type="number"
+                min={1}
+                value={form.seats ?? ''}
+                onChange={(e) => set('seats', e.target.value ? Number(e.target.value) : undefined)}
+                placeholder={
+                  pickedPlan ? `${pickedPlan.seatsIncluded} (plan default)` : 'plan default'
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                Soft limit — going over surfaces a warning, it doesn’t block existing employees.
+              </p>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="rate">Negotiated price / seat / month</Label>
+              <Input
+                id="rate"
+                type="number"
+                min={0}
+                value={form.pricePerSeat ?? ''}
+                onChange={(e) =>
+                  set('pricePerSeat', e.target.value ? Number(e.target.value) : undefined)
+                }
+                placeholder={
+                  pickedPlan
+                    ? `${Number(pickedPlan.listPricePerSeat)} (list price)`
+                    : 'list price'
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                Blank → the plan’s list price. Snapshotted onto this tenant; later catalog edits
+                don’t change it.
+              </p>
+            </div>
           </div>
+          {pickedPlan && (
+            <p className="rounded-lg bg-muted/50 p-2.5 text-xs text-muted-foreground">
+              ≈{' '}
+              <strong className="text-foreground">
+                {inr(
+                  monthlyTotal(
+                    form.pricePerSeat ?? Number(pickedPlan.listPricePerSeat),
+                    form.seats ?? pickedPlan.seatsIncluded,
+                  ),
+                  pickedPlan.currency,
+                )}
+                /mo
+              </strong>{' '}
+              — {inr(form.pricePerSeat ?? Number(pickedPlan.listPricePerSeat), pickedPlan.currency)}
+              /seat × {form.seats ?? pickedPlan.seatsIncluded} seats. Reference figure — no billing
+              integration.
+            </p>
+          )}
         </Card>
 
         <Card className="flex flex-col gap-4 p-5">

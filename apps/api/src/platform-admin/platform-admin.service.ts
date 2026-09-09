@@ -8,24 +8,22 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Prisma } from '@prisma/client';
 import type * as admin from 'firebase-admin';
 import { FIREBASE_AUTH } from '../firebase/firebase-admin.provider';
 import { sendFirebasePasswordResetEmail } from '../firebase/send-reset-email';
 import { PlatformPrismaClientProvider } from '../prisma/platform-prisma-client.provider';
 import { TenantPrismaClientProvider } from '../prisma/tenant-prisma-client.provider';
-import { Prisma } from '@prisma/client';
 import { withTenantContext } from '../prisma/with-tenant-context';
 import type { AppConfig } from '../config/configuration';
-import { entitlementsForPlan, type SellablePlan } from './entitlements';
-import type { CreateTenantDto } from './dto/platform-admin.dto';
+import type { SellablePlan } from './entitlements';
+import { PlansService } from './plans.service';
+import type {
+  AdjustPricingDto,
+  ChangeTenantPlanDto,
+  CreateTenantDto,
+} from './dto/platform-admin.dto';
 import type { AuthenticatedPlatformAdmin } from './platform-admin.types';
-
-/** Seat ceiling a plan ships with when the operator doesn't override it. */
-const PLAN_DEFAULT_SEATS: Record<SellablePlan, number> = {
-  STARTER: 50,
-  GROWTH: 200,
-  ENTERPRISE: 500,
-};
 
 @Injectable()
 export class PlatformAdminService {
@@ -35,6 +33,7 @@ export class PlatformAdminService {
     private readonly platformPrisma: PlatformPrismaClientProvider,
     private readonly tenantPrismaRaw: TenantPrismaClientProvider,
     private readonly config: ConfigService<AppConfig, true>,
+    private readonly plans: PlansService,
     @Inject(FIREBASE_AUTH) private readonly firebaseAuth: admin.auth.Auth,
   ) {}
 
@@ -132,8 +131,12 @@ export class PlatformAdminService {
     if (existing) throw new ConflictException('Subdomain already in use');
 
     const plan = dto.plan ?? 'STARTER';
-    const { enabledModules, features } = entitlementsForPlan(plan);
-    const seats = dto.seats ?? PLAN_DEFAULT_SEATS[plan];
+    // Snapshot the CURRENT plan definition onto the Subscription. A later
+    // Plan edit won't retroactively change this tenant — only a plan change
+    // or a renewal re-snapshots (see changeTenantPlan / renewSubscription).
+    // `dto.pricePerSeat` is the negotiated rate for this deal; omitted → the
+    // plan's list price.
+    const snap = await this.plans.snapshotFor(plan, dto.seats, dto.pricePerSeat);
 
     const tenant = await this.platformPrisma.tenant.create({
       data: {
@@ -142,10 +145,12 @@ export class PlatformAdminService {
         status: 'TRIAL',
         subscription: {
           create: {
-            plan,
-            seats,
-            enabledModules,
-            features: features as unknown as Prisma.InputJsonValue,
+            plan: snap.plan,
+            seats: snap.seats,
+            enabledModules: snap.enabledModules,
+            features: snap.features,
+            pricePerSeat: snap.pricePerSeat,
+            isolationTier: snap.isolationTier,
           },
         },
       },
@@ -172,7 +177,13 @@ export class PlatformAdminService {
           action: 'tenant.created',
           targetType: 'tenant',
           targetId: tenant.id,
-          metadata: { tenantName: tenant.name, subdomain, plan, seats },
+          metadata: {
+            tenantName: tenant.name,
+            subdomain,
+            plan,
+            seats: snap.seats,
+            pricePerSeat: snap.pricePerSeat.toFixed(2),
+          },
         },
       });
     } catch {
@@ -181,6 +192,185 @@ export class PlatformAdminService {
 
     return this.platformPrisma.tenant.findUnique({
       where: { id: tenant.id },
+      include: { subscription: true },
+    });
+  }
+
+  /**
+   * Move a tenant to a different plan — re-snapshots the plan's CURRENT
+   * definition onto the Subscription (modules/features/seats/tier at plan
+   * defaults) and RESETS the per-seat rate to the new plan's list price (any
+   * prior negotiated rate is dropped — re-negotiate afterwards via
+   * `adjustPricing`). Audits `tenant.plan_changed`.
+   */
+  async changeTenantPlan(tenantId: string, dto: ChangeTenantPlanDto, actorEmail?: string) {
+    const sub = await this.platformPrisma.subscription.findUnique({
+      where: { tenantId },
+      include: { tenant: { select: { name: true } } },
+    });
+    if (!sub) throw new BadRequestException('Tenant has no subscription');
+    if (sub.plan === dto.plan) throw new BadRequestException('That is already the tenant’s plan.');
+
+    const before = sub.plan;
+    const snap = await this.plans.snapshotFor(dto.plan);
+
+    await this.platformPrisma.subscription.update({
+      where: { tenantId },
+      data: {
+        plan: snap.plan,
+        seats: snap.seats,
+        enabledModules: snap.enabledModules,
+        features: snap.features,
+        pricePerSeat: snap.pricePerSeat,
+        isolationTier: snap.isolationTier,
+      },
+    });
+
+    await this.platformPrisma.platformAuditLog
+      .create({
+        data: {
+          actorEmail: actorEmail ?? 'unknown',
+          action: 'tenant.plan_changed',
+          targetType: 'tenant',
+          targetId: tenantId,
+          metadata: {
+            tenantName: sub.tenant.name,
+            from: before,
+            to: dto.plan,
+            pricePerSeat: snap.pricePerSeat.toFixed(2),
+            reason: dto.reason,
+          },
+        },
+      })
+      .catch(() => undefined);
+
+    return this.platformPrisma.tenant.findUnique({
+      where: { id: tenantId },
+      include: { subscription: true },
+    });
+  }
+
+  /**
+   * Renew the subscription for another term — RE-SNAPSHOTS the tenant's
+   * current plan definition (adds modules the plan gained, removes ones it
+   * dropped, refreshes tier), keeps the tenant's current seat count AND
+   * their negotiated per-seat rate (both are contract terms — a catalog
+   * price change doesn't reach an existing customer on renewal), bumps
+   * `renewsAt` by a year, and audits `subscription.renewed`.
+   *
+   * This is the "existing customers pick up the latest plan MODULES on
+   * renewal, but keep their negotiated commercials" behaviour. Will later be
+   * driven by a scheduled job; for now it's a manual operator action.
+   */
+  async renewSubscription(tenantId: string, actorEmail?: string) {
+    const sub = await this.platformPrisma.subscription.findUnique({
+      where: { tenantId },
+      include: { tenant: { select: { name: true } } },
+    });
+    if (!sub) throw new BadRequestException('Tenant has no subscription');
+
+    const keepRate = sub.pricePerSeat != null ? Number(sub.pricePerSeat) : undefined;
+    const snap = await this.plans.snapshotFor(sub.plan as SellablePlan, sub.seats, keepRate);
+    const nextRenews = new Date(sub.renewsAt ?? Date.now());
+    nextRenews.setFullYear(nextRenews.getFullYear() + 1);
+
+    const modulesBefore = sub.enabledModules;
+    await this.platformPrisma.subscription.update({
+      where: { tenantId },
+      data: {
+        seats: snap.seats, // = current seats — a negotiated seat count survives renewal
+        enabledModules: snap.enabledModules,
+        features: snap.features,
+        pricePerSeat: snap.pricePerSeat, // = the negotiated rate, carried forward
+        isolationTier: snap.isolationTier,
+        renewsAt: nextRenews,
+      },
+    });
+
+    const added = snap.enabledModules.filter((m) => !modulesBefore.includes(m));
+    const removed = modulesBefore.filter((m) => !snap.enabledModules.includes(m));
+
+    await this.platformPrisma.platformAuditLog
+      .create({
+        data: {
+          actorEmail: actorEmail ?? 'unknown',
+          action: 'subscription.renewed',
+          targetType: 'tenant',
+          targetId: tenantId,
+          metadata: {
+            tenantName: sub.tenant.name,
+            plan: sub.plan,
+            modulesAdded: added,
+            modulesRemoved: removed,
+            renewsAt: nextRenews.toISOString(),
+          },
+        },
+      })
+      .catch(() => undefined);
+
+    return this.platformPrisma.tenant.findUnique({
+      where: { id: tenantId },
+      include: { subscription: true },
+    });
+  }
+
+  /**
+   * Adjust a tenant's commercials WITHOUT changing plan — the negotiation
+   * lever. Sets the negotiated per-seat rate and/or the seat count on the
+   * live Subscription (entitlements untouched) and audits
+   * `subscription.price_adjusted`. Effective monthly = pricePerSeat * seats.
+   */
+  async adjustPricing(tenantId: string, dto: AdjustPricingDto, actorEmail?: string) {
+    const sub = await this.platformPrisma.subscription.findUnique({
+      where: { tenantId },
+      include: { tenant: { select: { name: true } } },
+    });
+    if (!sub) throw new BadRequestException('Tenant has no subscription');
+
+    const rateFrom = sub.pricePerSeat != null ? Number(sub.pricePerSeat) : null;
+    const seatsFrom = sub.seats;
+    const rateTo = dto.pricePerSeat ?? rateFrom ?? 0;
+    const seatsTo = dto.seats ?? seatsFrom;
+
+    if (dto.pricePerSeat === undefined && dto.seats === undefined) {
+      throw new BadRequestException('Supply a new per-seat rate, a new seat count, or both.');
+    }
+    if (rateTo === rateFrom && seatsTo === seatsFrom) {
+      throw new BadRequestException('Those are already the tenant’s current terms.');
+    }
+
+    await this.platformPrisma.subscription.update({
+      where: { tenantId },
+      data: {
+        pricePerSeat: new Prisma.Decimal(rateTo),
+        seats: seatsTo,
+      },
+    });
+
+    await this.platformPrisma.platformAuditLog
+      .create({
+        data: {
+          actorEmail: actorEmail ?? 'unknown',
+          action: 'subscription.price_adjusted',
+          targetType: 'tenant',
+          targetId: tenantId,
+          metadata: {
+            tenantName: sub.tenant.name,
+            plan: sub.plan,
+            rateFrom: rateFrom != null ? rateFrom.toFixed(2) : null,
+            rateTo: rateTo.toFixed(2),
+            seatsFrom,
+            seatsTo,
+            monthlyFrom: rateFrom != null ? (rateFrom * seatsFrom).toFixed(2) : null,
+            monthlyTo: (rateTo * seatsTo).toFixed(2),
+            reason: dto.reason,
+          },
+        },
+      })
+      .catch(() => undefined);
+
+    return this.platformPrisma.tenant.findUnique({
+      where: { id: tenantId },
       include: { subscription: true },
     });
   }

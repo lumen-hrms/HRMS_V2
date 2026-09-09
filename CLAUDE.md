@@ -32,7 +32,7 @@ architecture blueprint (ask the team lead for the link).
 |---|---|---|
 | Backend | NestJS (Node.js/TypeScript) + Prisma + PostgreSQL | Not Spring Boot/microservices — a modular monolith covers the same domain scope without the operational cost of 10 services + a mesh + a broker at this scale |
 | Frontend | React + Vite (TypeScript), client-side rendered, React Router, Tailwind + shadcn/ui | Not Next.js — this is an authenticated dashboard behind login, SSR buys nothing |
-| Multi-tenancy | Shared DB, shared schema, `tenant_id` + PostgreSQL Row-Level Security | Not schema-per-tenant — RLS gives real isolation without per-tenant migration/connection tooling to build and maintain |
+| Multi-tenancy | **Hybrid.** Default = *pooled*: shared DB, shared schema, `tenant_id` + PostgreSQL Row-Level Security. Premium = *dedicated*: database-per-tenant, plan-gated, for enterprise / regulated customers. The tenant→datasource mapping is a runtime lookup, never hardcoded. | Not schema-per-tenant — it carries silo's fan-out-migration cost without silo's physical isolation or independent-scaling upside. Not silo-for-everyone — per-tenant DB / provisioning / migration / backup ops isn't worth it for SMB tenants that pooling + RLS already isolate. |
 | Background jobs | BullMQ on Redis | Not Kafka — payslip PDFs, statutory files, email sends, don't need a broker at this scale |
 | Storage | S3 (private, presigned URLs) | — |
 | Auth | Firebase Auth — ID token *is* the session (Bearer header, SDK-refreshed), `tenantId`/`role` as server-set custom claims. No MFA. | Not a self-issued JWT/bcrypt/TOTP stack (the original choice) — a hosted, audited password reset/sign-in UI beats maintaining our own. Not Keycloak either — one less system to run and patch. |
@@ -40,12 +40,20 @@ architecture blueprint (ask the team lead for the link).
 
 ## Multi-tenancy — the load-bearing decision
 
+**Hybrid isolation, two tiers. The *pooled* tier is the default; the
+*dedicated* tier is a plan-gated upsell — not a rewrite of the pooled one.**
+The one invariant that holds across both: the query layer resolves *which
+database* and *which tenant context* from trusted server state (the
+validated token's `tenantId` claim, the resolved subdomain) — **never from
+a raw request parameter** — and the app's runtime Postgres role never has
+`BYPASSRLS`.
+
+### Tier 1 — Pooled (default: STARTER / GROWTH, and ENTERPRISE unless it buys isolation)
+
 **One shared database, one shared schema.** Every tenant-owned table has a
 `tenant_id` column and a Postgres RLS policy keyed to the session variable
 `app.current_tenant_id`, set once per request/transaction from the
-validated Firebase ID token's `tenantId` custom claim — never from a raw
-request parameter. The app's Postgres role must **never** have
-`BYPASSRLS`.
+validated Firebase ID token's `tenantId` custom claim.
 
 Enforcement is layered, not single-point:
 1. Subdomain → tenant resolution; `tenantId`/`role` live as custom claims
@@ -58,6 +66,39 @@ Enforcement is layered, not single-point:
    read/write tenant B's data fails. This suite is non-negotiable —
    treat a regression here as a P0, not a bug.
 
+### Tier 2 — Dedicated (database-per-tenant)
+
+A tenant whose subscription carries the *dedicated* isolation entitlement
+gets its **own Postgres database** (own credentials, own encryption key,
+own backup/PITR schedule, own capacity). Sold to enterprise / regulated
+customers (e.g. a hospital with a contractual "our data is physically
+separate" clause). Not the default — the operational cost per tenant only
+pays off when a customer needs and pays for it.
+
+What makes this cheap to add on top of Tier 1 rather than a fork:
+
+- **`tenant → datasource` is a lookup, not a constant.** A tenant record
+  carries its datasource (shared pool, or a dedicated connection string in
+  the platform vault). `TenantPrismaService` resolves the client from that
+  lookup per request; pooled tenants get the shared pool, dedicated tenants
+  get a per-tenant pool from a small registry.
+- **The schema and the query code are identical.** A dedicated DB runs the
+  same migrations and keeps `tenant_id` + RLS (it's one tenant's worth of
+  rows, but keeping the column + policy means zero branching in the query
+  layer — defense in depth, not dead weight).
+- **Provisioning is a platform-admin flow** (module 02): create the DB, run
+  `prisma migrate deploy` against it, seed defaults, record the datasource.
+  Migrations fan out: the shared DB **plus** every dedicated DB, with
+  partial-failure handling.
+- Entitlement lives on `Subscription` (layer 1 of `TENANT_CONFIGURATION.md`),
+  same place `enabledModules` / `features` do.
+
+**Status:** the pooled tier is fully built and test-verified. The dedicated
+tier is a **design target** — the datasource-lookup indirection, the
+per-tenant pool registry, the provisioning flow, and the fan-out migration
+runner are not built yet. Build them before selling the tier; don't
+retrofit hardcoded shared-pool assumptions in the meantime.
+
 **Platform Admin (the platform team's operator role) is structurally
 separate**, not a role flag inside the tenant app: its own schema
 (`tenants`, `subscriptions`, `platform_admin_users`, `platform_audit_log`)
@@ -68,11 +109,20 @@ schema — no join into PII tables required. Genuine support access to a
 tenant's data goes through a logged, time-boxed break-glass flow, not a
 standing permission.
 
-**Why not schema-per-tenant or DB-per-tenant:** both multiply
-migration/connection/backup operational complexity per tenant — real
-engineering cost for isolation that RLS already buys. Keep DB-per-tenant
-in mind as a *paid dedicated tier* if a future enterprise/hospital
-contract demands it — not the default.
+**Why hybrid, and not one of the pure models:**
+
+- *Not silo (DB-per-tenant) for everyone* — per-tenant provisioning,
+  migration fan-out, connection pools, and backups are real, permanent ops
+  cost. Pooling + RLS already gives logical isolation the DB engine
+  enforces on every query; most SMB tenants never need more.
+- *Not schema-per-tenant (bridge)* — it has silo's fan-out-migration and
+  `search_path` cost without silo's physical separation, independent
+  scaling, or per-tenant backup/restore. Worst of both.
+- *So: pool by default, silo as a paid tier.* The dedicated tenant gets
+  true physical isolation; the ninety-percent case stays cheap and dense.
+  This is the mainstream SaaS shape (pool default, isolate the contracts
+  that require it) — Workday/Salesforce-scale systems run pooled; vendors
+  in regulated verticals offer DB-per-tenant as an enterprise SKU.
 
 ## Roles (fixed for V1 — no custom role builder yet)
 
@@ -117,9 +167,17 @@ RBAC + tenant isolation (RLS), the Identity & Access *management* surface
 `GET /api/access/audit` · `.../:id/activity` — plus the `LoginAuditEntry`
 table and append-only login-audit writes on every server-observed
 `POST /api/auth/session` outcome; e2e-tested in `test/access.e2e-spec.ts`;
-`VITE_ACCESS_MOCK` defaults **off**), Platform Admin console (tenant
-onboarding/enable-disable/metadata only), Employee Master, Leave
-Management, role-aware Dashboard — backend and frontend both. See
+`VITE_ACCESS_MOCK` defaults **off**), Platform Admin operator console
+(`/platform-admin/*` — tenant onboarding via hosted reset-link, enable /
+suspend, denormalized metadata, an **operator-editable plan catalog**
+`platform.plans` with **per-seat list pricing** / default seats / modules /
+features / isolation tier and a snapshot-at-assign + re-snapshot-on-renewal
+model; a **per-tenant negotiated per-seat rate** on each `Subscription`
+(effective monthly = rate × seats, computed) with `PATCH .../pricing` as
+the negotiation lever; `PATCH .../plan` + `POST .../renew` (renewal keeps
+the negotiated rate); audit read API + break-glass still pending),
+Employee Master, Leave Management, role-aware Dashboard — backend and
+frontend both. See
 `docs/BACKEND_ARCHITECTURE.md` for the full traced reference and its §8
 for known gaps within these modules (line-manager leave-visibility scoping
 is a known-permissive placeholder; the generic `audit_log` is now written

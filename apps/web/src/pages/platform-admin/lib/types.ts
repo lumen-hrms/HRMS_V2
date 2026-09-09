@@ -15,12 +15,46 @@ export type TenantStatus = 'ACTIVE' | 'SUSPENDED' | 'TRIAL';
 export type PlanKey = 'TRIAL' | 'STARTER' | 'GROWTH' | 'ENTERPRISE';
 export type SellablePlan = 'STARTER' | 'GROWTH' | 'ENTERPRISE';
 
+export type IsolationTier = 'POOLED' | 'DEDICATED';
+
 export interface Subscription {
   plan: PlanKey;
   seats: number;
   enabledModules: string[];
   features: Record<string, boolean>;
   renewsAt: string | null;
+  /**
+   * NEGOTIATED per-seat / month rate, snapshotted at assign / renewal.
+   * Decimal serialises as string. Effective monthly = pricePerSeat × seats.
+   */
+  pricePerSeat: string | null;
+  isolationTier: IsolationTier;
+}
+
+/** One row of the operator-editable plan catalog (`GET /api/platform-admin/plans`). */
+export interface Plan {
+  key: SellablePlan;
+  name: string;
+  /** List price per seat per month (Decimal as string). */
+  listPricePerSeat: string;
+  currency: string;
+  /** Default seat count pre-filled at onboarding — not a bundled allotment. */
+  seatsIncluded: number;
+  enabledModules: string[];
+  features: Record<string, boolean>;
+  isolationTier: IsolationTier;
+  sortOrder: number;
+  tenantCount: number;
+}
+
+export interface UpdatePlanInput {
+  name?: string;
+  listPricePerSeat?: number;
+  currency?: string;
+  seatsIncluded?: number;
+  enabledModules?: string[];
+  features?: Record<string, boolean>;
+  isolationTier?: IsolationTier;
 }
 
 /** One row from `GET /api/platform-admin/tenants`. */
@@ -45,6 +79,9 @@ export type PlatformAuditAction =
   | 'tenant.created'
   | 'tenant.status_changed'
   | 'tenant.plan_changed'
+  | 'subscription.renewed'
+  | 'subscription.price_adjusted'
+  | 'plan.updated'
   | 'headcount.refreshed'
   | 'breakglass.requested'
   | 'breakglass.used'
@@ -67,6 +104,8 @@ export interface CreateTenantInput {
   subdomain: string;
   plan: SellablePlan;
   seats?: number;
+  /** Negotiated per-seat rate. Omitted → the plan's list price. */
+  pricePerSeat?: number;
   firstAdminName: string;
   firstAdminEmail: string;
 }
@@ -100,6 +139,9 @@ export const AUDIT_ACTION_LABEL: Record<PlatformAuditAction, string> = {
   'tenant.created': 'Tenant created',
   'tenant.status_changed': 'Status changed',
   'tenant.plan_changed': 'Plan changed',
+  'subscription.renewed': 'Subscription renewed',
+  'subscription.price_adjusted': 'Pricing adjusted',
+  'plan.updated': 'Plan catalog edited',
   'headcount.refreshed': 'Headcount refreshed',
   'breakglass.requested': 'Break-glass requested',
   'breakglass.used': 'Break-glass used',
