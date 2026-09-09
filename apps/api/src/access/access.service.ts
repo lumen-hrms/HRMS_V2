@@ -11,6 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma, type LoginOutcome } from '@prisma/client';
 import type * as admin from 'firebase-admin';
 import { FIREBASE_AUTH } from '../firebase/firebase-admin.provider';
+import { sendFirebasePasswordResetEmail } from '../firebase/send-reset-email';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service';
 import type { AppConfig } from '../config/configuration';
 import type { AppRole } from '../common/decorators/roles.decorator';
@@ -434,42 +435,14 @@ export class AccessService {
   }
 
   /**
-   * Admin-triggered password reset for ANOTHER user. The Firebase Admin SDK
-   * can only *generate* a reset link, not send the email — so we call the
-   * Identity Toolkit REST endpoint (`accounts:sendOobCode`), which sends
-   * Firebase's own hosted template.
+   * Admin-triggered password reset for ANOTHER user — sends Firebase's hosted
+   * reset email (the Admin SDK can only generate a link, not send it).
    */
-  private async sendResetEmail(email: string): Promise<void> {
-    const apiKey = this.config.get('firebase.webApiKey', { infer: true });
-    if (!apiKey) {
-      throw new ServiceUnavailableException(
-        'FIREBASE_WEB_API_KEY is not configured — cannot send a hosted reset email.',
-      );
-    }
-    const base = 'https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode';
-
-    let res: Response;
-    try {
-      res = await fetch(`${base}?key=${encodeURIComponent(apiKey)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestType: 'PASSWORD_RESET', email }),
-      });
-    } catch (err) {
-      throw new ServiceUnavailableException(
-        `Could not reach the identity provider to send a reset email: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      // EMAIL_NOT_FOUND would leak account existence to a caller who can
-      // already see the user list anyway — but keep the message generic.
-      throw new ServiceUnavailableException(
-        `The identity provider rejected the reset request (${res.status}). ${body}`.trim(),
-      );
-    }
+  private sendResetEmail(email: string): Promise<void> {
+    return sendFirebasePasswordResetEmail(
+      this.config.get('firebase.webApiKey', { infer: true }),
+      email,
+    );
   }
 }
 

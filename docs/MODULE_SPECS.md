@@ -21,13 +21,19 @@
 > spec draft that is no longer maintained — ignore them; this file and the
 > code are the source of truth.)
 >
-> **Last synced to code:** 2026-09-08 (commit `dbd71f2` + Identity & Access
-> **backend**: `access` module (`GET /api/access/users` · `/access/me` ·
-> `PATCH .../role` · `PATCH .../status` · `POST .../password-reset` ·
-> `GET /api/access/audit` · `.../:id/activity`), `LoginAuditEntry` table +
-> append-only login-audit writes on `POST /api/auth/session`,
-> `VITE_ACCESS_MOCK` now defaults **off**; + in-progress Leave UI rebuild,
-> see `docs/LEAVE_UI_SPECS.md`).
+> **Last synced to code:** 2026-09-09 (Identity & Access `access` module &
+> `LoginAuditEntry`; Firebase emulator removed; shared **Supabase** dev DB
+> + hybrid tenancy decision (pool default + DB-per-tenant tier) in
+> `CLAUDE.md`; **Platform Admin operator console** — full UI at
+> `/platform-admin/*` incl. an **operator-editable plan catalog**
+> (`platform.plans`, Plans screen, `GET`/`PATCH /plans`, `PATCH
+> tenants/:id/plan`, `POST tenants/:id/renew`, snapshot/renewal model);
+> **per-seat pricing** — plans carry a list price *per seat / month*, each
+> `Subscription` snapshots a **per-tenant negotiated rate**, `PATCH
+> tenants/:id/pricing` is the negotiation lever (effective monthly =
+> rate × seats, computed), renewal keeps the negotiated rate;
+> audit writes for create / status / plan-change / renewal / price-adjust /
+> plan-edit; + in-progress Leave UI rebuild, see `docs/LEAVE_UI_SPECS.md`).
 >
 > **Keep the status table + per-module progress bars current on every change** —
 > if a commit moves a module, move its bar (status mark, ASCII bar, %), its
@@ -48,7 +54,7 @@
 | Module | Status | Progress |
 |---|---|---|
 | 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ | `███████████████████░` 97% — auth/RBAC/tenancy live; `access` module wired (Users, role/status/reset, login+access audit, My Account) with e2e RBAC + append-only tests; `LoginAuditEntry` table written on every session outcome. Remaining: `BAD_CREDENTIALS`/`TENANT_SUSPENDED` not server-observable (§1 gaps); Line-Manager leave scoping (§4) |
-| 2. Platform Admin | ✅ | `██████████████████░░` 90% |
+| 2. Platform Admin | ✅ | `███████████████████░` 96% — full operator console UI (tenants list, new-tenant wizard, tenant detail tabs, **Plans catalog screen**, audit screen); onboarding emails a reset link; **operator-editable `platform.plans`** (per-seat list price / default seats / modules / features / isolation tier) with snapshot-at-assign + re-snapshot-on-renewal; **per-tenant negotiated per-seat rate** (`PATCH .../pricing`, effective monthly = rate × seats); `PATCH .../plan` + `POST .../renew` live (renewal keeps the negotiated rate); audit writes for `tenant.created` / `tenant.status_changed` / `tenant.plan_changed` / `subscription.renewed` / `subscription.price_adjusted` / `plan.updated`. Pending: audit *read* API, refresh-headcount route, break-glass |
 | 3. Employee Master + Org Structure | 🟡 | `█████████████████░░░` 85% |
 | 4. Leave Management | 🟡 | `█████████████████░░░` 86% — BE ~80%; FE rebuild underway (foundation + Employee + Line Manager screens done; HR / Company Admin / Auditor screens next) |
 | 5. Attendance & Time Tracking | 🟡 | `███████████░░░░░░░░░░` 55% |
@@ -191,8 +197,20 @@ creation) and on every role change. Never trust a claim the client could set.
 
 **Deep spec:** `docs/modules/02_PLATFORM_ADMIN.md` ·
 **UI prompt:** `docs/ui-build-prompts/02-platform-admin.md`
-**Status:** ✅
-**Code:** `apps/api/src/platform-admin`, `apps/web/src/pages/platform-admin`
+**Status:** ✅ core live · full operator console UI (`/platform-admin/*` —
+login, tenants list, new-tenant wizard, tenant detail w/ 4 tabs, **Plans
+catalog**, audit screen) · ✅ operator-editable `platform.plans` (per-seat
+list price / default seats / modules / features / isolation tier) with
+**snapshot-at-assign + re-snapshot-on-renewal** · ✅ **per-tenant
+negotiated per-seat rate** (`PATCH .../pricing`; monthly = rate × seats,
+computed) · ✅ `PATCH .../plan` + `POST .../renew` (renewal keeps the
+negotiated rate, refreshes modules) · `PlatformAuditLog` written for
+create / status / plan-change / renewal / price-adjust / plan-catalog-edit
+· 🔴 audit-read API / refresh-headcount route / break-glass pending
+**Code:** `apps/api/src/platform-admin` (`+ plans.service.ts`),
+`apps/web/src/pages/platform-admin` (`console.tsx` gate → `shell.tsx` +
+`tenants` / `tenant-new` / `tenant-detail` / `plans` / `audit` +
+`components/`, `lib/{types,plan-catalog,format,platform-auth}`)
 
 ### Expectation
 
@@ -209,11 +227,15 @@ future logged, time-boxed break-glass flow, not a standing grant.
 | Feature | V1 status |
 |---|---|
 | Platform-admin login (separate from tenant login) | ✅ Firebase, `type: platform_admin` claim, `PlatformJwtAuthGuard` |
-| Create tenant (name, subdomain, plan) + seed first Company Admin | ✅ `createTenant()` — creates `Tenant` + `Subscription`, seeds the admin login via the `hrms_app` connection; rolls back the tenant row if seeding fails |
+| Create tenant (name, subdomain, plan, seats, negotiated per-seat rate, first admin name+email) | ✅ `createTenant()` — creates `Tenant` + `Subscription` (seat count + per-seat rate per plan default or deal override), seeds the Company Admin via the `hrms_app` connection with a **random password + a hosted password-reset email** (no operator-typed password); rolls back the tenant row if seeding fails |
 | List tenants with subscription info | ✅ |
-| Enable / suspend / set trial | ✅ `PATCH .../status` — `SUSPENDED` locks out every user of that tenant immediately at the resolution layer |
-| Denormalized employee headcount per tenant | ✅ `refreshHeadcount()` writes `platform.tenants.employeeCount` |
-| Platform audit log | 🟡 `PlatformAuditLog` table exists, **not written to** |
+| Enable / suspend / set trial | ✅ `PATCH .../status` — `SUSPENDED` locks out every user of that tenant immediately at the resolution layer; carries an audit `reason` |
+| Denormalized employee headcount per tenant | ✅ `refreshHeadcount()` writes `platform.tenants.employeeCount` (on-demand internal call; the `POST .../refresh-headcount` route is TODO) |
+| Platform audit log | 🟡 written for `tenant.created` / `tenant.status_changed` / `tenant.plan_changed` / `subscription.renewed` / `subscription.price_adjusted` / `plan.updated` (actor email, before/after, reason in `metadata`); `headcount.refreshed` + break-glass events + the **read API** pending |
+| Operator-editable plan catalog | ✅ `platform.plans` (**list price per seat / month**, default seat count, modules / features / isolation tier) — `GET`/`PATCH /api/platform-admin/plans[/:key]`, **Plans** screen. Editing a plan never mutates a live `Subscription` (each carries a snapshot); new tenants snapshot the current plan, and **renewal re-snapshots** (`POST .../:id/renew`) — adds modules the plan gained, removes ones it dropped, **keeps the tenant's negotiated per-seat rate + seat count**. `entitlements.ts` stays as the seed + code fallback. Pricing is a stored reference figure — no billing integration. |
+| Per-seat pricing + per-tenant negotiation | ✅ `Subscription.pricePerSeat` is the **negotiated** rate for that one tenant (defaults to the plan's list price at assign-time, operator tunes it). **Effective monthly = `pricePerSeat × seats`**, computed at display, never stored. `PATCH /api/platform-admin/tenants/:id/pricing` `{pricePerSeat?, seats?, reason}` adjusts commercials without a plan change (`subscription.price_adjusted` audit). A plan change resets the rate to the new plan's list price. |
+| Change a tenant's plan | ✅ `PATCH /api/platform-admin/tenants/:id/plan` — re-snapshots the new plan's current definition onto the `Subscription` and **resets the per-seat rate to the new plan's list price**; `tenant.plan_changed` audit. |
+| Operator console UI | ✅ full multi-screen console — see Status line |
 | Billing / plan enforcement (seat limits, dunning) | 🔴 not started |
 | Break-glass support access to tenant data | 🔴 not started (deliberate — design before building) |
 
@@ -232,18 +254,40 @@ future logged, time-boxed break-glass flow, not a standing grant.
 
 ### Functionalities / API
 
-| Method | Path | Guard |
-|---|---|---|
-| `POST` | `/api/platform-admin/auth/session` | public |
-| `GET` | `/api/platform-admin/tenants` | `PlatformJwtAuthGuard` |
-| `POST` | `/api/platform-admin/tenants` | `PlatformJwtAuthGuard` |
-| `PATCH` | `/api/platform-admin/tenants/:id/status` | `PlatformJwtAuthGuard` |
+| Method | Path | Guard | State |
+|---|---|---|---|
+| `POST` | `/api/platform-admin/auth/session` | public | ✅ |
+| `GET` | `/api/platform-admin/tenants` | `PlatformJwtAuthGuard` | ✅ |
+| `POST` | `/api/platform-admin/tenants` | `PlatformJwtAuthGuard` | ✅ body `{companyName, subdomain, adminEmail, adminName, plan?, seats?, pricePerSeat?}` — `pricePerSeat` omitted → plan list price; sends the admin a reset link; writes `tenant.created` |
+| `PATCH` | `/api/platform-admin/tenants/:id/status` | `PlatformJwtAuthGuard` | ✅ body `{status, reason?}`; writes `tenant.status_changed` |
+| `PATCH` | `/api/platform-admin/tenants/:id/plan` | `PlatformJwtAuthGuard` | ✅ body `{plan, reason}`; re-snapshots the plan onto the Subscription, resets per-seat rate to the new plan's list price; writes `tenant.plan_changed` |
+| `PATCH` | `/api/platform-admin/tenants/:id/pricing` | `PlatformJwtAuthGuard` | ✅ body `{pricePerSeat?, seats?, reason}` (≥1 of price/seats); adjusts negotiated commercials, no plan change; writes `subscription.price_adjusted` |
+| `POST` | `/api/platform-admin/tenants/:id/renew` | `PlatformJwtAuthGuard` | ✅ re-snapshots current plan modules/features, **keeps negotiated rate + seats**, bumps `renewsAt` +1y; writes `subscription.renewed` |
+| `GET` | `/api/platform-admin/plans` | `PlatformJwtAuthGuard` | ✅ catalog + per-plan tenant counts |
+| `PATCH` | `/api/platform-admin/plans/:key` | `PlatformJwtAuthGuard` | ✅ edit list price per seat / default seats / modules / features / isolation tier; writes `plan.updated` |
+| `GET` | `/api/platform-admin/tenants/:id` | `PlatformJwtAuthGuard` | 🔴 TODO(api) |
+| `POST` | `/api/platform-admin/tenants/:id/refresh-headcount` | `PlatformJwtAuthGuard` | 🔴 TODO(api) |
+| `GET` | `/api/platform-admin/audit` | `PlatformJwtAuthGuard` | 🔴 TODO(api) |
+| `POST` | `/api/platform-admin/tenants/:id/breakglass` | `PlatformJwtAuthGuard` | 🔴 TODO(api) — design first |
 
 ### Known gaps / TODO
 
-- Write `PlatformAuditLog` rows on every tenant create / status change
-  (actor, action, target, before/after).
-- Subscription lifecycle: seat counting vs plan, expiry → auto-suspend.
+- **Audit read API** — `GET /api/platform-admin/audit`. Rows are being
+  written (create / status / plan-change / renewal / plan-catalog-edit);
+  the console's Audit screen + tenant-detail Activity tab are built and
+  degrade gracefully until this lands.
+- **`POST /api/platform-admin/tenants/:id/refresh-headcount`** — expose the
+  existing `refreshHeadcount()` as a route; also a scheduled BullMQ job.
+- **`GET /api/platform-admin/tenants/:id`** — detail endpoint (the console
+  currently falls back to filtering the list).
+- **Break-glass** — the whole flow (`BreakGlassGrant`, audited read-only
+  tenant context, TTL). Console dialog + status sheet built as `TODO(api)`.
+- **Scheduled renewal job** — `renewSubscription()` is a manual operator
+  action today; a BullMQ job should process `renewsAt` and re-snapshot on
+  the due date.
+- Subscription lifecycle: seat counting vs plan, `PAST_DUE` → auto-suspend.
+- Tighten `platform_audit_log` grants to true append-only (no
+  `UPDATE`/`DELETE` for `hrms_platform`).
 
 ---
 
