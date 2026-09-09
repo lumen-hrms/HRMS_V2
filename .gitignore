@@ -2,11 +2,12 @@ node_modules/
 dist/
 build/
 
-.env
-.env.*
-!.env.example
-
-# Firebase service-account private keys — never commit these.
+# apps/web/.env is intentionally NOT ignored — it only holds the Firebase
+# web config, which ships in the browser bundle anyway (not secret).
+# The API env files DO hold secrets (Firebase service-account key, Supabase
+# passwords) and stay out of git — share them via the team vault.
+apps/api/.env
+apps/api/.env.test
 *firebase-adminsdk*.json
 *-service-account*.json
 

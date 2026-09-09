@@ -23,7 +23,7 @@ export default function App() {
       <ToastProvider>
       <BrowserRouter>
         <Routes>
-          <Route path="/platform-admin" element={<PlatformAdminConsole />} />
+          <Route path="/platform-admin/*" element={<PlatformAdminConsole />} />
           <Route
             path="/*"
             element={

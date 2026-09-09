@@ -45,6 +45,41 @@ enum SubscriptionPlan {
   @@schema("platform")
 }
 
+enum IsolationTier {
+  POOLED
+  DEDICATED
+
+  @@schema("platform")
+}
+
+// The operator-editable plan catalog (Platform Admin → Plans). `key` matches
+// the `SubscriptionPlan` values a tenant can be onboarded onto
+// (STARTER/GROWTH/ENTERPRISE — TRIAL is a status, not a sold plan). Seeded
+// from platform-admin/entitlements.ts (which stays as the code-side default
+// + fallback). Editing a Plan row NEVER mutates a live Subscription — those
+// carry a snapshot; new tenants and renewals pick up the current Plan.
+model Plan {
+  key              String        @id
+  name             String
+  // List price PER SEAT PER MONTH. The amount a tenant pays is
+  // `pricePerSeat * seats`, computed at display time (never stored). A deal
+  // snapshots this onto the Subscription as its starting negotiated rate.
+  listPricePerSeat Decimal       @default(0) @map("list_price_per_seat") @db.Decimal(12, 2)
+  currency         String        @default("INR")
+  // Default seat count pre-filled in the onboarding wizard — NOT a bundled
+  // allotment. The operator sets the real seat count per tenant.
+  seatsIncluded    Int           @map("seats_included")
+  enabledModules   String[]      @default([]) @map("enabled_modules")
+  features         Json          @default("{}")
+  isolationTier    IsolationTier @default(POOLED) @map("isolation_tier")
+  sortOrder        Int           @default(0) @map("sort_order")
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+
+  @@map("plans")
+  @@schema("platform")
+}
+
 model Tenant {
   id            String       @id @default(uuid()) @db.Uuid
   name          String
@@ -70,6 +105,15 @@ model Subscription {
   plan     SubscriptionPlan @default(TRIAL)
   seats    Int              @default(50)
   renewsAt DateTime?        @map("renews_at")
+
+  // NEGOTIATED per-seat rate for THIS tenant (every deal is bespoke).
+  // Effective monthly = pricePerSeat * seats. Snapshotted at assign-time,
+  // defaulting to the plan's list rate. A renewal KEEPS this rate (it's the
+  // contract term) while re-snapshotting modules/features; an explicit plan
+  // change resets it to the new plan's list price. Isolation tier is
+  // snapshotted the same way. A later Plan catalog edit never touches these.
+  pricePerSeat  Decimal?      @map("price_per_seat") @db.Decimal(12, 2)
+  isolationTier IsolationTier @default(POOLED) @map("isolation_tier")
 
   // Plan entitlements — what this tenant is ALLOWED to use, derived from
   // `plan` at onboarding (see platform-admin/entitlements.ts) and re-derived

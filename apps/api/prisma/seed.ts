@@ -66,10 +66,16 @@ type Tx = Prisma.TransactionClient;
  * connection where the session variable was never set.
  */
 async function withTenant<T>(tenantId: string, fn: (tx: Tx) => Promise<T>): Promise<T> {
-  return prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, TRUE)`;
-    return fn(tx);
-  });
+  return prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, TRUE)`;
+      return fn(tx);
+    },
+    // Generous ceiling: this is a rarely-run seed and each tenant's block is
+    // dozens of round-trips. Against a remote DB (shared Supabase, ~130 ms
+    // RTT) the default 5 s is not enough.
+    { timeout: 120_000, maxWait: 20_000 },
+  );
 }
 
 interface SeedEmployeeSpec {
@@ -96,6 +102,9 @@ async function seedTenant(name: string, subdomain: string, employees: SeedEmploy
         create: {
           plan: 'GROWTH',
           seats: 200,
+          // Negotiated per-seat rate — matches the GROWTH list price seeded
+          // by 20260909130000_per_seat_pricing. Effective ≈ ₹69,800/mo.
+          pricePerSeat: 349,
           enabledModules: growth.enabledModules,
           features: growth.features as unknown as Prisma.InputJsonValue,
         },
@@ -273,6 +282,16 @@ async function seedTenant(name: string, subdomain: string, employees: SeedEmploy
         },
       });
     }
+  });
+
+  // Denormalized headcount — mirrors PlatformAdminService.refreshHeadcount()
+  // so the operator console shows real seat pressure straight after seeding.
+  // `prisma` runs as the BYPASSRLS migration role here, so a direct count is
+  // fine without withTenant().
+  const headcount = await prisma.employee.count({ where: { tenantId: tenant.id } });
+  await prisma.tenant.update({
+    where: { id: tenant.id },
+    data: { employeeCount: headcount },
   });
 
   return tenant;

@@ -3,18 +3,26 @@
 > **This file is the authoritative, detailed spec for further development of
 > this module.** `docs/MODULE_SPECS.md` §2 is the one-page summary.
 >
-> **Status:** ✅ tenant onboarding / enable-disable / metadata live ·
-> 🟡 platform audit log table exists, not written · 🔴 billing / seat
-> enforcement · 🔴 break-glass support access.
-> **Progress:** ~90% of the intended V1 slice (see `docs/MODULE_SPECS.md`).
+> **Status:** ✅ tenant onboarding (hosted reset-link email — no
+> operator-typed password) / enable-disable / metadata live ·
+> ✅ full operator console UI (`/platform-admin/*`: login, tenants list,
+> new-tenant wizard, tenant detail w/ 4 tabs, **Plans catalog**, audit
+> screen) · ✅ **operator-editable `platform.plans`** (pricing / seats /
+> modules / features / isolation tier) with snapshot-at-assign +
+> re-snapshot-on-renewal; `PATCH .../plan` + `POST .../renew` live ·
+> 🟡 `PlatformAuditLog` written for create / status / plan-change / renewal /
+> plan-edit — read API pending · 🔴 refresh-headcount route · 🔴 billing /
+> seat enforcement · 🔴 break-glass.
+> **Progress:** ~96% of the intended V1 slice (see `docs/MODULE_SPECS.md`).
 > **Code:** `apps/api/src/platform-admin`, `apps/api/src/prisma`
-> (`PlatformPrismaClientProvider`), `apps/web/src/routes/platform`,
-> `apps/web/src/pages/platform-admin`.
+> (`PlatformPrismaClientProvider`), `apps/web/src/pages/platform-admin`
+> (`console.tsx` gate → `shell.tsx` + `tenants`/`tenant-new`/`tenant-detail`/
+> `audit` + `components/` + `lib/`).
 > **Related:** `CLAUDE.md` ("Platform Admin is structurally separate") ·
 > `docs/BACKEND_ARCHITECTURE.md` §2.5–2.6, §3, §5 ·
 > `docs/TENANT_CONFIGURATION.md` (layer 1 = plan entitlements, set here) ·
 > module `01_IDENTITY_AND_ACCESS.md`.
-> **Last synced to code:** 2026-09-08.
+> **Last synced to code:** 2026-09-09 (operator plan catalog: platform.plans + Plans screen, snapshot/renewal model, PATCH .../plan + POST .../renew).
 
 ---
 
@@ -301,9 +309,46 @@ New-tenant wizard, Tenant detail, (next) Audit log, (next) Break-glass.
 
 ## 9. Known gaps / TODO (priority order)
 
-1. **Write `PlatformAuditLog` rows** on every tenant create / status change /
-   plan change (actor, action, target, before/after, ip). Enforce
-   append-only in the roles migration. Unblocks the console's Audit screen.
+**Closed** since the last sync:
+- ✅ **Operator console UI** — full multi-screen console at `/platform-admin/*`
+  (login, tenants list + stat tiles + filters, 3-section new-tenant wizard,
+  tenant detail with 4 tabs, operator audit screen), on the real design
+  system. `apps/web/src/pages/platform-admin`.
+- ✅ **Onboarding via reset link** — `createTenant` seeds the Company Admin
+  with a random password + a hosted password-reset email (no operator-typed
+  temp password). `adminName` → Firebase `displayName`; `seats` overridable
+  per plan.
+- ✅ **`PlatformAuditLog` writes** for `tenant.created`,
+  `tenant.status_changed`, `tenant.plan_changed`, `subscription.renewed`,
+  `subscription.price_adjusted`, `plan.updated` (actor email, before/after,
+  reason in `metadata`).
+- ✅ **Operator-editable plan catalog** (`platform.plans`, migrations
+  `20260909120000_plan_catalog` + `20260909130000_per_seat_pricing`) —
+  Plans screen + `GET`/`PATCH /plans`. `entitlements.ts` stays as the seed
+  + fallback. **Snapshot model:** a `Subscription` carries its own
+  `enabledModules` / `features` / `seats` / `pricePerSeat` /
+  `isolationTier`; editing a plan never mutates a live one. New tenants
+  snapshot the current plan; `POST /tenants/:id/renew` re-snapshots (adds
+  modules the plan gained, drops ones it lost, **keeps the tenant's seat
+  count AND negotiated per-seat rate**). `PATCH /tenants/:id/plan` moves a
+  tenant + fresh snapshot (resets the rate to the new plan's list price).
+- ✅ **Per-seat pricing + per-tenant negotiation** (migration
+  `20260909130000_per_seat_pricing`) — a `Plan` carries `listPricePerSeat`
+  (per seat / month); a `Subscription` snapshots a **negotiated**
+  `pricePerSeat` (defaults to list, operator tunes per deal at onboarding).
+  **Effective monthly = `pricePerSeat × seats`**, computed at display, never
+  stored. `PATCH /tenants/:id/pricing` `{pricePerSeat?, seats?, reason}` is
+  the negotiation lever — adjusts commercials with no plan change
+  (`subscription.price_adjusted` audit). Still a stored reference figure —
+  no billing engine.
+
+**Still open:**
+
+1. **`GET /api/platform-admin/audit`** (read API) — rows are written; the
+   console's Audit screen + tenant-detail Activity tab degrade gracefully
+   until it lands. Also: `headcount.refreshed` write + enforce append-only
+   in the roles migration (`hrms_platform` has no `UPDATE`/`DELETE` on
+   `platform_audit_log` yet).
 2. **Subscription lifecycle** — seat counting vs `seats`; `trialEndsAt` /
    `renewsAt` handling; `PAST_DUE` → grace → auto-suspend (BullMQ scheduled
    job).
@@ -312,12 +357,22 @@ New-tenant wizard, Tenant detail, (next) Audit log, (next) Break-glass.
 4. **Break-glass flow** — schema (`BreakGlassGrant`), the audited read-only
    tenant context, TTL enforcement, the console screens. **Design before
    building** (`CLAUDE.md`).
-5. **Plan → entitlement mapping** as data, not scattered constants; wire
-   `PATCH .../plan` fully.
+5. **Scheduled renewal job** (BullMQ) — `renewSubscription()` is a manual
+   operator action today; a job should process `renewsAt` and re-snapshot
+   on the due date. (Also: seat counting vs `seats`, `PAST_DUE` →
+   auto-suspend.)
 6. **Tenant detail screen** — subscription, headcount history, per-tenant
    audit slice, danger zone (suspend / cancel).
 7. **Subdomain rename** flow (deferred) — needs a redirect + claim-refresh
    story.
+8. **Dedicated-DB tenant tier** (`CLAUDE.md` → "Multi-tenancy", Tier 2) —
+   provisioning a database-per-tenant for enterprise / regulated customers
+   is a platform-admin flow: create the DB, `prisma migrate deploy` against
+   it, seed defaults, record the datasource on the tenant record. Also
+   needs the fan-out migration runner (shared DB + every dedicated DB) and
+   the per-tenant connection registry. **Design target — not built.**
+   Blocked on the `tenant → datasource` lookup indirection landing in
+   `TenantPrismaService` first.
 
 ---
 
