@@ -5,11 +5,11 @@
 > build prompt is `docs/ui-build-prompts/04-leave-management.md`; the
 > per-screen frontend API contract is `docs/LEAVE_UI_SPECS.md`.
 >
-> **Status:** ✅ — backend fully wired and tested; the frontend live path is
-> built and works against the real API; every originally-tracked feature gap
-> is closed. **One flip remains** — the frontend still defaults to the mock
-> because `VITE_LEAVE_MOCK` is unset (see §9).
-> **Progress:** ~98% (see `docs/MODULE_SPECS.md` status table — keep in sync).
+> **Status:** ✅ 100% — backend fully wired and tested; the frontend live
+> path is built and runs against the real API by default; every
+> originally-tracked feature gap is closed, including the mock-default flip
+> (see §9).
+> **Progress:** 100% (see `docs/MODULE_SPECS.md` status table — keep in sync).
 > **Code:** `apps/api/src/leave` (`LeaveService`/`LeaveController` +
 > `leave-escalation.processor.ts` / `leave-accrual.processor.ts` on the
 > BullMQ `leave` queue), `apps/web/src/pages/leave`, `apps/web/src/lib/leave`
@@ -404,18 +404,14 @@ from `LeaveLedgerEntry`.
 
 ## 9. Known gaps / TODO
 
-All originally-tracked feature gaps are closed. What remains:
+All originally-tracked feature gaps are closed, including the mock-default
+flip: `apps/web/src/lib/leave/client.ts`'s `USE_MOCK` now reads
+`import.meta.env.VITE_LEAVE_MOCK === 'true'` (inverted default, matching
+`access/client.ts`), so a plain `npm run dev` / build runs against the real
+API without any env var changes — set `VITE_LEAVE_MOCK=true` to force the
+fixture store.
 
-1. **Frontend still defaults to the mock.**
-   `apps/web/src/lib/leave/client.ts`: `USE_MOCK = import.meta.env
-   .VITE_LEAVE_MOCK !== 'false'`, and the var is set nowhere
-   (`apps/web/.env` only carries `VITE_FIREBASE_*`). Either add
-   `VITE_LEAVE_MOCK=false` to `apps/web/.env` or invert the default to match
-   `access/client.ts` (`=== 'true'`). Until then a plain `npm run dev` /
-   build shows fixture data, not the live API. **This is the single blocking
-   item for calling this module 100%.**
-
-The rest is scope notes, not gaps:
+What follows is scope notes, not gaps:
 
 - Comp-off crediting and leave→attendance reconciliation are **synchronous**
   by design (§4.6) — not duplicated by, and not dependent on, Attendance's

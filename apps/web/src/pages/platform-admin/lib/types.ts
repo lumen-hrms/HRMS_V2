@@ -68,6 +68,14 @@ export interface TenantRow {
   subscription: Subscription | null;
 }
 
+/** `POST /api/platform-admin/tenants` response — `adminResetEmailSent` is
+ * false when the hosted reset email failed to send (Firebase quota/config
+ * issue); the tenant is still created either way — the wizard should offer
+ * a resend rather than silently claiming success. */
+export interface CreatedTenant extends TenantRow {
+  adminResetEmailSent: boolean;
+}
+
 /** `GET /api/platform-admin/tenants/:id` — TODO(api). Superset of TenantRow. */
 export interface TenantDetail extends TenantRow {
   firstAdminEmail: string | null; // operator metadata, not tenant PII

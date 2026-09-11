@@ -9,6 +9,7 @@
  */
 import { auth } from './firebase';
 import type {
+  CreatedTenant,
   CreateTenantInput,
   Plan,
   PlatformAuditEntry,
@@ -71,7 +72,7 @@ export const platformApi = {
 
   /** `POST /tenants` — create tenant + seed first Company Admin (reset email). */
   createTenant(input: CreateTenantInput) {
-    return raw.post<TenantRow>('/tenants', {
+    return raw.post<CreatedTenant>('/tenants', {
       companyName: input.name,
       subdomain: input.subdomain,
       adminEmail: input.firstAdminEmail,
@@ -80,6 +81,11 @@ export const platformApi = {
       seats: input.seats,
       pricePerSeat: input.pricePerSeat,
     });
+  },
+
+  /** `POST /tenants/:id/resend-admin-reset` — re-fire the Company Admin's hosted reset email. */
+  resendAdminReset(id: string) {
+    return raw.post<{ email: string }>(`/tenants/${id}/resend-admin-reset`);
   },
 
   /** `PATCH /tenants/:id/status` — ACTIVE / SUSPENDED / TRIAL + audit reason. */

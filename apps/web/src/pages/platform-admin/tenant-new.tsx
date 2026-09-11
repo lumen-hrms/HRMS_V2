@@ -64,10 +64,19 @@ export function TenantNewPage() {
         firstAdminName: form.firstAdminName.trim(),
         firstAdminEmail: form.firstAdminEmail.trim(),
       });
-      toast({
-        title: 'Tenant created',
-        description: `Password-reset link sent to ${form.firstAdminEmail.trim()}`,
-      });
+      if (created.adminResetEmailSent) {
+        toast({
+          title: 'Tenant created',
+          description: `Password-reset link sent to ${form.firstAdminEmail.trim()}`,
+        });
+      } else {
+        toast({
+          tone: 'error',
+          title: 'Tenant created — reset email failed to send',
+          description: `${form.firstAdminEmail.trim()} won't have a reset link. Resend it from the tenant's detail page, or check the identity-provider config.`,
+          duration: 8000,
+        });
+      }
       nav(`/platform-admin/tenants/${created.id}`);
     } catch (e2) {
       // The backend rolls the tenant row back if seeding the admin fails.

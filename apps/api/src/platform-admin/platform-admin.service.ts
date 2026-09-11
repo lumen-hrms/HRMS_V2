@@ -156,8 +156,10 @@ export class PlatformAdminService {
       },
     });
 
+    let adminResetEmailSent = true;
     try {
-      await this.seedCompanyAdmin(tenant.id, dto.adminEmail, dto.adminName);
+      const seeded = await this.seedCompanyAdmin(tenant.id, dto.adminEmail, dto.adminName);
+      adminResetEmailSent = seeded.resetEmailSent;
       // Working HR-config defaults so the tenant functions before anyone
       // opens Settings (see docs/TENANT_CONFIGURATION.md).
       await this.seedTenantDefaults(tenant.id);
@@ -190,10 +192,32 @@ export class PlatformAdminService {
       // best-effort — the tenant is already provisioned.
     }
 
-    return this.platformPrisma.tenant.findUnique({
+    const created = await this.platformPrisma.tenant.findUnique({
       where: { id: tenant.id },
       include: { subscription: true },
     });
+    return { ...created, adminResetEmailSent };
+  }
+
+  /**
+   * Manually re-fires the Company Admin's hosted password-reset email —
+   * for when `createTenant`'s `adminResetEmailSent: false` (or the customer
+   * just says the email never arrived) instead of leaving the operator with
+   * no recourse but a support ticket.
+   */
+  async resendAdminReset(tenantId: string) {
+    const scoped = withTenantContext(this.tenantPrismaRaw, tenantId);
+    const admin = await scoped.user.findFirst({
+      where: { tenantId, role: 'COMPANY_ADMIN' },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!admin) throw new BadRequestException('This tenant has no Company Admin to reset');
+
+    await sendFirebasePasswordResetEmail(
+      this.config.get('firebase.webApiKey', { infer: true }),
+      admin.email,
+    );
+    return { email: admin.email };
   }
 
   /**
@@ -406,21 +430,25 @@ export class PlatformAdminService {
       data: { tenantId, email, firebaseUid, role: 'COMPANY_ADMIN' },
     });
 
-    // Non-fatal: the login exists; the operator can re-send the reset link
-    // from the console if the email didn't go out.
+    // Non-fatal: the login exists either way. `resetEmailSent` is surfaced
+    // all the way up to the New Tenant wizard so the operator isn't left
+    // guessing why the customer says they never got the email — the only
+    // trace used to be this log line.
+    let resetEmailSent = true;
     try {
       await sendFirebasePasswordResetEmail(
         this.config.get('firebase.webApiKey', { infer: true }),
         email,
       );
     } catch (err) {
+      resetEmailSent = false;
       this.logger.error(
         `Tenant admin ${email} created but the password-reset email failed to send`,
         err instanceof Error ? err.stack : String(err),
       );
     }
 
-    return user;
+    return { user, resetEmailSent };
   }
 
   /**

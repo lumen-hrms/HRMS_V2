@@ -144,7 +144,12 @@ only" (Employee) — those can't be expressed as a static role check alone.
   DB role has no `UPDATE`/`DELETE` grant on it.
 - PII fields (PAN, bank account) get application-layer encryption via a
   KMS data key on top of RDS/S3 encryption-at-rest — a raw DB dump alone
-  should not be enough to read them.
+  should not be enough to read them. **Built** (module 03):
+  `FieldEncryptionService` (`apps/api/src/crypto`) does AES-256-GCM with a
+  key from `FIELD_ENCRYPTION_KEY`; only ciphertext + a masked form are
+  stored, reveal is permissioned + logged. The key today is a static team-
+  vault secret, not yet a real AWS KMS-wrapped data key — that swap lands
+  with the production AWS migration and only touches that one file.
 - No blanket "PII must stay in India" legal claim — DPDP Act 2023 doesn't
   currently mandate that; hosting in Mumbai is a trust/latency choice, not
   a compliance requirement. Don't market it as the latter.
@@ -182,9 +187,10 @@ escalation timers (BullMQ `leave` queue / Redis — first use of BullMQ in
 this repo), a monthly/quarterly accrual job (proration-aware for mid-year
 joiners), and every endpoint (team balances, balance adjustments, ledger,
 settings). Every cell of the frontend's role×tab matrix is wired to
-`apps/web/src/lib/leave`, and `apps/web/.env` sets `VITE_LEAVE_MOCK=false`
-(`LeaveService` maps every response into the frontend's denormalized
-contract itself). `TenantSettings.allowLopRequests`/`fyStartMonth`,
+`apps/web/src/lib/leave`, whose `client.ts` defaults `USE_MOCK` to **off**
+(`VITE_LEAVE_MOCK === 'true'` forces the fixture store — same inverted-default
+pattern as `access/client.ts`; `LeaveService` maps every response into the
+frontend's denormalized contract itself). `TenantSettings.allowLopRequests`/`fyStartMonth`,
 `LeaveType.minNoticeDays`/`genderRestriction`/`requiresApproval` are all
 enforced/settable (gender check fails open on unrecognized
 `Employee.gender` — free-text field, no schema enum). Two features closed

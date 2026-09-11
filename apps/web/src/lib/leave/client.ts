@@ -5,10 +5,9 @@
  * endpoint exists today (`live`) or is a near-term gap (`planned`, see
  * docs/MODULE_SPECS.md §4). Screens only ever import from here.
  *
- * `USE_MOCK` (default: on) routes everything through the fixture store so the
- * whole module is runnable before the backend lands. Flip via
- * `VITE_LEAVE_MOCK=false` once the real endpoints are wired; the `planned`
- * ones will 404 until then.
+ * Backend is fully wired & tested (module 04) — `USE_MOCK` now defaults to
+ * **off**, same as `access/client.ts`. Set `VITE_LEAVE_MOCK=true` to force
+ * the in-memory fixture store (e.g. running the UI with no API up).
  */
 import { api } from '@/lib/api';
 import type { Role } from '@/lib/roles';
@@ -39,7 +38,7 @@ import {
   type TeamCalendarEntry,
 } from './types';
 
-export const USE_MOCK = import.meta.env.VITE_LEAVE_MOCK !== 'false';
+export const USE_MOCK = import.meta.env.VITE_LEAVE_MOCK === 'true';
 
 export interface LeaveCtx {
   role: Role;
