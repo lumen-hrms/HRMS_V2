@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   CreateBucketCommand,
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
   PutObjectCommand,
@@ -64,5 +65,9 @@ export class StorageService implements OnModuleInit {
   async getPresignedDownloadUrl(key: string, expiresInSeconds = 300): Promise<string> {
     const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
     return getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
+  }
+
+  async delete(key: string): Promise<void> {
+    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
 }

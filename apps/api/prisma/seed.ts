@@ -165,7 +165,7 @@ async function seedTenant(name: string, subdomain: string, employees: SeedEmploy
           designation: spec.designation,
           departmentId: deptByName.get(spec.dept),
           dateOfJoining: new Date('2024-01-15'),
-          employmentStatus: 'ACTIVE',
+          lifecycleState: 'CONFIRMED',
         },
       });
       idByCode.set(spec.code, employee.id);

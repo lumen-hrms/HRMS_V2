@@ -188,12 +188,53 @@ enum LoginOutcome {
   @@schema("public")
 }
 
-enum EmploymentStatus {
-  ACTIVE
-  ON_LEAVE
+// Replaces the old EmploymentStatus (ACTIVE/ON_LEAVE/SUSPENDED/RESIGNED/
+// TERMINATED) with the SRS-target lifecycle state machine — see
+// docs/modules/03_EMPLOYEE_MASTER.md §4.4 for the allowed-transition graph.
+// ON_LEAVE is no longer a lifecycle state: day-to-day leave is tracked on
+// AttendanceRecord/LeaveRequest, not here.
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  INTERN
+  CONSULTANT
+
+  @@schema("public")
+}
+
+enum TaxRegime {
+  OLD
+  NEW
+
+  @@schema("public")
+}
+
+enum BankAccountType {
+  SAVINGS
+  CURRENT
+
+  @@schema("public")
+}
+
+enum DocumentCategory {
+  OFFER_LETTER
+  ID_PROOF
+  ADDRESS_PROOF
+  EDUCATION
+  EXPERIENCE
+  OTHER
+
+  @@schema("public")
+}
+
+enum EmployeeLifecycleState {
+  PRE_JOINING
+  PROBATION
+  CONFIRMED
+  NOTICE_PERIOD
   SUSPENDED
-  RESIGNED
-  TERMINATED
+  SEPARATED
 
   @@schema("public")
 }
@@ -316,6 +357,11 @@ model Department {
   id        String   @id @default(uuid()) @db.Uuid
   tenantId  String   @map("tenant_id") @db.Uuid
   name      String
+  code      String?
+  // No FK to Employee — headEmployeeId is a plain reference, not a
+  // relation, so deleting the head employee never cascades into the
+  // department row (module 03 §4.3).
+  headEmployeeId String? @map("head_employee_id") @db.Uuid
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -341,12 +387,30 @@ model Employee {
   dateOfBirth   DateTime? @map("date_of_birth")
   gender        String?
 
+  // Identity & personal — module 03 §4.2.
+  maritalStatus String? @map("marital_status")
+  bloodGroup    String? @map("blood_group")
+  nationality   String?
+  photoUrl      String? @map("photo_url")
+
   departmentId String?     @map("department_id") @db.Uuid
   department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
 
   designation      String?
+  employmentType   EmploymentType?  @map("employment_type")
+  workLocation     String?          @map("work_location")
   dateOfJoining    DateTime?        @map("date_of_joining")
-  employmentStatus EmploymentStatus @default(ACTIVE) @map("employment_status")
+
+  // Lifecycle state machine (module 03 §4.4). New employees start in
+  // PROBATION (the common case: HR is adding someone who has already
+  // joined) — pick PRE_JOINING explicitly for a not-yet-started hire.
+  lifecycleState   EmployeeLifecycleState @default(PROBATION) @map("lifecycle_state")
+  // Set when the relevant transition requires it (module 03 §4.4); null
+  // otherwise. Each is written only by the matching PATCH .../lifecycle call.
+  probationEndDate DateTime?              @map("probation_end_date")
+  confirmationDate DateTime?              @map("confirmation_date")
+  noticeStartDate  DateTime?              @map("notice_start_date")
+  lastWorkingDate  DateTime?              @map("last_working_date")
 
   reportingManagerId String?    @map("reporting_manager_id") @db.Uuid
   reportingManager   Employee?  @relation("ManagerReports", fields: [reportingManagerId], references: [id], onDelete: SetNull)
@@ -357,6 +421,33 @@ model Employee {
   // ROTATIONAL shift here; desk staff inherit the default.
   shiftId String? @map("shift_id") @db.Uuid
   shift   Shift?  @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+
+  // Compensation-adjacent — headline reference figures only; the salary
+  // *structure* lives in Payroll (module 07), not here.
+  ctcAnnual  Decimal? @map("ctc_annual") @db.Decimal(14, 2)
+  payGrade   String?  @map("pay_grade")
+  costCenter String?  @map("cost_center")
+
+  // Statutory (India) — module 03 §4.2/INV-2/INV-3. `pan`/bank account are
+  // application-layer encrypted (FieldEncryptionService, CLAUDE.md's KMS
+  // non-negotiable); only the masked form and the ciphertext are stored —
+  // plaintext never lands in a column. Aadhaar: last 4 digits only, ever.
+  panCiphertext String? @map("pan_ciphertext")
+  panMasked     String? @map("pan_masked")
+  aadhaarLast4  String? @map("aadhaar_last4")
+  uan           String?
+  pfNumber      String? @map("pf_number")
+  esicNumber    String? @map("esic_number")
+  taxRegime     TaxRegime? @map("tax_regime")
+
+  // Bank (disbursement) — bank account number is KMS-encrypted like PAN.
+  bankAccountHolderName String?          @map("bank_account_holder_name")
+  bankAccountCiphertext String?          @map("bank_account_ciphertext")
+  bankAccountMasked     String?          @map("bank_account_masked")
+  bankIfsc              String?          @map("bank_ifsc")
+  bankName              String?          @map("bank_name")
+  bankBranch            String?          @map("bank_branch")
+  bankAccountType       BankAccountType? @map("bank_account_type")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -369,6 +460,7 @@ model Employee {
   attendanceRecords        AttendanceRecord[]
   regularizationRequests   RegularizationRequest[]
   punches                  Punch[]
+  emergencyContacts        EmergencyContact[]
 
   @@unique([tenantId, employeeCode])
   @@index([tenantId])
@@ -384,13 +476,41 @@ model Document {
   employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   label      String
+  category   DocumentCategory @default(OTHER)
   storageKey String   @map("storage_key")
   mimeType   String   @map("mime_type")
   sizeBytes  Int      @map("size_bytes")
+  uploadedByName String? @map("uploaded_by_name")
   uploadedAt DateTime @default(now()) @map("uploaded_at")
 
   @@index([tenantId])
   @@map("documents")
+  @@schema("public")
+}
+
+// Module 03 §4.2 — 0..n per employee, exactly one `isPrimary` (RULE-5,
+// enforced in EmployeesService: setting a new primary unsets the old one in
+// the same transaction — no partial unique index, same pattern as
+// LeaveType.isCompOff's app-level "at most one" invariant).
+model EmergencyContact {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  employeeId String   @map("employee_id") @db.Uuid
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  name         String
+  relationship String
+  phone        String
+  altPhone     String? @map("alt_phone")
+  address      String?
+  isPrimary    Boolean @default(false) @map("is_primary")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@index([tenantId, employeeId])
+  @@map("emergency_contacts")
   @@schema("public")
 }
 

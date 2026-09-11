@@ -18,12 +18,21 @@ and the per-role screen map. Pair it with:
 **Output target:** `apps/web/src/pages/employees/` (+ `org-chart.tsx`,
 `departments.tsx`).
 
-> **Field scope note:** this prompt lists the full SRS-driven field set
-> (identity, employment, compensation-adjacent, statutory, bank, emergency
-> contact, documents). Some fields aren't in the API yet — the current
-> `Employee` model is lean (identity + department + manager + status + shift).
-> Build the UI for the full set; mark not-yet-wired fields as `TODO(api)` and
-> keep them behind the same layout so the backend has a target.
+> **Field scope note (updated 2026-09-11):** the full SRS-driven field set
+> below is **live in the API** — identity/personal, employment,
+> compensation-adjacent, statutory (KMS-encrypted PAN), bank
+> (KMS-encrypted account number), emergency contacts, and document
+> category/delete are all real endpoints today (`docs/modules/
+> 03_EMPLOYEE_MASTER.md` §4). `apps/web/src/pages/employees/{detail,list}.tsx`
+> now render this prompt's target header-banner + internal-tabs detail page
+> and stat-tile + filter directory (§5.1/§5.2 below) — that part of the
+> redesign is **done**. `org-chart.tsx` is the one page still on the old
+> plain-nested-list rendering (§5.6) — its search/expand/zoom/export
+> interactivity is the remaining redesign work. Only two things below are still
+> genuinely `TODO(api)`: BU→Dept→Team hierarchy (`parentDepartmentId` —
+> deliberately deferred, not planned for V1) and org-chart PNG/PDF export
+> (deferred). Everything else marked `TODO(api)` in earlier drafts of this
+> prompt is now real — build against it, don't stub it.
 
 ---
 ─── PROMPT ───
@@ -153,64 +162,99 @@ No lorem — use realistic Indian names, departments, IFSC codes, etc.
 
 **Identity & personal** — `employeeCode` (unique per tenant) · `firstName` ·
 `lastName` · `personalEmail` · `phone` · `dateOfBirth` · `gender`
-(`MALE|FEMALE|OTHER|UNDISCLOSED`) · `maritalStatus`
-(`SINGLE|MARRIED|OTHER`) *(TODO(api))* · `bloodGroup` *(TODO(api))* ·
-`nationality` *(TODO(api))* · `photoUrl` *(TODO(api))*.
+(free text — no schema enum; render `MALE|FEMALE|OTHER|UNDISCLOSED` as
+suggested options but don't hard-validate against them) · `maritalStatus`
+(`SINGLE|MARRIED|OTHER`) · `bloodGroup` (free text, e.g. `O+`) ·
+`nationality` · `photoUrl` (a plain URL string today — **no upload widget
+exists**; render a text input, not a dropzone, unless you're also asked to
+build that upload flow).
 
 **Employment** — `designation` · `departmentId` (→ Department) ·
-`employmentType` (`FULL_TIME|PART_TIME|CONTRACT|INTERN|CONSULTANT`)
-*(TODO(api))* · `dateOfJoining` · `workLocation` *(TODO(api))* ·
-`reportingManagerId` (→ Employee) · `shiftId` (→ Shift; `null` = tenant
-default) · `lifecycleState` (see 3.2) · `probationEndDate` *(TODO(api))* ·
-`confirmationDate` *(TODO(api))* · `noticeStartDate` *(TODO(api))* ·
-`lastWorkingDate` *(TODO(api))*.
+`employmentType` (`FULL_TIME|PART_TIME|CONTRACT|INTERN|CONSULTANT`) ·
+`dateOfJoining` · `workLocation` · `reportingManagerId` (→ Employee) ·
+`shiftId` (→ Shift; `null` = tenant default) · `lifecycleState` (see 3.2) ·
+`probationEndDate` / `confirmationDate` / `noticeStartDate` /
+`lastWorkingDate` (each written only by its matching lifecycle transition —
+never directly editable).
 
-**Compensation-adjacent** *(all TODO(api); full salary structure lives in
-Payroll)* — `ctcAnnual` (Decimal) · `payGrade` · `costCenter`.
+**Compensation-adjacent** (full salary *structure* lives in Payroll, module
+07, not built) — `ctcAnnual` (`NUMERIC(14,2)`) · `payGrade` · `costCenter`.
 
-**Statutory (India)** *(all TODO(api))* — `pan` (store encrypted; show
-masked `ABCDE****F`) · `aadhaarLast4` (**last 4 digits only** — never accept or
-store the full 12; per `CLAUDE.md`) · `uan` · `pfNumber` · `esicNumber` ·
-`taxRegime` (`OLD|NEW`).
+**Statutory (India)** — `pan` (write via `PATCH .../sensitive-fields`; the
+GET response never includes it — only `panMasked`, e.g. `ABCDE****F`) ·
+`aadhaarLast4` (**exactly 4 digits — never the full 12**, per `CLAUDE.md`) ·
+`uan` · `pfNumber` · `esicNumber` · `taxRegime` (`OLD|NEW`).
 
-**Bank (for disbursement)** *(TODO(api) / not yet KMS-encrypted)* —
-`accountHolderName` · `bankAccountNumber` (encrypted; show masked `••••1234`) ·
-`ifsc` · `bankName` · `branch` · `accountType` (`SAVINGS|CURRENT`).
+**Bank (disbursement)** — `bankAccountHolderName` · `bankAccountNumber`
+(write-only via `PATCH .../sensitive-fields`; GET returns `bankAccountMasked`,
+e.g. `••••1234`) · `bankIfsc` · `bankName` · `bankBranch` ·
+`bankAccountType` (`SAVINGS|CURRENT`).
 
-**Emergency contacts** (0..n) *(TODO(api))* — `name` · `relationship` ·
-`phone` · `altPhone` · `address` · `isPrimary` (exactly one).
+**Reveal** — a masked PAN/bank-account row plus an eye icon
+(HR/Admin/Auditor only) that calls `POST /employees/:id/reveal
+{field, reason}` and shows the decrypted value inline for the rest of the
+session. Every reveal is audited server-side (actor, field, reason,
+timestamp — never the value); build the UI as if that's already true,
+because it is.
+
+**Emergency contacts** (0..n, full CRUD) — `id` · `name` · `relationship` ·
+`phone` · `altPhone` · `address` · `isPrimary` (server unsets the previous
+primary when a new one is set — reflect that in the UI without a client-side
+"are you sure" beyond the normal save action).
 
 **Documents** (0..n) — `id` · `label` · `category`
-(`OFFER_LETTER|ID_PROOF|ADDRESS_PROOF|EDUCATION|EXPERIENCE|OTHER`) *(category
-TODO(api))* · `mimeType` (`application/pdf|image/jpeg|image/png`) · `sizeBytes`
-(≤ 10 MB) · `uploadedAt` · `uploadedByName` *(TODO(api))*.
+(`OFFER_LETTER|ID_PROOF|ADDRESS_PROOF|EDUCATION|EXPERIENCE|OTHER`,
+editable inline via `PATCH /documents/:id/category`) · `mimeType`
+(`application/pdf|image/jpeg|image/png` — server enforces this allow-list,
+so a client-side check is a courtesy, not the real gate) · `sizeBytes`
+(≤ 10 MB, also server-enforced) · `uploadedAt` · `uploadedByName` (captured
+server-side from the uploading actor). Delete is a **hard delete**
+(`DELETE /documents/:id` — S3 object + row both removed, no undo).
 
 **Reporting (read-only, derived)** — `reportingManager` {`firstName`,`lastName`}
-· `directReports` [{`id`,`firstName`,`lastName`,`designation`}].
+· `directReports` [{`id`,`firstName`,`lastName`,`designation`}]. Note: a Line
+Manager's visibility (directory, detail, documents, org chart) is the
+**full recursive subtree**, not just direct reports — the API already
+resolves this; the UI doesn't need its own recursion, just render whatever
+the scoped list/tree endpoints return.
 
 **Linked login (optional, create-time)** — `loginEmail` · `loginRole`
 (`COMPANY_ADMIN|HR_MANAGER|LINE_MANAGER|EMPLOYEE|AUDITOR`) ·
 `loginTempPassword`. Creating one provisions a Firebase user + custom claims.
 
-**Department** — `id` · `name` · `code` *(TODO(api))* · `headEmployeeId`
-*(TODO(api))* · `parentDepartmentId` *(TODO(api), for BU→Dept→Team)* ·
-`employeeCount` (derived).
+**Department** — `id` · `name` · `code` · `headEmployeeId` (a plain
+reference, not a relation — no employee-picker validation needed beyond
+"pick any employee in the tenant") · `employeeCount` (derived).
+`parentDepartmentId` for BU→Dept→Team **does not exist and is not planned
+for V1** — don't build a hierarchy picker; flat Department is the whole
+model. Edit and delete-with-reassign (`PATCH`/`DELETE /departments/:id`)
+are both real endpoints.
 
 ### 3.2 Lifecycle state — labels & allowed transitions
 
-Current API enum: `ACTIVE · ON_LEAVE · SUSPENDED · RESIGNED · TERMINATED`.
-**SRS target (render this set, map to API):**
-`PRE_JOINING → PROBATION → CONFIRMED → NOTICE_PERIOD → SEPARATED`
-(plus `SUSPENDED` as a side state from `CONFIRMED`/`PROBATION`).
+This is the **live API enum** — `EmployeeLifecycleState`:
+`PRE_JOINING | PROBATION | CONFIRMED | NOTICE_PERIOD | SUSPENDED | SEPARATED`.
+New employees default to `PROBATION`. The transition graph, each edge
+naming the date field it requires (server-validated — a bad edge 400s):
 
-- `PRE_JOINING` (grey) → `PROBATION` on/after `dateOfJoining`.
-- `PROBATION` (amber) → `CONFIRMED` (needs `confirmationDate`) or `SEPARATED`.
-- `CONFIRMED` (teal) → `NOTICE_PERIOD` (needs `noticeStartDate`) or `SUSPENDED`.
-- `NOTICE_PERIOD` (amber) → `SEPARATED` (needs `lastWorkingDate`; triggers FnF
-  later) or back to `CONFIRMED` (withdrawal).
+- `PRE_JOINING` (grey) → `PROBATION` (no date needed).
+- `PROBATION` (amber) → `CONFIRMED` (needs `confirmationDate`) ·
+  `SEPARATED` (needs `lastWorkingDate`) · `SUSPENDED` (no date).
+- `CONFIRMED` (teal) → `NOTICE_PERIOD` (needs `noticeStartDate`) ·
+  `SUSPENDED` (no date).
+- `NOTICE_PERIOD` (amber) → `SEPARATED` (needs `lastWorkingDate`; triggers
+  FnF later, module 07 not built) · `CONFIRMED` (withdrawal, no date).
+- `SUSPENDED` (red) → `PROBATION` or `CONFIRMED` (caller picks which, no
+  date) — there's no server-tracked "prior state" to auto-return to.
 - `SEPARATED` (grey) — terminal; record read-only except documents.
-- Disable/hide transition buttons that aren't allowed from the current state.
-  Every transition → confirm modal capturing the required date + a reason.
+- Disable/hide transition buttons that aren't allowed from the current
+  state (mirror `apps/web/src/pages/employees/detail.tsx`'s
+  `LIFECYCLE_TRANSITIONS` map — keep the UI and the API's graph in sync by
+  construction, don't hand-maintain two copies that can drift). Every
+  transition → confirm modal capturing the required date + a reason →
+  `PATCH /employees/:id/lifecycle {targetState, effectiveDate?, reason}`.
+  A `SEPARATED` target disables the employee's linked login server-side —
+  show that consequence in the confirm modal, not just after the fact.
 
 ### 3.3 Validation rules (must be visible)
 
@@ -243,19 +287,27 @@ Current API enum: `ACTIVE · ON_LEAVE · SUSPENDED · RESIGNED · TERMINATED`.
 
 | Screen / capability | EMPLOYEE | LINE_MANAGER | HR_MANAGER | COMPANY_ADMIN | AUDITOR |
 |---|:--:|:--:|:--:|:--:|:--:|
-| Directory (list) | own record only | own + reports | all | all | all (read-only) |
-| Employee detail — view | own | own + reports | all | all | all (read-only) |
-| Employee detail — edit personal/contact/emergency | own only | — | all | all | — |
+| Directory (list) | own record only | own + reports (recursive) | all | all | all (read-only) |
+| Employee detail — view | own | own + reports (recursive) | all | all | all (read-only) |
+| Employee detail — edit personal/contact | own only | — | all | all | — |
 | Employee detail — edit employment/comp/statutory/bank | — | — | ✅ | ✅ | — |
+| Reveal masked PAN/bank (logged) | — | — | ✅ | ✅ | ✅ (read, logged) |
+| Emergency contacts — CRUD | own only | — | all | all | — |
 | Add employee / linked login | — | — | ✅ | ✅ | — |
 | Lifecycle transitions | — | — | ✅ | ✅ | — |
 | Bulk import | — | — | ✅ | ✅ | — |
-| Documents — upload/delete | own (upload only) | — | ✅ | ✅ | view + download |
-| Departments | — | view | ✅ | ✅ | view |
-| Org Chart | ✅ (self-centred) | ✅ (team-centred) | ✅ | ✅ | ✅ |
+| Documents — upload | own only | — | ✅ | ✅ | — |
+| Documents — delete / set category | — | — | ✅ | ✅ | — |
+| Documents — download | own | reports (recursive) | ✅ | ✅ | ✅ |
+| Departments — view / edit / delete | — | view | ✅ | ✅ | view |
+| Org Chart | ✅ (self-centred) | ✅ (team-centred, recursive) | ✅ | ✅ | ✅ |
 
-Any read-only cell / `AUDITOR`: render the full screen, strip every mutating
-control, show forms disabled.
+Every row above is **server-enforced today** — `PATCH /employees/:id`
+403s a Line Manager or Auditor outright, and silently drops any field
+outside an Employee's own whitelist rather than 403ing the whole request
+(so build the self-edit form as a genuinely reduced field set, not a full
+form with disabled fields). Any read-only cell / `AUDITOR`: render the
+full screen, strip every mutating control, show forms disabled.
 
 ## 5. Primary page views
 
@@ -279,24 +331,38 @@ actions → pagination/empty/skeleton → overlays it can open.
   role yet" (+ Add employee for HR/Admin). Skeleton rows.
 
 ### 5.2 Employee Detail  (`/employees/:id`) — internal tabs
-Header: avatar, `firstName lastName`, `employeeCode · designation`, lifecycle
-pill, and a **Change status** button (HR/Admin). Tabs:
+Header: avatar (or initials if `photoUrl` unset), `firstName lastName`,
+`employeeCode · designation`, lifecycle pill, and a **Change status** button
+(HR/Admin only — `PATCH .../lifecycle`). Tabs:
 
-1. **Profile** — Identity & personal fields (3.1). Edit = section modal or
-   inline edit toggle (`EMPLOYEE` may edit own contact fields only).
-2. **Employment** — Employment fields + Shift. HR/Admin edit; shows probation/
-   confirmation/notice/last-working dates as a small timeline.
-3. **Compensation & Statutory** — comp-adjacent + statutory fields, all
-   **masked by default** with a "reveal" toggle that is itself permissioned
-   (HR/Admin only) and logged. `aadhaarLast4` shows `XXXX-XXXX-1234`.
-4. **Bank** — bank fields, account number masked; "Verify with penny-drop"
-   button is a `TODO(api)` placeholder (disabled + tooltip).
-5. **Emergency Contacts** — list of contact cards; **Add contact** (drawer);
-   per-card edit/delete; primary badge.
-6. **Documents** — upload dropzone (drag + click; mime/size guard from 3.3) ·
-   list: label, category badge, type icon, size, uploaded date/by ·
-   row actions: Download (5-min presigned URL) · Delete (confirm). Empty =
-   "No documents uploaded".
+1. **Profile** — Identity & personal fields (3.1). HR/Admin edit any field;
+   an Employee viewing their own record gets a **visibly smaller** edit
+   form (only `personalEmail`/`phone`/`gender`/`maritalStatus`/
+   `bloodGroup`/`nationality`/`photoUrl` — no employment/comp fields in
+   that dialog at all, not just disabled ones).
+2. **Employment** — Employment fields + Shift, HR/Admin edit only
+   (`PATCH /employees/:id`); shows probation/confirmation/notice/
+   last-working dates as a small timeline, populated only once the matching
+   transition has happened.
+3. **Compensation & Statutory** — comp-adjacent + statutory fields.
+   PAN/Aadhaar masked by default; PAN's "reveal" (HR/Admin/Auditor,
+   `POST .../reveal`) is logged server-side. `aadhaarLast4` shows
+   `XXXX-XXXX-1234`. Edits go through `PATCH .../sensitive-fields`, a
+   separate call from the rest of the Employment tab.
+4. **Bank** — bank fields via the same `PATCH .../sensitive-fields`
+   endpoint; account number masked with the same reveal pattern as PAN. No
+   penny-drop verification exists or is planned — don't build a placeholder
+   for it.
+5. **Emergency Contacts** — list of contact cards (`GET .../emergency-contacts`);
+   **Add contact** (drawer, `POST`); per-card edit (`PATCH`) / delete
+   (`DELETE`); primary badge — setting a new primary silently unsets the old
+   one server-side, no separate confirmation needed for that side effect.
+6. **Documents** — upload dropzone (drag + click; mime/size guard from 3.3,
+   server re-enforces both) · category dropdown per row (inline
+   `PATCH .../category`) · list: label, category, type icon, size, uploaded
+   date/by · row actions: Download (5-min presigned URL) · **Delete**
+   (confirm — this is a hard delete, no undo). Empty = "No documents
+   uploaded".
 7. **Reporting** — this employee's manager (card) + direct reports (mini
    table, link each) + a "View in org chart" button (deep-links `/org-chart`
    focused on this node).
@@ -310,25 +376,31 @@ later on the detail page. **Linked login** section: optional; `loginEmail` +
 Cancel · Save as draft *(TODO(api))* · **Create employee**. On success →
 navigate to the new detail page + success toast.
 
-### 5.4 Bulk Import  (modal or `/employees/import`)
-- Step 1: **Download .xlsx template** (columns incl. required
-  `employeeCode`, `firstName`, `lastName`; optional department name, manager
-  code, designation, DOJ, email). Link + a small column reference table.
-- Step 2: **Drop .xlsx** → client-side parse → preview table (first 20 rows,
-  row count, detected columns, obvious problems flagged amber).
-- Step 3: **Import** → `POST /employees/bulk-import` → **result table**: Row ·
-  Name · Status (`ok` green / `error` red) · Message. Summary: "X created,
-  Y failed". **Download failed rows** as .xlsx to fix & re-upload.
-- States: parsing skeleton, upload progress bar, per-row error rows.
+### 5.4 Bulk Import  (`/employees/import`, live — see `apps/web/src/pages/employees/import.tsx`)
+- Step 1: **Download template** — the columns `bulkImport()` actually reads
+  today: required `employeeCode`, `firstName`, `lastName`; optional
+  `personalEmail`, `phone`, `designation`. (Department-by-name and
+  manager-by-code resolution **don't exist** — don't imply them in the
+  template or column reference.)
+- Step 2: choose a file → upload directly. A client-side preview step is a
+  nice-to-have, not required — the per-row result table in step 3 already
+  tells the operator what happened, so don't block the redesign on
+  building one if time is short.
+- Step 3: `POST /employees/bulk-import` → **result table**: Row · Status
+  (`ok` green / `error` red) · Message. Summary: "X created, Y failed".
+  **Download failed rows** to fix & re-upload only those.
+- States: upload-in-progress, per-row error rows, empty (no file chosen yet).
 
-### 5.5 Departments  (`/departments`)
+### 5.5 Departments  (`/departments`) — live
 - **Toolbar:** **New department** (HR/Admin) · search.
-- **Table columns:** Name · Code · Head (employee link) · Parent department ·
-  Employees (count) · Actions (`dropdown-menu`: Edit · Delete).
-- **New / Edit → modal:** name, code, head (`select` of employees), parent
-  (`select`). **Delete → modal** requires choosing a target department to
-  reassign that dept's employees into (block delete if employees exist and no
-  target chosen).
+- **Table columns:** Name · Code · Head (employee link) · Employees (count)
+  · Actions (`dropdown-menu`: Edit · Delete). **No "Parent department"
+  column** — that field doesn't exist (3.1).
+- **New / Edit → modal:** name, code, head (`select` of employees) —
+  `POST`/`PATCH /departments[/:id]`. **Delete → modal** requires choosing a
+  target department to reassign that dept's employees into
+  (`DELETE /departments/:id {reassignToDepartmentId?}` — server blocks the
+  delete with a count if employees exist and no target was chosen).
 - Empty = "No departments yet".
 
 ### 5.6 Org Chart  (`/org-chart`)
@@ -357,8 +429,8 @@ with its trigger + API call.
 - **Employee Quick View** — trigger: directory kebab or org-chart node. Avatar,
   name, code, designation, department, manager, lifecycle, contact; buttons:
   Open full profile · (HR/Admin) Change status.
-- **Add / Edit Emergency Contact** — form (3.1); `POST/PATCH` contact
-  *(TODO(api))*.
+- **Add / Edit Emergency Contact** — form (3.1); `POST`/`PATCH
+  /employees/:id/emergency-contacts[/:contactId]` — live.
 - **Add / Edit Employment section** *(optional pattern)* — if you use drawers
   instead of section modals for editing.
 
@@ -409,37 +481,56 @@ Do **not** render only the primary page. On the same canvas, lay out
    Default · Hover · Focus · Disabled · Skeleton · Empty · Error side by side.
 
 Annotate every overlay and action control with the HTTP method + endpoint it
-triggers so a backend developer can map each control to an API call:
+triggers so a backend developer can map each control to an API call. **All
+of the following are live** (`docs/modules/03_EMPLOYEE_MASTER.md` §4.5):
 
-- `GET /api/employees` (row-scoped) · `GET /api/employees/:id` ·
-  `GET /api/employees/org-chart` · `POST /api/employees` (HR/Admin) ·
-  `PATCH /api/employees/:id` (HR/Admin) ·
+- `GET /api/employees` (row-scoped, Line Manager = recursive subtree) ·
+  `GET /api/employees/:id` (ciphertext stripped, masked fields only) ·
+  `GET /api/employees/org-chart` (rooted per role) ·
+  `POST /api/employees` (HR/Admin) ·
+  `PATCH /api/employees/:id` (any — self-only + whitelisted for Employee,
+  full set for HR/Admin, 403 for Line Manager/Auditor) ·
+  `PATCH /api/employees/:id/lifecycle` (HR/Admin) ·
+  `PATCH /api/employees/:id/sensitive-fields` (HR/Admin) ·
+  `POST /api/employees/:id/reveal` (HR/Admin/Auditor) ·
+  `GET`/`POST`/`PATCH`/`DELETE /api/employees/:id/emergency-contacts[/:contactId]`
+  (read: row-scoped; write: self or HR/Admin) ·
   `POST /api/employees/bulk-import` (HR/Admin) ·
-  `GET /api/employees/:id/documents` ·
-  `POST /api/employees/:id/documents?label=` (multipart) ·
-  `GET /api/documents/:id/download-url` (5-min presigned) ·
-  `GET /api/departments` · `POST /api/departments` (HR/Admin).
-- `TODO(api)` for: emergency contacts CRUD, document delete + category,
-  statutory/bank/comp fields + masked-reveal audit, lifecycle-date fields,
-  department edit/delete/hierarchy, org-chart export, bulk "draft".
+  `GET /api/employees/:id/documents` (row-scoped) ·
+  `POST /api/employees/:id/documents?label=&category=` (multipart; HR/Admin
+  any employee, Employee own only) ·
+  `GET /api/documents/:id/download-url` (row-scoped, 5-min presigned) ·
+  `PATCH /api/documents/:id/category` · `DELETE /api/documents/:id`
+  (both HR/Admin) ·
+  `GET`/`POST`/`PATCH`/`DELETE /api/departments[/:id]` (write: HR/Admin).
+- **Genuinely not built, don't wire:** org-chart PNG/PDF export;
+  BU→Dept→Team hierarchy (no `parentDepartmentId` — not planned for V1);
+  bulk-import "save as draft".
 
 ## 9. Deliverable & file layout
 
 ```
 apps/web/src/pages/employees/
   list.tsx        # Directory: stat tiles, filters, bulk bar, table
-  detail.tsx      # Header + 7 internal tabs
+  detail.tsx      # Header banner + 7 internal tabs      [done]
   create.tsx      # Sectioned Add Employee form
-  import.tsx      # Bulk import (template / preview / result)  [new]
+  import.tsx      # Bulk import (template / result)     [already live]
   components/     # employee-quick-view.tsx, section-edit-dialog.tsx,
                   # lifecycle-dialog.tsx, emergency-contact-form.tsx,
-                  # document-list.tsx, masked-field.tsx
-apps/web/src/pages/departments.tsx
-apps/web/src/pages/org-chart.tsx   # tree, search, zoom, focus, export
+                  # document-list.tsx, masked-field.tsx  [not yet split
+                  # out — detail.tsx/list.tsx keep every dialog inline
+                  # today; extracting is a nice-to-have, not required]
+apps/web/src/pages/departments.tsx   # edit/delete already live
+apps/web/src/pages/org-chart.tsx   # tree, search, zoom, focus, export —
+                                     # rooting-per-role is live; the
+                                     # interactivity (search/zoom/focus) and
+                                     # PNG/PDF export are the redesign's job
 ```
 
 Constraints recap: React 19 + TS strict (no enums), Tailwind v4 tokens only,
 hand-rolled `components/ui` primitives (no Radix), `api.*` for data + raw
 `fetch` for uploads, role-gated screens, masked sensitive fields with logged
 reveal, Aadhaar last-4 only, every state explicit, all overlays rendered
-together.
+together. **This is a visual/UX redesign against a fully real backend** —
+every endpoint annotated in §8 is live; nothing here should be built as a
+stub or a fixture unless §8 explicitly says so.

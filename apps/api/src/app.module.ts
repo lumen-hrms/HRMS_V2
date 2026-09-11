@@ -5,6 +5,7 @@ import { HealthController } from './health.controller';
 import { PrismaModule } from './prisma/prisma.module';
 import { FirebaseModule } from './firebase/firebase.module';
 import { StorageModule } from './storage/storage.module';
+import { CryptoModule } from './crypto/crypto.module';
 import { TenantResolutionMiddleware } from './common/tenancy/tenant-resolution.middleware';
 import { AuthModule } from './auth/auth.module';
 import { AccessModule } from './access/access.module';
@@ -24,6 +25,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     PrismaModule,
     FirebaseModule,
     StorageModule,
+    CryptoModule,
     AuthModule,
     AccessModule,
     PlatformAdminModule,

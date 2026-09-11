@@ -128,6 +128,21 @@ export function TenantDetailPage() {
     }
   }
 
+  async function resendAdminReset() {
+    setBusy(true);
+    try {
+      const { email } = await platformApi.resendAdminReset(tenant!.id);
+      toast({ title: 'Reset email re-sent', description: email });
+    } catch (e) {
+      toast({
+        title: isPlatformApiError(e) ? e.message : 'Could not send the reset email — retry',
+        tone: 'error',
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
@@ -218,6 +233,15 @@ export function TenantDetailPage() {
               }
             />
           </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-3"
+            disabled={busy}
+            onClick={resendAdminReset}
+          >
+            Resend admin password-reset email
+          </Button>
           <p className="mt-4 text-xs text-muted-foreground">
             Headcount trend (`headcountHistory`) and the seeded admin email are TODO(api) — this
             console shows counts and metadata only, never employee names.

@@ -21,10 +21,62 @@
 > spec draft that is no longer maintained — ignore them; this file and the
 > code are the source of truth.)
 >
-> **Last synced to code:** 2026-09-09 — branch `dev` @ `2000bd5` (PRs #4
-> `platform-admin` + #5 `leave-management-module` merged). Landed since the
-> previous sync:
+> **Last synced to code:** 2026-09-11. Landed since the previous sync
+> (2026-09-09 @ `2000bd5`):
 >
+> - **Employee Master — lifecycle state machine.** `EmployeeLifecycleState`
+>   (`PRE_JOINING/PROBATION/CONFIRMED/NOTICE_PERIOD/SUSPENDED/SEPARATED`)
+>   replaces the old `employmentStatus` enum (migration
+>   `20260911100000_employee_lifecycle_state`, backfilling existing rows);
+>   `PATCH /api/employees/:id/lifecycle` validates the move against the
+>   allowed-transition graph, writes the one date field the edge requires,
+>   and — for `SEPARATED` — disables the linked login (module 01's
+>   Firebase-disable sequence, run *before* the DB write) before writing an
+>   `audit_log` row. Frontend: the employee detail page's **Change status**
+>   dialog. Both this migration and the next were **applied to the shared
+>   Supabase dev DB** via `./scripts/dev.sh migrate`.
+> - **Employee Master reaches 97%.** Migration
+>   `20260911120000_employee_full_field_set` adds the rest of the target
+>   field set: identity/personal extras, employment extras,
+>   compensation-adjacent, statutory + bank. PAN
+>   and the bank account number are AES-256-GCM field-encrypted
+>   (`FieldEncryptionService`, `apps/api/src/crypto` — the app-layer half of
+>   CLAUDE.md's KMS non-negotiable; a real AWS KMS-wrapped key is a later
+>   swap) with a dedicated `PATCH .../sensitive-fields` write path and a
+>   logged `POST .../reveal`. New: emergency-contact CRUD; document MIME/size
+>   enforcement moved server-side plus `category` + delete; department
+>   `PATCH`/`DELETE` (RULE-6 reassign guard); the org chart now roots per
+>   role (Line Manager's recursive-subtree scoping resolves a long-open
+>   question, via an in-memory cycle-safe BFS — not yet mirrored in modules
+>   04/05). Also fixed: the Employee self-edit path was documented as a
+>   target but the endpoint was actually Admin/HR-only until now; two IDOR
+>   gaps on the document list/download-url routes; emergency-contact writes
+>   previously checked only row *visibility*, which let a Line Manager edit
+>   a report's contacts, not just view them.
+> - **Employee Master — visual redesign (UI-only, no API changes).**
+>   `apps/web/src/pages/employees/detail.tsx` now renders the target
+>   header-banner + 7-internal-tabs layout (`docs/ui-build-prompts/
+>   03-employee-master.md` §5.2) instead of stacked cards;
+>   `list.tsx` gained the target stat-tile row + search/department/
+>   lifecycle filters (§5.1). `org-chart.tsx` was **not** touched — its
+>   search/expand/zoom interactivity gap is unchanged.
+> - **Platform Admin — reset-email failure is now surfaced, not silently
+>   swallowed.** `seedCompanyAdmin()` returns whether the hosted
+>   password-reset email actually sent; `createTenant`'s response carries
+>   `adminResetEmailSent`, and the New Tenant wizard's success toast used to
+>   unconditionally claim "link sent" even when the send failed — it now
+>   only claims that when true, and shows an error toast + points at the
+>   new `POST /platform-admin/tenants/:id/resend-admin-reset` otherwise. A
+>   **Resend admin password-reset email** button was also added to the
+>   tenant detail page's Overview tab for later use (not just at creation
+>   time). The underlying send call itself (Firebase's `sendOobCode` REST
+>   endpoint) is unchanged — this only fixes the console lying about the
+>   outcome.
+> - **Leave Management reaches 100%** — the last gap (frontend defaulting to
+>   the mock) is closed: `apps/web/src/lib/leave/client.ts`'s `USE_MOCK` now
+>   defaults to **off** (`=== 'true'` to force it), matching
+>   `access/client.ts`'s pattern, so a fresh checkout runs against the real
+>   API without any env var changes.
 > - **Identity & Access backend** — the `access` module (`/api/access/*`:
 >   `users` · `me` · `PATCH .../role` · `PATCH .../status` ·
 >   `POST .../password-reset` · `GET .../audit` · `.../:id/activity`) with
@@ -78,8 +130,8 @@
 |---|---|---|
 | 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ | `███████████████████░` 97% — auth/RBAC/tenancy live; `access` module wired (Users, role/status/reset, login+access audit, My Account) with e2e RBAC + append-only tests; `LoginAuditEntry` table written on every session outcome. Remaining: `BAD_CREDENTIALS`/`TENANT_SUSPENDED` not server-observable (§1 gaps) |
 | 2. Platform Admin | ✅ | `███████████████████░` 96% — full operator console UI (tenants list, new-tenant wizard, tenant detail tabs, **Plans catalog**, audit screen); onboarding emails a hosted reset link; **operator-editable `platform.plans`** (per-seat list price / default seats / modules / features / isolation tier) with snapshot-at-assign + re-snapshot-on-renewal; **per-tenant negotiated per-seat rate** (`PATCH .../pricing`; monthly = rate × seats, computed); `PATCH .../plan` + `POST .../renew` live; `PlatformAuditLog` written for create / status / plan-change / renewal / price-adjust / plan-edit. Pending: audit *read* API, `GET tenants/:id`, refresh-headcount route, scheduled renewal job, break-glass |
-| 3. Employee Master + Org Structure | 🟡 | `█████████████████░░░` 85% |
-| 4. Leave Management | ✅ | `███████████████████░` 98% — backend fully wired & tested; FE live path built and working against the real API; `allowLopRequests`/`minNoticeDays`/`fyStartMonth`/`genderRestriction`/`requiresApproval` all enforced/settable; mid-year-joiner proration; comp-off credit on holiday/weekly-off clock-in; approved leave reconciles into `AttendanceRecord.ON_LEAVE`. **Last step:** `apps/web` still defaults to the Leave **mock** (`client.ts`: `VITE_LEAVE_MOCK` unset ⇒ mock) — flip the default or add `VITE_LEAVE_MOCK=false` to `apps/web/.env` |
+| 3. Employee Master + Org Structure | 🟡 | `███████████████████░` 97% — lifecycle state machine, the full field set (statutory/bank via KMS-style AES-256-GCM encryption, emergency contacts, comp-adjacent fields), bulk-import UI, document hardening, and department edit/delete-with-reassign are all live. Only org-chart search/expand/zoom polish and the deliberately-deferred BU→Team hierarchy remain |
+| 4. Leave Management | ✅ | `████████████████████` 100% — backend fully wired & tested; FE live path built and running against the real API by default (`client.ts`'s `USE_MOCK` now defaults to **off**, matching `access/client.ts` — set `VITE_LEAVE_MOCK=true` to force the fixture store); `allowLopRequests`/`minNoticeDays`/`fyStartMonth`/`genderRestriction`/`requiresApproval` all enforced/settable; mid-year-joiner proration; comp-off credit on holiday/weekly-off clock-in; approved leave reconciles into `AttendanceRecord.ON_LEAVE` |
 | 5. Attendance & Time Tracking | 🟡 | `███████████░░░░░░░░░░` 55% |
 | 6. Dashboard | ✅ | `█████████████████░░░` 85% |
 | 7. Payroll Engine | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
@@ -249,7 +301,7 @@ future logged, time-boxed break-glass flow, not a standing grant.
 | Feature | V1 status |
 |---|---|
 | Platform-admin login (separate from tenant login) | ✅ Firebase, `type: platform_admin` claim, `PlatformJwtAuthGuard` |
-| Create tenant (name, subdomain, plan, seats, negotiated per-seat rate, first admin name+email) | ✅ `createTenant()` — creates `Tenant` + `Subscription` (seat count + per-seat rate per plan default or deal override), seeds the Company Admin via the `hrms_app` connection with a **random password + a hosted password-reset email** (no operator-typed password); rolls back the tenant row if seeding fails |
+| Create tenant (name, subdomain, plan, seats, negotiated per-seat rate, first admin name+email) | ✅ `createTenant()` — creates `Tenant` + `Subscription` (seat count + per-seat rate per plan default or deal override), seeds the Company Admin via the `hrms_app` connection with a **random password + a hosted password-reset email** (no operator-typed password); rolls back the tenant row if seeding fails. The reset-email send is non-fatal (the tenant is still created if it fails) and the response now carries `adminResetEmailSent: boolean` so the wizard doesn't lie about the outcome — a resend action exists (`POST .../resend-admin-reset`) for when it's `false` |
 | List tenants with subscription info | ✅ |
 | Enable / suspend / set trial | ✅ `PATCH .../status` — `SUSPENDED` locks out every user of that tenant immediately at the resolution layer; carries an audit `reason` |
 | Denormalized employee headcount per tenant | ✅ `refreshHeadcount()` writes `platform.tenants.employeeCount` (on-demand internal call; the `POST .../refresh-headcount` route is TODO) |
@@ -280,7 +332,8 @@ future logged, time-boxed break-glass flow, not a standing grant.
 |---|---|---|---|
 | `POST` | `/api/platform-admin/auth/session` | public | ✅ |
 | `GET` | `/api/platform-admin/tenants` | `PlatformJwtAuthGuard` | ✅ |
-| `POST` | `/api/platform-admin/tenants` | `PlatformJwtAuthGuard` | ✅ body `{companyName, subdomain, adminEmail, adminName, plan?, seats?, pricePerSeat?}` — `pricePerSeat` omitted → plan list price; sends the admin a reset link; writes `tenant.created` |
+| `POST` | `/api/platform-admin/tenants` | `PlatformJwtAuthGuard` | ✅ body `{companyName, subdomain, adminEmail, adminName, plan?, seats?, pricePerSeat?}` — `pricePerSeat` omitted → plan list price; sends the admin a reset link (non-fatal — response includes `adminResetEmailSent`); writes `tenant.created` |
+| `POST` | `/api/platform-admin/tenants/:id/resend-admin-reset` | `PlatformJwtAuthGuard` | ✅ re-fires the tenant's Company Admin's hosted reset email; 400s if the tenant has no Company Admin, propagates the identity-provider error otherwise (no swallowing, unlike the create-time send) |
 | `PATCH` | `/api/platform-admin/tenants/:id/status` | `PlatformJwtAuthGuard` | ✅ body `{status, reason?}`; writes `tenant.status_changed` |
 | `PATCH` | `/api/platform-admin/tenants/:id/plan` | `PlatformJwtAuthGuard` | ✅ body `{plan, reason}`; re-snapshots the plan onto the Subscription, resets per-seat rate to the new plan's list price; writes `tenant.plan_changed` |
 | `PATCH` | `/api/platform-admin/tenants/:id/pricing` | `PlatformJwtAuthGuard` | ✅ body `{pricePerSeat?, seats?, reason}` (≥1 of price/seats); adjusts negotiated commercials, no plan change; writes `subscription.price_adjusted` |
@@ -317,8 +370,14 @@ future logged, time-boxed break-glass flow, not a standing grant.
 
 **Deep spec:** `docs/modules/03_EMPLOYEE_MASTER.md` ·
 **UI prompt:** `docs/ui-build-prompts/03-employee-master.md`
-**Status:** 🟡
-**Code:** `apps/api/src/employees`, `apps/web/src/pages/employees`,
+**Status:** 🟡 97% — full field set (statutory/bank via app-layer AES-256-GCM
+encryption, emergency contacts, comp-adjacent fields), lifecycle state
+machine, bulk-import UI, document hardening (MIME/size server-side, category,
+delete), department edit/delete-with-reassign, and org chart rooted per role
+are all live. Only org-chart search/expand/zoom polish and the
+deliberately-deferred BU→Team hierarchy remain.
+**Code:** `apps/api/src/employees`, `apps/api/src/crypto`
+(`FieldEncryptionService`), `apps/web/src/pages/employees`,
 `apps/web/src/pages/org-chart.tsx`, `apps/web/src/pages/departments.tsx`
 
 ### Expectation
@@ -334,16 +393,16 @@ must validate and report per-row rather than fail the batch.
 
 | Feature | SRS | V1 status |
 |---|---|---|
-| Employee CRUD — personal + employment fields | FR-EMP-001/002 | ✅ |
-| Bank account details for disbursement (a/c, IFSC, bank, type) | FR-EMP-003 | 🟡 fields present; **KMS field encryption not yet applied** |
-| Emergency contact (name, relationship, phone, address) | FR-EMP-004 | ✅ |
-| Document upload (PDF/JPG/PNG, ≤10MB) — offer letter, IDs, certs | FR-EMP-005 | 🟡 upload/list/download work; **MIME + size validation to confirm** (see §9) |
-| Employee lifecycle states | FR-EMP-007 | 🟡 `EmploymentStatus` enum exists; SRS wants Pre-Joining / Probation / Confirmed / Notice / Separated — **verify enum matches** |
-| Bulk import via Excel template + error report | FR-EMP-009 | 🟡 **API-only** (`POST /employees/bulk-import`); no frontend screen |
-| Multi-level hierarchy (Company → BU → Dept → Team) | FR-ORG-001 | 🟡 Department + self-referential `reportingManagerId` only; no BU/Team levels |
-| Interactive org chart — reporting lines, expand, search | FR-ORG-002 | 🟡 tree built in memory + rendered; search/expand polish TBD |
+| Employee CRUD — personal + employment fields | FR-EMP-001/002 | ✅ full field set: identity/personal, employment, compensation-adjacent |
+| Bank account details for disbursement (a/c, IFSC, bank, type) | FR-EMP-003 | ✅ `bankAccountNumber` AES-256-GCM encrypted (`FieldEncryptionService`), masked by default, logged reveal |
+| Emergency contact (name, relationship, phone, address) | FR-EMP-004 | ✅ full CRUD, RULE-5 primary-swap |
+| Document upload (PDF/JPG/PNG, ≤10MB) — offer letter, IDs, certs | FR-EMP-005 | ✅ MIME allow-list + size cap enforced server-side; category + delete added |
+| Employee lifecycle states | FR-EMP-007 | ✅ `EmployeeLifecycleState` (`PRE_JOINING/PROBATION/CONFIRMED/NOTICE_PERIOD/SUSPENDED/SEPARATED`) matches the SRS set; `PATCH /employees/:id/lifecycle` validates transitions, `SEPARATED` disables the linked login |
+| Bulk import via Excel template + error report | FR-EMP-009 | ✅ API + frontend (`apps/web/src/pages/employees/import.tsx`) |
+| Multi-level hierarchy (Company → BU → Dept → Team) | FR-ORG-001 | 🟡 Department (now with `code`/`headEmployeeId`, edit/delete-with-reassign) + self-referential `reportingManagerId`; BU/Team levels **deliberately deferred** — flat hierarchy decided sufficient for V1 |
+| Interactive org chart — reporting lines, expand, search | FR-ORG-002 | 🟡 tree rooted per role (recursive subtree for Employee/Line Manager); expand/search/zoom **not built** — plain nested list today |
 | Multiple reporting lines (solid + dotted) | FR-ORG-003 | 🔴 single `reportingManagerId` only |
-| Org chart export PDF/PNG | FR-ORG-004 | 🔴 |
+| Org chart export PDF/PNG | FR-ORG-004 | 🔴 explicitly deferred |
 | No-code custom field builder | FR-EMP-008 | 🔴 deferred |
 
 ### Happy path (HR adds an employee)
@@ -363,36 +422,51 @@ must validate and report per-row rather than fail the batch.
 
 ### Happy path (bulk import)
 
-1. HR downloads the `.xlsx` template (columns incl.
-   `employeeCode`, `firstName`, `lastName` required).
-2. `POST /api/employees/bulk-import` (multipart `file`).
+1. HR → **Employees → Bulk import** → downloads the `.csv` template
+   (`employeeCode`, `firstName`, `lastName` required; `personalEmail`,
+   `phone`, `designation` optional).
+2. Uploads the file → `POST /api/employees/bulk-import` (multipart `file`).
 3. Server parses with `exceljs`, inserts row-by-row, returns
-   `[{ row, status: 'ok' | 'error', message }]`.
+   `[{ row, status: 'ok' | 'error', message }]`; the UI shows a per-row
+   result table and offers a failed-rows download.
 4. HR fixes the flagged rows and re-uploads only those.
 
 ### Functionalities / API
 
 | Method | Path | Roles |
 |---|---|---|
-| `GET` | `/api/employees` | any (row-scoped by `scopeFor`) |
+| `GET` | `/api/employees` | any (row-scoped; Line Manager = full recursive subtree) |
 | `GET` | `/api/employees/:id` | any (row-scoped) |
-| `GET` | `/api/employees/org-chart` | Admin / HR / Line Manager / Auditor |
+| `GET` | `/api/employees/org-chart` | Admin / HR / Line Manager / Auditor / Employee — rooted per role |
 | `POST` | `/api/employees` | Company Admin, HR Manager |
-| `PATCH` | `/api/employees/:id` | Company Admin, HR Manager |
+| `PATCH` | `/api/employees/:id` | any — Admin/HR full field set; Employee self-only + RULE-1 whitelist; Line Manager/Auditor 403 |
+| `PATCH` | `/api/employees/:id/sensitive-fields` | Company Admin, HR Manager |
+| `POST` | `/api/employees/:id/reveal` | Company Admin, HR Manager, Auditor |
+| `GET`/`POST`/`PATCH`/`DELETE` | `/api/employees/:id/emergency-contacts[/:contactId]` | read: row-scoped · write: self or Admin/HR |
 | `POST` | `/api/employees/bulk-import` | Company Admin, HR Manager |
-| `GET` | `/api/employees/:id/documents` | any (tenant) |
-| `POST` | `/api/employees/:id/documents` | Company Admin, HR Manager |
-| `GET` | `/api/documents/:id/download-url` | any (tenant) — 5-min presigned URL |
-| `GET` / `POST` | `/api/departments` | list: any · create: Admin / HR |
+| `GET` | `/api/employees/:id/documents` | row-scoped |
+| `POST` | `/api/employees/:id/documents` | Admin/HR (any) or Employee (own only) |
+| `GET` | `/api/documents/:id/download-url` | row-scoped — 5-min presigned URL |
+| `PATCH` | `/api/documents/:id/category` · `DELETE /api/documents/:id` | Company Admin, HR Manager |
+| `GET` / `POST` / `PATCH` / `DELETE` | `/api/departments[/:id]` | list: any · write: Admin / HR |
 
 ### Known gaps / TODO
 
-- Frontend for bulk import (upload, template download, error table).
-- Apply KMS field encryption to PAN + bank account before real data.
-- Confirm `EmploymentStatus` covers all five SRS lifecycle states + add
-  the transitions (e.g. Notice → Separated triggers FnF later).
-- Document upload: enforce MIME allow-list + 10MB cap at the controller.
-- Decide whether BU/Team hierarchy levels are V1 or deferred.
+- Org chart search/expand/zoom + click-to-drawer quick view — the tree is
+  correctly rooted per role but renders as a plain nested list.
+- `photoUrl` is a settable URL, not an image-upload widget.
+- Reveal reason is collected via `window.prompt`, not a target confirm
+  modal (functionally complete either way).
+- The Line-Manager recursive-subtree decision (§4.1 of the deep spec) has
+  not yet been mirrored in modules 04 (Leave) or 05 (Attendance).
+
+**Closed:** lifecycle state machine; the full field set (identity/personal
+extras, employment extras, compensation-adjacent, statutory + bank with
+AES-256-GCM field encryption and a masked-reveal endpoint); emergency
+contacts; document MIME/size hardening + category + delete; bulk-import
+frontend; department edit/delete-with-reassign; org chart rooted per role;
+and the Employee self-edit path (documented as a target before this pass
+but never actually wired — the endpoint was Admin/HR-only).
 
 ---
 
@@ -401,14 +475,13 @@ must validate and report per-row rather than fail the batch.
 **Deep spec:** `docs/modules/04_LEAVE_MANAGEMENT.md` ·
 **UI prompt:** `docs/ui-build-prompts/04-leave-management.md` ·
 **API contract:** `docs/LEAVE_UI_SPECS.md`
-**Status:** ✅ — backend fully wired, tested, and serving the real API;
-the frontend live path is built and works against it; every
-originally-tracked feature gap is closed. **One flip remains:**
-`apps/web/src/lib/leave/client.ts` computes `USE_MOCK =
-import.meta.env.VITE_LEAVE_MOCK !== 'false'`, so with the var **unset**
-(it's not in `apps/web/.env`) a fresh checkout still renders the Leave
-**mock**. Set `VITE_LEAVE_MOCK=false` (or invert the default like
-`access/client.ts` does) to run live.
+**Status:** ✅ 100% — backend fully wired, tested, and serving the real API;
+the frontend live path is built and runs against it by default; every
+originally-tracked feature gap is closed, including the mock-default flip:
+`apps/web/src/lib/leave/client.ts`'s `USE_MOCK` now reads
+`import.meta.env.VITE_LEAVE_MOCK === 'true'` (inverted default, matching
+`access/client.ts`), so a fresh checkout with no env var set renders the
+real API, not the fixture store.
 `TenantSettings.allowLopRequests`/`fyStartMonth` and
 `LeaveType.minNoticeDays`/`genderRestriction`/`requiresApproval` are all
 enforced/settable, the accrual job prorates a new joiner's first period,
@@ -420,8 +493,8 @@ note under "Known gaps" below. See `docs/LEAVE_UI_SPECS.md`.
 **Code:** `apps/api/src/leave` (service/controller + `leave-escalation.processor.ts` /
 `leave-accrual.processor.ts` on a new BullMQ `leave` queue — see `docker-compose.yml`'s
 `redis` service), `apps/web/src/pages/leave`, `apps/web/src/lib/leave` (typed
-client + fixture/mock layer — `VITE_LEAVE_MOCK=false` switches to live;
-**currently defaults to mock** since the var is unset)
+client + fixture/mock layer — **defaults to live**; `VITE_LEAVE_MOCK=true`
+forces the mock)
 
 ### Expectation
 
@@ -496,16 +569,13 @@ attendance and flag LOP when the balance is short.
 
 ### Known gaps / TODO
 
-All originally-tracked feature gaps are closed. What remains:
+All originally-tracked feature gaps are closed, including the mock-default
+flip: `apps/web/src/lib/leave/client.ts`'s `USE_MOCK` now reads
+`import.meta.env.VITE_LEAVE_MOCK === 'true'` (inverted default, matching
+`access/client.ts`), so a plain `npm run dev` / build runs against the live
+API by default — set `VITE_LEAVE_MOCK=true` to force the fixture store.
 
-- **Frontend still defaults to the mock.** `apps/web/src/lib/leave/client.ts`:
-  `USE_MOCK = import.meta.env.VITE_LEAVE_MOCK !== 'false'`, and the var is
-  set nowhere (`apps/web/.env` only carries `VITE_FIREBASE_*`). Either add
-  `VITE_LEAVE_MOCK=false` to `apps/web/.env` or invert the default to match
-  `access/client.ts` (`=== 'true'`). Until then a plain `npm run dev` /
-  build shows fixture data, not the live API.
-
-The rest is a scope note, not a gap:
+What follows is a scope note, not a gap:
 
 - Comp-off crediting and leave→attendance reconciliation are
   **synchronous** — comp-off checks the day at clock-in time, attendance

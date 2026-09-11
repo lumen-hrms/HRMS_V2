@@ -144,7 +144,12 @@ only" (Employee) — those can't be expressed as a static role check alone.
   DB role has no `UPDATE`/`DELETE` grant on it.
 - PII fields (PAN, bank account) get application-layer encryption via a
   KMS data key on top of RDS/S3 encryption-at-rest — a raw DB dump alone
-  should not be enough to read them.
+  should not be enough to read them. **Built** (module 03):
+  `FieldEncryptionService` (`apps/api/src/crypto`) does AES-256-GCM with a
+  key from `FIELD_ENCRYPTION_KEY`; only ciphertext + a masked form are
+  stored, reveal is permissioned + logged. The key today is a static team-
+  vault secret, not yet a real AWS KMS-wrapped data key — that swap lands
+  with the production AWS migration and only touches that one file.
 - No blanket "PII must stay in India" legal claim — DPDP Act 2023 doesn't
   currently mandate that; hosting in Mumbai is a trust/latency choice, not
   a compliance requirement. Don't market it as the latter.
@@ -182,9 +187,10 @@ escalation timers (BullMQ `leave` queue / Redis — first use of BullMQ in
 this repo), a monthly/quarterly accrual job (proration-aware for mid-year
 joiners), and every endpoint (team balances, balance adjustments, ledger,
 settings). Every cell of the frontend's role×tab matrix is wired to
-`apps/web/src/lib/leave`, and `apps/web/.env` sets `VITE_LEAVE_MOCK=false`
-(`LeaveService` maps every response into the frontend's denormalized
-contract itself). `TenantSettings.allowLopRequests`/`fyStartMonth`,
+`apps/web/src/lib/leave`, whose `client.ts` defaults `USE_MOCK` to **off**
+(`VITE_LEAVE_MOCK === 'true'` forces the fixture store — same inverted-default
+pattern as `access/client.ts`; `LeaveService` maps every response into the
+frontend's denormalized contract itself). `TenantSettings.allowLopRequests`/`fyStartMonth`,
 `LeaveType.minNoticeDays`/`genderRestriction`/`requiresApproval` are all
 enforced/settable (gender check fails open on unrecognized
 `Employee.gender` — free-text field, no schema enum). Two features closed
@@ -239,6 +245,40 @@ cosmetic / internal and moves no module's state, no status edit is needed;
 say so briefly rather than silently skipping. If you're unsure which
 module a change belongs to, pick the closest and note the ambiguity in the
 commit message rather than skipping the update.
+
+## Tests are part of the feature — MANDATORY, no reminder needed
+
+**This rule is always in force, same standing as the status-sync rule
+above:** a module or feature is not "done" until it has tests, and an
+existing feature whose behavior changes must have its tests updated in the
+**same change** that changes the behavior — never a follow-up.
+
+1. **New backend logic** (a service method, a new endpoint, a state
+   machine, an authorization check) gets a unit test in the same PR/commit
+   — see `apps/api/src/employees/employees.service.spec.ts` for the
+   pattern (a small hand-built fake of the `TenantPrismaService`/
+   `FieldEncryptionService`/Firebase surface the service touches, not a
+   real DB). Cover the happy path, the rejection paths (bad input, wrong
+   role, wrong tenant), and any invariant the code claims to hold (e.g.
+   "never leaves partial state on failure" needs a test that forces the
+   failure and asserts nothing wrote).
+2. **A changed authorization rule or permission matrix cell** (who can call
+   what, row-scoping, a 403 path) always gets a test — these are exactly
+   the bugs that don't show up by clicking around, per the adversarial
+   tenant-isolation precedent in `CLAUDE.md`'s multi-tenancy section.
+3. **Before calling a change finished, actually run the suite** —
+   `npm run test:api` (or the project's `./scripts/dev.sh test` for the
+   full local gate: unit + e2e + lint + build) — don't assume new tests
+   pass from reading them.
+4. **Before ending a turn that touched frontend code, run what CI runs** —
+   `npm run build` (`tsc -b && vite build` for the web app) and
+   `npm run lint` from the repo root, not just `vite build` alone, which
+   skips the project's type-check step and misses exactly the class of
+   error (unused imports, a field missing from a hand-written interface)
+   that only shows up under `tsc -b`.
+5. **If a change is purely cosmetic/internal and adds no new logic**
+   (e.g. a copy change, a class-name tweak), no new test is needed — say
+   so briefly rather than silently skipping, same as the status-sync rule.
 
 ## Project structure
 

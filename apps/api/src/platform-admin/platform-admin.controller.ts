@@ -44,6 +44,12 @@ export class PlatformAdminController {
   }
 
   @UseGuards(PlatformJwtAuthGuard)
+  @Post('tenants/:id/resend-admin-reset')
+  resendAdminReset(@Param('id') id: string) {
+    return this.service.resendAdminReset(id);
+  }
+
+  @UseGuards(PlatformJwtAuthGuard)
   @Patch('tenants/:id/status')
   updateStatus(
     @Param('id') id: string,

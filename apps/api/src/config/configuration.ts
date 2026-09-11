@@ -29,6 +29,18 @@ export interface AppConfig {
   redis: {
     url: string;
   };
+  encryption: {
+    /**
+     * The application-layer "KMS data key" for PII field encryption (PAN,
+     * bank account — CLAUDE.md's security non-negotiable). A base64-encoded
+     * 32-byte AES-256 key. Today this is a static secret from the team
+     * vault, same tier as the DB/Firebase credentials; when the production
+     * AWS deployment lands (CLAUDE.md's Stack table), swap the source for a
+     * real AWS KMS-wrapped data key without touching FieldEncryptionService's
+     * interface — only where the key comes from changes.
+     */
+    fieldKeyBase64?: string;
+  };
 }
 
 export default (): AppConfig => ({
@@ -54,5 +66,8 @@ export default (): AppConfig => ({
   },
   redis: {
     url: process.env.REDIS_URL ?? 'redis://localhost:6379',
+  },
+  encryption: {
+    fieldKeyBase64: process.env.FIELD_ENCRYPTION_KEY,
   },
 });
