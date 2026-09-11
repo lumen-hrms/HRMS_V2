@@ -3,7 +3,7 @@ import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { api, isApiError } from '@/lib/api';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input, Label } from '@/components/ui/input';
+import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader } from '@/components/ui/dialog';
 import { Field } from '@/components/ui/field';

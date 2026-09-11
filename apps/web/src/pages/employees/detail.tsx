@@ -90,6 +90,7 @@ interface EmployeeDetail {
   maritalStatus: string | null;
   bloodGroup: string | null;
   nationality: string | null;
+  photoUrl: string | null;
   employmentType: string | null;
   workLocation: string | null;
   ctcAnnual: string | null;

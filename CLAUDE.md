@@ -246,6 +246,40 @@ say so briefly rather than silently skipping. If you're unsure which
 module a change belongs to, pick the closest and note the ambiguity in the
 commit message rather than skipping the update.
 
+## Tests are part of the feature — MANDATORY, no reminder needed
+
+**This rule is always in force, same standing as the status-sync rule
+above:** a module or feature is not "done" until it has tests, and an
+existing feature whose behavior changes must have its tests updated in the
+**same change** that changes the behavior — never a follow-up.
+
+1. **New backend logic** (a service method, a new endpoint, a state
+   machine, an authorization check) gets a unit test in the same PR/commit
+   — see `apps/api/src/employees/employees.service.spec.ts` for the
+   pattern (a small hand-built fake of the `TenantPrismaService`/
+   `FieldEncryptionService`/Firebase surface the service touches, not a
+   real DB). Cover the happy path, the rejection paths (bad input, wrong
+   role, wrong tenant), and any invariant the code claims to hold (e.g.
+   "never leaves partial state on failure" needs a test that forces the
+   failure and asserts nothing wrote).
+2. **A changed authorization rule or permission matrix cell** (who can call
+   what, row-scoping, a 403 path) always gets a test — these are exactly
+   the bugs that don't show up by clicking around, per the adversarial
+   tenant-isolation precedent in `CLAUDE.md`'s multi-tenancy section.
+3. **Before calling a change finished, actually run the suite** —
+   `npm run test:api` (or the project's `./scripts/dev.sh test` for the
+   full local gate: unit + e2e + lint + build) — don't assume new tests
+   pass from reading them.
+4. **Before ending a turn that touched frontend code, run what CI runs** —
+   `npm run build` (`tsc -b && vite build` for the web app) and
+   `npm run lint` from the repo root, not just `vite build` alone, which
+   skips the project's type-check step and misses exactly the class of
+   error (unused imports, a field missing from a hand-written interface)
+   that only shows up under `tsc -b`.
+5. **If a change is purely cosmetic/internal and adds no new logic**
+   (e.g. a copy change, a class-name tweak), no new test is needed — say
+   so briefly rather than silently skipping, same as the status-sync rule.
+
 ## Project structure
 
 ```
