@@ -33,8 +33,8 @@ criteria, open questions.
 | `modules/01_IDENTITY_AND_ACCESS.md` | Auth · RBAC · Multi-tenancy |
 | `modules/02_PLATFORM_ADMIN.md` | Operator console |
 | `modules/03_EMPLOYEE_MASTER.md` | Employee Master + Org Structure |
-| `modules/04_LEAVE_MANAGEMENT.md` | Leave Management *(pending)* |
-| `modules/05_ATTENDANCE.md` | Attendance & Time Tracking *(pending)* |
+| `modules/04_LEAVE_MANAGEMENT.md` | Leave Management |
+| `modules/05_ATTENDANCE.md` | Attendance & Time Tracking |
 | `modules/06_DASHBOARD.md` | Role-aware Dashboard *(pending)* |
 | `modules/07_PAYROLL_ENGINE.md` | Payroll Engine *(pending)* |
 | `modules/08_STATUTORY_COMPLIANCE.md` | Statutory Compliance *(pending)* |
@@ -64,8 +64,9 @@ render in visual sync.
 | `ui-build-prompts/02-platform-admin.md` | Operator console: tenants, onboarding wizard, tenant detail, audit, break-glass | Platform Admin (single persona) |
 | `ui-build-prompts/03-employee-master.md` | Directory, employee detail, add/bulk-import, departments, org chart | Employee · Line Manager · HR Manager · Company Admin · Auditor |
 | `ui-build-prompts/04-leave-management.md` | Overview, apply, approvals, team calendar/balances, leave types, ledger, holidays, settings | Employee · Line Manager · HR Manager · Company Admin · Auditor |
+| `ui-build-prompts/05-attendance.md` | Today (clock in/out, breaks), calendar, stats, regularisation, team roster, approvals, settings (shifts/guardrails) — team/approvals/settings screens are `TODO(api)` build targets | Employee · Line Manager · HR Manager · Company Admin · Auditor |
 
-*(Prompts for modules 05–13 are added as those modules are specced.)*
+*(Prompts for modules 06–13 are added as those modules are specced.)*
 
 ## Adding docs
 

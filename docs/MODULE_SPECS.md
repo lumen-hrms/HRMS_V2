@@ -398,7 +398,7 @@ must validate and report per-row rather than fail the batch.
 
 ## 4. Leave Management
 
-**Deep spec:** `docs/modules/04_LEAVE_MANAGEMENT.md` *(pending)* ·
+**Deep spec:** `docs/modules/04_LEAVE_MANAGEMENT.md` ·
 **UI prompt:** `docs/ui-build-prompts/04-leave-management.md` ·
 **API contract:** `docs/LEAVE_UI_SPECS.md`
 **Status:** ✅ — backend fully wired, tested, and serving the real API;
@@ -526,6 +526,8 @@ The rest is a scope note, not a gap:
 
 ## 5. Attendance & Time Tracking
 
+**Deep spec:** `docs/modules/05_ATTENDANCE.md` ·
+**UI prompt:** `docs/ui-build-prompts/05-attendance.md`
 **Status:** 🟡 — employee self-service only
 **Code:** `apps/api/src/attendance`, `apps/web/src/pages/attendance`
 
