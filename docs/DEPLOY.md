@@ -16,7 +16,7 @@ keeps the DB on Supabase and runs the API on a single free-tier EC2 box.
                          ┌─────────────────────────┐
                          │  AWS EC2 t3.micro        │   apps/api
                          │  Docker · port 80        │   `node dist/main.js`
-                         │  ap-northeast-1 (Tokyo)  │   restart=unless-stopped
+                         │  ap-south-1 (Mumbai)     │   restart=unless-stopped
                          └───────────┬─────────────┘
                                      │
              ┌───────────────────────┼───────────────────────┐
@@ -36,10 +36,15 @@ browser↔Vercel leg is HTTPS; Vercel↔EC2 is plain HTTP but server-side, so
 there's no browser mixed-content and no CORS. Fine for team testing — see
 "Optional: real TLS on the API" if you want to close that.
 
-The box sits in **ap-northeast-1 (Tokyo)** to be next to the Supabase
-project — every request does 2+ DB round-trips (`withTenantContext` sets
-the RLS var then queries). Real prod puts both compute and RDS in
-ap-south-1.
+The box runs in **ap-south-1 (Mumbai)** — matching the real prod target
+region (Stack table in `CLAUDE.md`) rather than sitting next to the
+Supabase project, which stays in ap-northeast-1 (Tokyo) regardless of
+where the EC2 box is. That means every request's 2+ DB round-trips
+(`withTenantContext` sets the RLS var then queries) cross region to
+Tokyo and back — noticeably slower than a same-region setup, but fine for
+team testing. If you want to remove that hop, launch the box in
+ap-northeast-1 instead (everything else in this guide is unchanged
+either way — only the EC2 region picked in §2a moves).
 
 ---
 
@@ -85,11 +90,13 @@ DATABASE_URL='postgresql://postgres.<REF>:<PW>@aws-0-ap-northeast-1.pooler.supab
 
 ### 2a. Launch the instance
 
-EC2 → Launch instance:
+EC2 → Launch instance. (Note: only the EC2 instance moves to Mumbai — the
+Supabase pooler hostnames below stay `aws-0-ap-northeast-1.pooler.supabase.com`
+regardless of EC2 region; that's the shared dev DB's actual location, not a typo.)
 
 | Setting | Value |
 |---|---|
-| Region | **ap-northeast-1** (Tokyo) |
+| Region | **ap-south-1** (Mumbai) |
 | AMI | Amazon Linux 2023 (x86_64) |
 | Type | **t3.micro** (free-tier eligible) |
 | Key pair | your SSH key |

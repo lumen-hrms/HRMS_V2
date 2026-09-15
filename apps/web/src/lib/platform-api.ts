@@ -121,6 +121,14 @@ export const platformApi = {
     return raw.patch<TenantRow>(`/tenants/${id}/pricing`, input);
   },
 
+  /** `GET /audit` — the platform audit log (docs/modules/02_PLATFORM_ADMIN.md §9, item 1). */
+  getAudit(params: { tenantId?: string; action?: string; from?: string; to?: string; q?: string }) {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v) as [string, string][],
+    ).toString();
+    return raw.get<PlatformAuditEntry[]>(`/audit${qs ? `?${qs}` : ''}`);
+  },
+
   // ---- TODO(api): endpoints not built yet — these will 404 until the
   //      backend catches up (docs/modules/02_PLATFORM_ADMIN.md §9). Screens
   //      call them and degrade gracefully.
@@ -133,14 +141,6 @@ export const platformApi = {
   /** TODO(api) `POST /tenants/:id/refresh-headcount` */
   refreshHeadcount(id: string) {
     return raw.post<{ employeeCount: number }>(`/tenants/${id}/refresh-headcount`);
-  },
-
-  /** TODO(api) `GET /audit` */
-  getAudit(params: { tenantId?: string; action?: string; from?: string; to?: string; q?: string }) {
-    const qs = new URLSearchParams(
-      Object.entries(params).filter(([, v]) => v) as [string, string][],
-    ).toString();
-    return raw.get<PlatformAuditEntry[]>(`/audit${qs ? `?${qs}` : ''}`);
   },
 
   /** TODO(api) `POST /tenants/:id/breakglass` */

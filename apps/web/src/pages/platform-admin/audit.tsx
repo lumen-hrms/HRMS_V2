@@ -121,8 +121,8 @@ export function PlatformAuditPage() {
         ) : notWired ? (
           <EmptyState
             icon={ScrollText}
-            title="Audit read endpoint not wired yet"
-            description="GET /api/platform-admin/audit is TODO(api). Rows ARE being written to platform_audit_log (tenant.created, tenant.status_changed) — only the read side is pending (docs/modules/02_PLATFORM_ADMIN.md §9)."
+            title="Couldn't load the audit log"
+            description="The request to GET /api/platform-admin/audit failed. Check the API is reachable and try again."
           />
         ) : rows.length === 0 ? (
           <EmptyState icon={ScrollText} title="No audit entries match these filters" />

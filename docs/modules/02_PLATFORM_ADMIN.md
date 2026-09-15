@@ -10,10 +10,13 @@
 > screen) · ✅ **operator-editable `platform.plans`** (pricing / seats /
 > modules / features / isolation tier) with snapshot-at-assign +
 > re-snapshot-on-renewal; `PATCH .../plan` + `POST .../renew` live ·
-> 🟡 `PlatformAuditLog` written for create / status / plan-change / renewal /
-> plan-edit — read API pending · 🔴 refresh-headcount route · 🔴 billing /
+> ✅ `PlatformAuditLog` written for create / status / plan-change / renewal /
+> price-adjust / plan-edit, AND readable — `GET /api/platform-admin/audit`
+> (`tenantId`/`action`/`from`/`to`/`q` filters) powers the console's Audit
+> screen; degrades to a real "couldn't load" error instead of the old
+> "not wired yet" placeholder · 🔴 refresh-headcount route · 🔴 billing /
 > seat enforcement · 🔴 break-glass.
-> **Progress:** ~96% of the intended V1 slice (see `docs/MODULE_SPECS.md`).
+> **Progress:** ~97% of the intended V1 slice (see `docs/MODULE_SPECS.md`).
 > **Code:** `apps/api/src/platform-admin`, `apps/api/src/prisma`
 > (`PlatformPrismaClientProvider`), `apps/web/src/pages/platform-admin`
 > (`console.tsx` gate → `shell.tsx` + `tenants`/`tenant-new`/`tenant-detail`/
@@ -22,7 +25,7 @@
 > `docs/BACKEND_ARCHITECTURE.md` §2.5–2.6, §3, §5 ·
 > `docs/TENANT_CONFIGURATION.md` (layer 1 = plan entitlements, set here) ·
 > module `01_IDENTITY_AND_ACCESS.md`.
-> **Last synced to code:** 2026-09-09 (operator plan catalog: platform.plans + Plans screen, snapshot/renewal model, PATCH .../plan + POST .../renew).
+> **Last synced to code:** 2026-09-15 (`GET /api/platform-admin/audit` read API lands — closes what was §9's "Still open" item 1).
 
 ---
 
@@ -302,7 +305,7 @@ New-tenant wizard, Tenant detail, (next) Audit log, (next) Break-glass.
 | Change a tenant's plan / seats | ✅ | — |
 | See tenant metadata (name, plan, count, status) | ✅ | — |
 | See tenant PII (employees, leave, payroll) | **— (structurally impossible)** | n/a |
-| Read the platform audit log | ✅ | — |
+| Read the platform audit log | ✅ (`GET /api/platform-admin/audit`) | — |
 | Initiate break-glass into a tenant | ✅ (logged, time-boxed) | — |
 
 ---
@@ -341,31 +344,39 @@ New-tenant wizard, Tenant detail, (next) Audit log, (next) Break-glass.
   the negotiation lever — adjusts commercials with no plan change
   (`subscription.price_adjusted` audit). Still a stored reference figure —
   no billing engine.
+- ✅ **`GET /api/platform-admin/audit`** (read API) — `PlatformAdminService
+  .audit()` filters by `tenantId` / `action` / `from` / `to` / `q` and
+  reshapes each row's free-form `metadata` JSON into `{ before, after,
+  note }` per action type (`platform-admin.service.ts`, `mapAuditRow`);
+  covered by `platform-admin.service.spec.ts`. The console's Audit screen
+  now consumes it live instead of degrading to the "not wired yet" empty
+  state. Still open beneath this: `headcount.refreshed` writes (nothing
+  calls it yet — the refresh-headcount route isn't built, item 3 below),
+  `breakglass.*` writes (the break-glass flow itself isn't built, item 4
+  below), and enforcing append-only in the roles migration
+  (`hrms_platform` has no `UPDATE`/`DELETE` grant revoked on
+  `platform_audit_log` yet — today it relies on no code path calling
+  update/delete, not a DB-level guarantee).
 
 **Still open:**
 
-1. **`GET /api/platform-admin/audit`** (read API) — rows are written; the
-   console's Audit screen + tenant-detail Activity tab degrade gracefully
-   until it lands. Also: `headcount.refreshed` write + enforce append-only
-   in the roles migration (`hrms_platform` has no `UPDATE`/`DELETE` on
-   `platform_audit_log` yet).
-2. **Subscription lifecycle** — seat counting vs `seats`; `trialEndsAt` /
+1. **Subscription lifecycle** — seat counting vs `seats`; `trialEndsAt` /
    `renewsAt` handling; `PAST_DUE` → grace → auto-suspend (BullMQ scheduled
    job).
-3. **Scheduled headcount refresh** (BullMQ) so `employeeCount` isn't only
+2. **Scheduled headcount refresh** (BullMQ) so `employeeCount` isn't only
    on-demand.
-4. **Break-glass flow** — schema (`BreakGlassGrant`), the audited read-only
+3. **Break-glass flow** — schema (`BreakGlassGrant`), the audited read-only
    tenant context, TTL enforcement, the console screens. **Design before
    building** (`CLAUDE.md`).
-5. **Scheduled renewal job** (BullMQ) — `renewSubscription()` is a manual
+4. **Scheduled renewal job** (BullMQ) — `renewSubscription()` is a manual
    operator action today; a job should process `renewsAt` and re-snapshot
    on the due date. (Also: seat counting vs `seats`, `PAST_DUE` →
    auto-suspend.)
-6. **Tenant detail screen** — subscription, headcount history, per-tenant
+5. **Tenant detail screen** — subscription, headcount history, per-tenant
    audit slice, danger zone (suspend / cancel).
-7. **Subdomain rename** flow (deferred) — needs a redirect + claim-refresh
+6. **Subdomain rename** flow (deferred) — needs a redirect + claim-refresh
    story.
-8. **Dedicated-DB tenant tier** (`CLAUDE.md` → "Multi-tenancy", Tier 2) —
+7. **Dedicated-DB tenant tier** (`CLAUDE.md` → "Multi-tenancy", Tier 2) —
    provisioning a database-per-tenant for enterprise / regulated customers
    is a platform-admin flow: create the DB, `prisma migrate deploy` against
    it, seed defaults, record the datasource on the tenant record. Also
