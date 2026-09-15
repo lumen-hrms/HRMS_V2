@@ -116,6 +116,42 @@ export class AdjustPricingDto {
   reason!: string;
 }
 
+const AUDIT_ACTIONS = [
+  'tenant.created',
+  'tenant.status_changed',
+  'tenant.plan_changed',
+  'subscription.renewed',
+  'subscription.price_adjusted',
+  'plan.updated',
+  'headcount.refreshed',
+  'breakglass.requested',
+  'breakglass.used',
+  'breakglass.expired',
+] as const;
+
+/** GET /api/platform-admin/audit?tenantId=&action=&from=&to=&q= */
+export class PlatformAuditQueryDto {
+  @IsOptional()
+  @IsString()
+  tenantId?: string;
+
+  @IsOptional()
+  @IsIn(AUDIT_ACTIONS)
+  action?: (typeof AUDIT_ACTIONS)[number];
+
+  @IsOptional()
+  @IsString()
+  from?: string; // YYYY-MM-DD
+
+  @IsOptional()
+  @IsString()
+  to?: string; // YYYY-MM-DD
+
+  @IsOptional()
+  @IsString()
+  q?: string;
+}
+
 /** PATCH /api/platform-admin/plans/:key — every field optional (partial edit). */
 export class UpdatePlanDto {
   @IsOptional()

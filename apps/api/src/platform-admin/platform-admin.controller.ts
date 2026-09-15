@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { PlatformJwtAuthGuard } from '../common/guards/platform-jwt-auth.guard';
 import type { AuthenticatedPlatformAdmin } from './platform-admin.types';
@@ -8,6 +8,7 @@ import {
   AdjustPricingDto,
   ChangeTenantPlanDto,
   CreateTenantDto,
+  PlatformAuditQueryDto,
   PlatformSessionDto,
   UpdatePlanDto,
   UpdateTenantStatusDto,
@@ -83,6 +84,12 @@ export class PlatformAdminController {
     @Req() req: Request & { user?: AuthenticatedPlatformAdmin },
   ) {
     return this.service.adjustPricing(id, dto, req.user?.email);
+  }
+
+  @UseGuards(PlatformJwtAuthGuard)
+  @Get('audit')
+  audit(@Query() query: PlatformAuditQueryDto) {
+    return this.service.audit(query);
   }
 
   // ---- Plan catalog ----

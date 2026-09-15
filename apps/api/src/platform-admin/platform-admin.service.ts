@@ -22,8 +22,90 @@ import type {
   AdjustPricingDto,
   ChangeTenantPlanDto,
   CreateTenantDto,
+  PlatformAuditQueryDto,
 } from './dto/platform-admin.dto';
-import type { AuthenticatedPlatformAdmin } from './platform-admin.types';
+import type {
+  AuthenticatedPlatformAdmin,
+  PlatformAuditAction,
+  PlatformAuditEntryDto,
+} from './platform-admin.types';
+
+function inDateRange(iso: string, from?: string, to?: string): boolean {
+  const day = iso.slice(0, 10);
+  if (from && day < from) return false;
+  if (to && day > to) return false;
+  return true;
+}
+
+/**
+ * Maps one `platform_audit_log` row's free-form `metadata` JSON into the
+ * console's fixed { before, after, note } shape. Each `action` was written
+ * with a specific metadata shape by the mutation that created it (see the
+ * `platformAuditLog.create(...)` call sites above) — this is the inverse.
+ */
+function mapAuditRow(row: {
+  id: string;
+  createdAt: Date;
+  actorEmail: string;
+  action: string;
+  metadata: unknown;
+}): PlatformAuditEntryDto {
+  const m = (row.metadata ?? {}) as Record<string, unknown>;
+  const str = (v: unknown): string | null => (v === undefined || v === null ? null : String(v));
+
+  let before: string | null = null;
+  let after: string | null = null;
+  let note: string | null = null;
+
+  switch (row.action) {
+    case 'tenant.created':
+      after =
+        [m.plan, m.seats != null ? `${m.seats} seats` : null].filter(Boolean).join(' · ') || null;
+      note = m.subdomain ? `subdomain: ${m.subdomain}` : null;
+      break;
+    case 'tenant.status_changed':
+    case 'tenant.plan_changed':
+      before = str(m.from);
+      after = str(m.to);
+      note = str(m.reason);
+      break;
+    case 'subscription.renewed': {
+      const added = Array.isArray(m.modulesAdded) ? (m.modulesAdded as string[]) : [];
+      const removed = Array.isArray(m.modulesRemoved) ? (m.modulesRemoved as string[]) : [];
+      after = m.renewsAt ? `renews ${str(m.renewsAt)}` : null;
+      note =
+        [
+          added.length ? `+${added.join(', ')}` : null,
+          removed.length ? `-${removed.join(', ')}` : null,
+        ]
+          .filter(Boolean)
+          .join('  ') || null;
+      break;
+    }
+    case 'subscription.price_adjusted':
+      before = m.rateFrom != null ? `₹${m.rateFrom} × ${m.seatsFrom}` : null;
+      after = `₹${str(m.rateTo)} × ${str(m.seatsTo)}`;
+      note = str(m.reason);
+      break;
+    case 'plan.updated':
+      after = Array.isArray(m.changed) ? (m.changed as string[]).join(', ') : null;
+      note = str(m.note);
+      break;
+    default:
+      note = str(m.note ?? m.reason);
+  }
+
+  return {
+    id: row.id,
+    at: row.createdAt.toISOString(),
+    actorEmail: row.actorEmail,
+    action: row.action as PlatformAuditAction,
+    targetTenantName: (m.tenantName as string) ?? null,
+    before,
+    after,
+    note,
+  };
+}
 
 @Injectable()
 export class PlatformAdminService {
@@ -473,6 +555,39 @@ export class PlatformAdminService {
         isDefault: true,
       },
     });
+  }
+
+  /**
+   * `GET /api/platform-admin/audit` — read side of `PlatformAuditLog`
+   * (docs/modules/02_PLATFORM_ADMIN.md §9, item 1). Rows are append-only and
+   * already written by every mutating operator action above; this only
+   * reads + filters + reshapes them for the console.
+   */
+  async audit(filter: PlatformAuditQueryDto): Promise<PlatformAuditEntryDto[]> {
+    const where: Prisma.PlatformAuditLogWhereInput = {};
+    if (filter.tenantId) where.targetId = filter.tenantId;
+    if (filter.action) where.action = filter.action;
+
+    const rows = await this.platformPrisma.platformAuditLog.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+    });
+
+    let mapped = rows
+      .filter((r) => inDateRange(r.createdAt.toISOString(), filter.from, filter.to))
+      .map(mapAuditRow);
+
+    if (filter.q) {
+      const q = filter.q.toLowerCase();
+      mapped = mapped.filter(
+        (r) =>
+          r.actorEmail.toLowerCase().includes(q) ||
+          (r.targetTenantName ?? '').toLowerCase().includes(q),
+      );
+    }
+
+    return mapped;
   }
 
   private async refreshHeadcount(tenantId: string) {

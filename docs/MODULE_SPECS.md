@@ -21,8 +21,19 @@
 > spec draft that is no longer maintained — ignore them; this file and the
 > code are the source of truth.)
 >
-> **Last synced to code:** 2026-09-11. Landed since the previous sync
-> (2026-09-09 @ `2000bd5`):
+> **Last synced to code:** 2026-09-15. Landed since the previous sync
+> (2026-09-11):
+>
+> - **Platform Admin — audit read API.** `GET /api/platform-admin/audit`
+>   (`tenantId`/`action`/`from`/`to`/`q` filters) closes the last open item
+>   from module 02 §9's original "Still open" list #1 — rows were already
+>   being written on every operator mutation, only the read side was
+>   missing. `PlatformAdminService.audit()` reshapes each row's free-form
+>   `metadata` into `{ before, after, note }` per action type; covered by
+>   `platform-admin.service.spec.ts`. The console's Audit screen now loads
+>   real data instead of the "not wired yet" placeholder.
+>
+> Landed in the 2026-09-11 sync (2026-09-09 @ `2000bd5`):
 >
 > - **Employee Master — lifecycle state machine.** `EmployeeLifecycleState`
 >   (`PRE_JOINING/PROBATION/CONFIRMED/NOTICE_PERIOD/SUSPENDED/SEPARATED`)
@@ -129,7 +140,7 @@
 | Module | Status | Progress |
 |---|---|---|
 | 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ | `███████████████████░` 97% — auth/RBAC/tenancy live; `access` module wired (Users, role/status/reset, login+access audit, My Account) with e2e RBAC + append-only tests; `LoginAuditEntry` table written on every session outcome. Remaining: `BAD_CREDENTIALS`/`TENANT_SUSPENDED` not server-observable (§1 gaps) |
-| 2. Platform Admin | ✅ | `███████████████████░` 96% — full operator console UI (tenants list, new-tenant wizard, tenant detail tabs, **Plans catalog**, audit screen); onboarding emails a hosted reset link; **operator-editable `platform.plans`** (per-seat list price / default seats / modules / features / isolation tier) with snapshot-at-assign + re-snapshot-on-renewal; **per-tenant negotiated per-seat rate** (`PATCH .../pricing`; monthly = rate × seats, computed); `PATCH .../plan` + `POST .../renew` live; `PlatformAuditLog` written for create / status / plan-change / renewal / price-adjust / plan-edit. Pending: audit *read* API, `GET tenants/:id`, refresh-headcount route, scheduled renewal job, break-glass |
+| 2. Platform Admin | ✅ | `███████████████████░` 97% — full operator console UI (tenants list, new-tenant wizard, tenant detail tabs, **Plans catalog**, audit screen); onboarding emails a hosted reset link; **operator-editable `platform.plans`** (per-seat list price / default seats / modules / features / isolation tier) with snapshot-at-assign + re-snapshot-on-renewal; **per-tenant negotiated per-seat rate** (`PATCH .../pricing`; monthly = rate × seats, computed); `PATCH .../plan` + `POST .../renew` live; `PlatformAuditLog` written for create / status / plan-change / renewal / price-adjust / plan-edit AND now readable — `GET .../audit`. Pending: `GET tenants/:id`, refresh-headcount route, scheduled renewal job, break-glass |
 | 3. Employee Master + Org Structure | 🟡 | `███████████████████░` 97% — lifecycle state machine, the full field set (statutory/bank via KMS-style AES-256-GCM encryption, emergency contacts, comp-adjacent fields), bulk-import UI, document hardening, and department edit/delete-with-reassign are all live. Only org-chart search/expand/zoom polish and the deliberately-deferred BU→Team hierarchy remain |
 | 4. Leave Management | ✅ | `████████████████████` 100% — backend fully wired & tested; FE live path built and running against the real API by default (`client.ts`'s `USE_MOCK` now defaults to **off**, matching `access/client.ts` — set `VITE_LEAVE_MOCK=true` to force the fixture store); `allowLopRequests`/`minNoticeDays`/`fyStartMonth`/`genderRestriction`/`requiresApproval` all enforced/settable; mid-year-joiner proration; comp-off credit on holiday/weekly-off clock-in; approved leave reconciles into `AttendanceRecord.ON_LEAVE` |
 | 5. Attendance & Time Tracking | 🟡 | `███████████░░░░░░░░░░` 55% |
