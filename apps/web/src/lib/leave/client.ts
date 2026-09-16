@@ -5,10 +5,9 @@
  * endpoint exists today (`live`) or is a near-term gap (`planned`, see
  * docs/MODULE_SPECS.md §4). Screens only ever import from here.
  *
- * `USE_MOCK` (default: on) routes everything through the fixture store so the
- * whole module is runnable before the backend lands. Flip via
- * `VITE_LEAVE_MOCK=false` once the real endpoints are wired; the `planned`
- * ones will 404 until then.
+ * Backend is fully wired & tested (module 04) — `USE_MOCK` now defaults to
+ * **off**, same as `access/client.ts`. Set `VITE_LEAVE_MOCK=true` to force
+ * the in-memory fixture store (e.g. running the UI with no API up).
  */
 import { api } from '@/lib/api';
 import type { Role } from '@/lib/roles';
@@ -39,7 +38,7 @@ import {
   type TeamCalendarEntry,
 } from './types';
 
-export const USE_MOCK = import.meta.env.VITE_LEAVE_MOCK !== 'false';
+export const USE_MOCK = import.meta.env.VITE_LEAVE_MOCK === 'true';
 
 export interface LeaveCtx {
   role: Role;
@@ -128,25 +127,53 @@ function directReportIds(ctx: LeaveCtx): string[] {
 // ---------------------------------------------------------------------------
 
 export const leaveApi = {
-  /** `GET /api/leave/types` · any tenant user · live */
+  /** `GET /api/leave/types?includeInactive=` · any tenant user · live */
   listTypes(includeInactive = false): Promise<LeaveType[]> {
     if (USE_MOCK) {
       return delay(store.types.filter((t) => includeInactive || t.active).map((t) => ({ ...t })));
     }
-    return api.get<LeaveType[]>('/leave/types');
+    return api.get<LeaveType[]>(`/leave/types${includeInactive ? '?includeInactive=true' : ''}`);
   },
 
-  /** `POST /api/leave/types` · Company Admin, HR Manager · live (partial fields) */
+  /** `POST /api/leave/types` · Company Admin, HR Manager · live. Every
+   *  frontend `LeaveType` field round-trips through the API now. */
   createType(input: Omit<LeaveType, 'id'>): Promise<LeaveType> {
     if (USE_MOCK) {
       const t: LeaveType = { ...input, id: uid('lt') };
       store.types.push(t);
       return delay(t);
     }
-    return api.post<LeaveType>('/leave/types', input);
+    const {
+      name,
+      code,
+      colorToken,
+      annualQuota,
+      carryForwardCap,
+      minNoticeDays,
+      active,
+      accrualFrequency,
+      genderRestriction,
+      paid,
+      requiresApproval,
+      isCompOff,
+    } = input;
+    return api.post<LeaveType>('/leave/types', {
+      name,
+      code,
+      colorToken,
+      annualQuota,
+      carryForwardCap,
+      minNoticeDays,
+      active,
+      accrualFrequency,
+      genderRestriction,
+      paid,
+      requiresApproval,
+      isCompOff,
+    });
   },
 
-  /** `PATCH /api/leave/types/:id` · Company Admin, HR Manager · planned */
+  /** `PATCH /api/leave/types/:id` · Company Admin, HR Manager · live (same backend-persisted subset as `createType`) */
   updateType(id: string, patch: Partial<LeaveType>): Promise<LeaveType> {
     if (USE_MOCK) {
       const t = store.types.find((x) => x.id === id);
@@ -154,7 +181,34 @@ export const leaveApi = {
       Object.assign(t, patch);
       return delay({ ...t });
     }
-    return api.patch<LeaveType>(`/leave/types/${id}`, patch);
+    const {
+      name,
+      code,
+      colorToken,
+      annualQuota,
+      carryForwardCap,
+      minNoticeDays,
+      active,
+      accrualFrequency,
+      genderRestriction,
+      paid,
+      requiresApproval,
+      isCompOff,
+    } = patch;
+    return api.patch<LeaveType>(`/leave/types/${id}`, {
+      name,
+      code,
+      colorToken,
+      annualQuota,
+      carryForwardCap,
+      minNoticeDays,
+      active,
+      accrualFrequency,
+      genderRestriction,
+      paid,
+      requiresApproval,
+      isCompOff,
+    });
   },
 
   /** `POST /api/leave/types/:id/initialize/:year` · Company Admin, HR Manager · live */
@@ -453,20 +507,42 @@ export const leaveApi = {
     return api.get<LeaveLedgerEntry[]>(`/leave/balances/ledger${qs ? `?${qs}` : ''}`);
   },
 
-  /** `GET /api/leave/settings` · Company Admin, HR Manager, Auditor · planned
-   *  (backed by tenant_settings.leave_approval_levels today). */
+  /** `GET /api/leave/settings` · Company Admin, HR Manager, Auditor · live.
+   *  Backend field names differ from the frontend's (`leaveApprovalLevels`
+   *  vs `approvalLevels`) — mapped here rather than renaming either side. */
   getSettings(): Promise<LeaveSettings> {
     if (USE_MOCK) return delay({ ...store.settings });
-    return api.get<LeaveSettings>('/leave/settings');
+    return api
+      .get<{ leaveApprovalLevels: 1 | 2; allowLopRequests: boolean; fyStartMonth: number }>(
+        '/leave/settings',
+      )
+      .then((s) => ({
+        approvalLevels: s.leaveApprovalLevels,
+        allowLopRequests: s.allowLopRequests,
+        fyStartMonth: s.fyStartMonth,
+      }));
   },
 
-  /** `PATCH /api/leave/settings` · Company Admin · planned */
+  /** `PATCH /api/leave/settings` · Company Admin · live (see `getSettings` field mapping). */
   updateSettings(patch: Partial<LeaveSettings>): Promise<LeaveSettings> {
     if (USE_MOCK) {
       Object.assign(store.settings, patch);
       return delay({ ...store.settings });
     }
-    return api.patch<LeaveSettings>('/leave/settings', patch);
+    return api
+      .patch<{ leaveApprovalLevels: 1 | 2; allowLopRequests: boolean; fyStartMonth: number }>(
+        '/leave/settings',
+        {
+          leaveApprovalLevels: patch.approvalLevels,
+          allowLopRequests: patch.allowLopRequests,
+          fyStartMonth: patch.fyStartMonth,
+        },
+      )
+      .then((s) => ({
+        approvalLevels: s.leaveApprovalLevels,
+        allowLopRequests: s.allowLopRequests,
+        fyStartMonth: s.fyStartMonth,
+      }));
   },
 
   /** Directory slice the admin screens need for pickers. Real screens will use

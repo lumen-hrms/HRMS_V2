@@ -19,6 +19,20 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    container_name: hrms_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - hrms_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   minio:
     image: minio/minio:latest
     container_name: hrms_minio
@@ -41,3 +55,4 @@ services:
 volumes:
   hrms_pg_data:
   hrms_minio_data:
+  hrms_redis_data:

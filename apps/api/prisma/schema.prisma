@@ -45,6 +45,41 @@ enum SubscriptionPlan {
   @@schema("platform")
 }
 
+enum IsolationTier {
+  POOLED
+  DEDICATED
+
+  @@schema("platform")
+}
+
+// The operator-editable plan catalog (Platform Admin → Plans). `key` matches
+// the `SubscriptionPlan` values a tenant can be onboarded onto
+// (STARTER/GROWTH/ENTERPRISE — TRIAL is a status, not a sold plan). Seeded
+// from platform-admin/entitlements.ts (which stays as the code-side default
+// + fallback). Editing a Plan row NEVER mutates a live Subscription — those
+// carry a snapshot; new tenants and renewals pick up the current Plan.
+model Plan {
+  key              String        @id
+  name             String
+  // List price PER SEAT PER MONTH. The amount a tenant pays is
+  // `pricePerSeat * seats`, computed at display time (never stored). A deal
+  // snapshots this onto the Subscription as its starting negotiated rate.
+  listPricePerSeat Decimal       @default(0) @map("list_price_per_seat") @db.Decimal(12, 2)
+  currency         String        @default("INR")
+  // Default seat count pre-filled in the onboarding wizard — NOT a bundled
+  // allotment. The operator sets the real seat count per tenant.
+  seatsIncluded    Int           @map("seats_included")
+  enabledModules   String[]      @default([]) @map("enabled_modules")
+  features         Json          @default("{}")
+  isolationTier    IsolationTier @default(POOLED) @map("isolation_tier")
+  sortOrder        Int           @default(0) @map("sort_order")
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+
+  @@map("plans")
+  @@schema("platform")
+}
+
 model Tenant {
   id            String       @id @default(uuid()) @db.Uuid
   name          String
@@ -70,6 +105,15 @@ model Subscription {
   plan     SubscriptionPlan @default(TRIAL)
   seats    Int              @default(50)
   renewsAt DateTime?        @map("renews_at")
+
+  // NEGOTIATED per-seat rate for THIS tenant (every deal is bespoke).
+  // Effective monthly = pricePerSeat * seats. Snapshotted at assign-time,
+  // defaulting to the plan's list rate. A renewal KEEPS this rate (it's the
+  // contract term) while re-snapshotting modules/features; an explicit plan
+  // change resets it to the new plan's list price. Isolation tier is
+  // snapshotted the same way. A later Plan catalog edit never touches these.
+  pricePerSeat  Decimal?      @map("price_per_seat") @db.Decimal(12, 2)
+  isolationTier IsolationTier @default(POOLED) @map("isolation_tier")
 
   // Plan entitlements — what this tenant is ALLOWED to use, derived from
   // `plan` at onboarding (see platform-admin/entitlements.ts) and re-derived
@@ -128,12 +172,69 @@ enum UserRole {
   @@schema("public")
 }
 
-enum EmploymentStatus {
-  ACTIVE
-  ON_LEAVE
+// Outcome of a POST /api/auth/session attempt. Only outcomes the server
+// actually observes are represented — BAD_CREDENTIALS happens entirely in
+// the Firebase client SDK and never reaches us (see
+// docs/modules/01_IDENTITY_AND_ACCESS.md §9). TENANT_SUSPENDED is rejected
+// pre-auth in TenantResolutionMiddleware and is intentionally not written
+// per-request; the operator's suspend/resume action is logged once in
+// platform.platform_audit_log instead.
+enum LoginOutcome {
+  SUCCESS
+  USER_INACTIVE
+  CLAIM_MISMATCH
+  TOKEN_EXPIRED
+
+  @@schema("public")
+}
+
+// Replaces the old EmploymentStatus (ACTIVE/ON_LEAVE/SUSPENDED/RESIGNED/
+// TERMINATED) with the SRS-target lifecycle state machine — see
+// docs/modules/03_EMPLOYEE_MASTER.md §4.4 for the allowed-transition graph.
+// ON_LEAVE is no longer a lifecycle state: day-to-day leave is tracked on
+// AttendanceRecord/LeaveRequest, not here.
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  INTERN
+  CONSULTANT
+
+  @@schema("public")
+}
+
+enum TaxRegime {
+  OLD
+  NEW
+
+  @@schema("public")
+}
+
+enum BankAccountType {
+  SAVINGS
+  CURRENT
+
+  @@schema("public")
+}
+
+enum DocumentCategory {
+  OFFER_LETTER
+  ID_PROOF
+  ADDRESS_PROOF
+  EDUCATION
+  EXPERIENCE
+  OTHER
+
+  @@schema("public")
+}
+
+enum EmployeeLifecycleState {
+  PRE_JOINING
+  PROBATION
+  CONFIRMED
+  NOTICE_PERIOD
   SUSPENDED
-  RESIGNED
-  TERMINATED
+  SEPARATED
 
   @@schema("public")
 }
@@ -256,6 +357,11 @@ model Department {
   id        String   @id @default(uuid()) @db.Uuid
   tenantId  String   @map("tenant_id") @db.Uuid
   name      String
+  code      String?
+  // No FK to Employee — headEmployeeId is a plain reference, not a
+  // relation, so deleting the head employee never cascades into the
+  // department row (module 03 §4.3).
+  headEmployeeId String? @map("head_employee_id") @db.Uuid
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -281,12 +387,30 @@ model Employee {
   dateOfBirth   DateTime? @map("date_of_birth")
   gender        String?
 
+  // Identity & personal — module 03 §4.2.
+  maritalStatus String? @map("marital_status")
+  bloodGroup    String? @map("blood_group")
+  nationality   String?
+  photoUrl      String? @map("photo_url")
+
   departmentId String?     @map("department_id") @db.Uuid
   department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
 
   designation      String?
+  employmentType   EmploymentType?  @map("employment_type")
+  workLocation     String?          @map("work_location")
   dateOfJoining    DateTime?        @map("date_of_joining")
-  employmentStatus EmploymentStatus @default(ACTIVE) @map("employment_status")
+
+  // Lifecycle state machine (module 03 §4.4). New employees start in
+  // PROBATION (the common case: HR is adding someone who has already
+  // joined) — pick PRE_JOINING explicitly for a not-yet-started hire.
+  lifecycleState   EmployeeLifecycleState @default(PROBATION) @map("lifecycle_state")
+  // Set when the relevant transition requires it (module 03 §4.4); null
+  // otherwise. Each is written only by the matching PATCH .../lifecycle call.
+  probationEndDate DateTime?              @map("probation_end_date")
+  confirmationDate DateTime?              @map("confirmation_date")
+  noticeStartDate  DateTime?              @map("notice_start_date")
+  lastWorkingDate  DateTime?              @map("last_working_date")
 
   reportingManagerId String?    @map("reporting_manager_id") @db.Uuid
   reportingManager   Employee?  @relation("ManagerReports", fields: [reportingManagerId], references: [id], onDelete: SetNull)
@@ -298,15 +422,45 @@ model Employee {
   shiftId String? @map("shift_id") @db.Uuid
   shift   Shift?  @relation(fields: [shiftId], references: [id], onDelete: SetNull)
 
+  // Compensation-adjacent — headline reference figures only; the salary
+  // *structure* lives in Payroll (module 07), not here.
+  ctcAnnual  Decimal? @map("ctc_annual") @db.Decimal(14, 2)
+  payGrade   String?  @map("pay_grade")
+  costCenter String?  @map("cost_center")
+
+  // Statutory (India) — module 03 §4.2/INV-2/INV-3. `pan`/bank account are
+  // application-layer encrypted (FieldEncryptionService, CLAUDE.md's KMS
+  // non-negotiable); only the masked form and the ciphertext are stored —
+  // plaintext never lands in a column. Aadhaar: last 4 digits only, ever.
+  panCiphertext String? @map("pan_ciphertext")
+  panMasked     String? @map("pan_masked")
+  aadhaarLast4  String? @map("aadhaar_last4")
+  uan           String?
+  pfNumber      String? @map("pf_number")
+  esicNumber    String? @map("esic_number")
+  taxRegime     TaxRegime? @map("tax_regime")
+
+  // Bank (disbursement) — bank account number is KMS-encrypted like PAN.
+  bankAccountHolderName String?          @map("bank_account_holder_name")
+  bankAccountCiphertext String?          @map("bank_account_ciphertext")
+  bankAccountMasked     String?          @map("bank_account_masked")
+  bankIfsc              String?          @map("bank_ifsc")
+  bankName              String?          @map("bank_name")
+  bankBranch            String?          @map("bank_branch")
+  bankAccountType       BankAccountType? @map("bank_account_type")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   leaveBalances            LeaveBalance[]
   leaveRequestsAsApplicant LeaveRequest[]          @relation("Applicant")
+  leaveLedgerEntries       LeaveLedgerEntry[]
+  leaveApprovalsGiven      LeaveApproval[]         @relation("LeaveApprover")
   documents                Document[]
   attendanceRecords        AttendanceRecord[]
   regularizationRequests   RegularizationRequest[]
   punches                  Punch[]
+  emergencyContacts        EmergencyContact[]
 
   @@unique([tenantId, employeeCode])
   @@index([tenantId])
@@ -322,9 +476,11 @@ model Document {
   employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   label      String
+  category   DocumentCategory @default(OTHER)
   storageKey String   @map("storage_key")
   mimeType   String   @map("mime_type")
   sizeBytes  Int      @map("size_bytes")
+  uploadedByName String? @map("uploaded_by_name")
   uploadedAt DateTime @default(now()) @map("uploaded_at")
 
   @@index([tenantId])
@@ -332,22 +488,85 @@ model Document {
   @@schema("public")
 }
 
+// Module 03 §4.2 — 0..n per employee, exactly one `isPrimary` (RULE-5,
+// enforced in EmployeesService: setting a new primary unsets the old one in
+// the same transaction — no partial unique index, same pattern as
+// LeaveType.isCompOff's app-level "at most one" invariant).
+model EmergencyContact {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  employeeId String   @map("employee_id") @db.Uuid
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  name         String
+  relationship String
+  phone        String
+  altPhone     String? @map("alt_phone")
+  address      String?
+  isPrimary    Boolean @default(false) @map("is_primary")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@index([tenantId, employeeId])
+  @@map("emergency_contacts")
+  @@schema("public")
+}
+
 model LeaveType {
-  id               String   @id @default(uuid()) @db.Uuid
-  tenantId         String   @map("tenant_id") @db.Uuid
+  id               String           @id @default(uuid()) @db.Uuid
+  tenantId         String           @map("tenant_id") @db.Uuid
   name             String
-  annualQuota      Decimal  @map("annual_quota") @db.Decimal(6, 2)
-  carryForwardCap  Decimal  @default(0) @map("carry_forward_cap") @db.Decimal(6, 2)
-  requiresApproval Boolean  @default(true) @map("requires_approval")
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime @updatedAt @map("updated_at")
+  // Short label for dense UI (e.g. "CL", "SL") — user-set, unique per tenant.
+  code             String
+  // A CSS color value for calendar chips / dots.
+  colorToken       String           @default("#2b5a8c") @map("color_token")
+  annualQuota      Decimal          @map("annual_quota") @db.Decimal(6, 2)
+  carryForwardCap  Decimal          @default(0) @map("carry_forward_cap") @db.Decimal(6, 2)
+  requiresApproval Boolean          @default(true) @map("requires_approval")
+  // Minimum calendar-days notice; enforced by LeaveService.apply().
+  minNoticeDays    Int              @default(0) @map("min_notice_days")
+  // Soft-delete: hides the type from the apply dropdown without losing history.
+  active           Boolean          @default(true)
+  // Periodic credit schedule the accrual job follows; ANNUAL types are still
+  // seeded manually via the initialize-year endpoint.
+  accrualFrequency AccrualFrequency  @default(ANNUAL) @map("accrual_frequency")
+  // Who may apply for this type; enforced by LeaveService.apply().
+  genderRestriction GenderRestriction @default(ANY) @map("gender_restriction")
+  // Whether this leave type is paid; informational only, no payroll linkage yet.
+  paid              Boolean           @default(true)
+  // Marks the tenant's designated comp-off type — LeaveService.creditCompOff()
+  // credits into whichever LeaveType has this set (at most one expected per
+  // tenant; not DB-enforced). No-op if a tenant hasn't configured one.
+  isCompOff         Boolean           @default(false) @map("is_comp_off")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
 
   balances LeaveBalance[]
   requests LeaveRequest[]
+  ledgerEntries LeaveLedgerEntry[]
 
   @@unique([tenantId, name])
+  @@unique([tenantId, code])
   @@index([tenantId])
   @@map("leave_types")
+  @@schema("public")
+}
+
+enum GenderRestriction {
+  ANY
+  MALE
+  FEMALE
+
+  @@schema("public")
+}
+
+enum AccrualFrequency {
+  ANNUAL
+  MONTHLY
+  QUARTERLY
+
   @@schema("public")
 }
 
@@ -383,6 +602,7 @@ model LeaveRequest {
   startDate DateTime @map("start_date")
   endDate   DateTime @map("end_date")
   days      Decimal  @db.Decimal(6, 2)
+  halfDay   Boolean  @default(false) @map("half_day")
   isLop     Boolean  @default(false) @map("is_lop")
   reason    String?
 
@@ -393,12 +613,92 @@ model LeaveRequest {
   l2ApproverId String?   @map("l2_approver_id") @db.Uuid
   l2DecidedAt  DateTime? @map("l2_decided_at")
 
+  // Single supporting document (e.g. a medical certificate). Nullable — most
+  // requests carry none. Stored the same way Employee documents are.
+  attachmentKey       String? @map("attachment_key")
+  attachmentName      String? @map("attachment_name")
+  attachmentMimeType  String? @map("attachment_mime_type")
+  attachmentSizeBytes Int?    @map("attachment_size_bytes")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
+
+  approvals LeaveApproval[]
 
   @@index([tenantId])
   @@index([tenantId, employeeId])
   @@map("leave_requests")
+  @@schema("public")
+}
+
+/// Append-only decision/escalation history — backs the request detail timeline.
+model LeaveApproval {
+  id String @id @default(uuid()) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+
+  leaveRequestId String       @map("leave_request_id") @db.Uuid
+  leaveRequest   LeaveRequest @relation(fields: [leaveRequestId], references: [id], onDelete: Cascade)
+
+  level Int
+  // Null approverId marks a system-generated escalation entry.
+  approverId String?   @map("approver_id") @db.Uuid
+  approver   Employee? @relation("LeaveApprover", fields: [approverId], references: [id], onDelete: SetNull)
+  decision   LeaveApprovalDecision
+  decidedAt  DateTime             @default(now()) @map("decided_at")
+  comment    String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([tenantId, leaveRequestId])
+  @@map("leave_approvals")
+  @@schema("public")
+}
+
+enum LeaveApprovalDecision {
+  APPROVED
+  REJECTED
+  ESCALATED
+
+  @@schema("public")
+}
+
+/// Append-only balance movement audit trail: accrual, carry-forward, request lifecycle, HR adjustment.
+model LeaveLedgerEntry {
+  id String @id @default(uuid()) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+
+  employeeId String   @map("employee_id") @db.Uuid
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  leaveTypeId String    @map("leave_type_id") @db.Uuid
+  leaveType   LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+
+  occurredAt   DateTime          @default(now()) @map("occurred_at")
+  delta        Decimal           @db.Decimal(6, 2)
+  balanceAfter Decimal           @map("balance_after") @db.Decimal(6, 2)
+  source       LeaveLedgerSource
+  note         String?
+  actorUserId  String?           @map("actor_user_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([tenantId, employeeId, leaveTypeId])
+  @@map("leave_ledger_entries")
+  @@schema("public")
+}
+
+enum LeaveLedgerSource {
+  ACCRUAL
+  CARRY_FORWARD
+  REQUEST_APPROVED
+  REQUEST_CANCELLED
+  HR_ADJUSTMENT
+  COMP_OFF_CREDIT
+
   @@schema("public")
 }
 
@@ -415,6 +715,29 @@ model AuditLog {
 
   @@index([tenantId])
   @@map("audit_log")
+  @@schema("public")
+}
+
+// Append-only record of every server-observed sign-in attempt (functional
+// expectation #8, module 01). hrms_app holds SELECT + INSERT on this table
+// only — no UPDATE/DELETE grant — and it is RLS-scoped like every other
+// tenant table. Written by AuthService.session() on each outcome branch;
+// read by GET /api/access/audit?feed=login. 2-year retention (enforced by a
+// later scheduled purge, not yet built).
+model LoginAuditEntry {
+  id        String       @id @default(uuid()) @db.Uuid
+  tenantId  String       @map("tenant_id") @db.Uuid
+  email     String
+  userId    String?      @map("user_id") @db.Uuid
+  outcome   LoginOutcome
+  ipAddress String?      @map("ip_address")
+  userAgent String?      @map("user_agent")
+  at        DateTime     @default(now())
+
+  @@index([tenantId])
+  @@index([tenantId, at])
+  @@index([tenantId, userId, outcome])
+  @@map("login_audit_entries")
   @@schema("public")
 }
 
@@ -508,6 +831,16 @@ model TenantSettings {
   payrollCutoffDay    Int    @default(25) @map("payroll_cutoff_day")
   // Leave approval chain depth (1 or 2 for V1).
   leaveApprovalLevels Int    @default(2) @map("leave_approval_levels")
+  // Days a leave request may sit undecided at a level before the escalation
+  // job flags it (see apps/api/src/leave/leave-escalation.processor.ts).
+  leaveEscalationDays Int    @default(3) @map("leave_escalation_days")
+  // Whether an employee may submit a request that will be Loss of Pay.
+  // Enforced by LeaveService.apply().
+  allowLopRequests    Boolean @default(true) @map("allow_lop_requests")
+  // Financial-year start month (1-12; India default April). Used by
+  // resolveLeaveYear() (apps/api/src/leave/leave-year.util.ts) to shift the
+  // balance-year boundary for apply()/getBalances()/teamBalances()/the accrual job.
+  fyStartMonth        Int    @default(4) @map("fy_start_month")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

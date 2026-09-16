@@ -11,7 +11,6 @@
     "lint": "npm --prefix apps/api run lint && npm --prefix apps/web run lint",
     "prisma:generate": "npm --prefix apps/api run prisma:generate",
     "prisma:migrate": "npm --prefix apps/api run prisma:migrate",
-    "prisma:seed": "npm --prefix apps/api run prisma:seed",
-    "emulator": "npx --yes firebase-tools emulators:start --only auth --project hrms-platform-dev"
+    "prisma:seed": "npm --prefix apps/api run prisma:seed"
   }
 }

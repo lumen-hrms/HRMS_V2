@@ -37,7 +37,7 @@ if (!admin.apps.length) {
 const firebaseAuth = admin.auth();
 
 /** Creates the Firebase user if it doesn't exist yet, otherwise reuses it —
- * makes the seed script safe to re-run against the same emulator/project. */
+ * makes the seed script safe to re-run against the same project. */
 async function upsertFirebaseUser(
   email: string,
   password: string,
@@ -66,10 +66,16 @@ type Tx = Prisma.TransactionClient;
  * connection where the session variable was never set.
  */
 async function withTenant<T>(tenantId: string, fn: (tx: Tx) => Promise<T>): Promise<T> {
-  return prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, TRUE)`;
-    return fn(tx);
-  });
+  return prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, TRUE)`;
+      return fn(tx);
+    },
+    // Generous ceiling: this is a rarely-run seed and each tenant's block is
+    // dozens of round-trips. Against a remote DB (shared Supabase, ~130 ms
+    // RTT) the default 5 s is not enough.
+    { timeout: 120_000, maxWait: 20_000 },
+  );
 }
 
 interface SeedEmployeeSpec {
@@ -96,6 +102,9 @@ async function seedTenant(name: string, subdomain: string, employees: SeedEmploy
         create: {
           plan: 'GROWTH',
           seats: 200,
+          // Negotiated per-seat rate — matches the GROWTH list price seeded
+          // by 20260909130000_per_seat_pricing. Effective ≈ ₹69,800/mo.
+          pricePerSeat: 349,
           enabledModules: growth.enabledModules,
           features: growth.features as unknown as Prisma.InputJsonValue,
         },
@@ -130,8 +139,8 @@ async function seedTenant(name: string, subdomain: string, employees: SeedEmploy
     // Pass 1: create users + employees without manager links, using the
     // Firebase uid resolved up front (see below) — external network calls
     // must never happen inside this DB transaction, or a slow round-trip to
-    // a real Firebase project (unlike the near-instant local emulator) can
-    // outlast Prisma's interactive-transaction timeout.
+    // a real Firebase project can outlast Prisma's interactive-transaction
+    // timeout.
     for (const spec of employees) {
       const firebaseUid = firebaseUidByCode.get(spec.code)!;
       const user = await tx.user.upsert({
@@ -156,7 +165,7 @@ async function seedTenant(name: string, subdomain: string, employees: SeedEmploy
           designation: spec.designation,
           departmentId: deptByName.get(spec.dept),
           dateOfJoining: new Date('2024-01-15'),
-          employmentStatus: 'ACTIVE',
+          lifecycleState: 'CONFIRMED',
         },
       });
       idByCode.set(spec.code, employee.id);
@@ -173,15 +182,18 @@ async function seedTenant(name: string, subdomain: string, employees: SeedEmploy
 
     // Leave types + this year's balances for everyone.
     const leaveTypeSpecs = [
-      { name: 'Earned Leave', annualQuota: 18, carryForwardCap: 10 },
-      { name: 'Sick Leave', annualQuota: 12, carryForwardCap: 0 },
-      { name: 'Casual Leave', annualQuota: 8, carryForwardCap: 0 },
+      { name: 'Earned Leave', code: 'EL', annualQuota: 18, carryForwardCap: 10, isCompOff: false },
+      { name: 'Sick Leave', code: 'SL', annualQuota: 12, carryForwardCap: 0, isCompOff: false },
+      { name: 'Casual Leave', code: 'CL', annualQuota: 8, carryForwardCap: 0, isCompOff: false },
+      // Earned only via LeaveService.creditCompOff() when someone clocks in
+      // on a holiday/weekly-off day — starts at 0, no fixed annual quota.
+      { name: 'Compensatory Off', code: 'CO', annualQuota: 0, carryForwardCap: 0, isCompOff: true },
     ];
     const year = new Date().getFullYear();
     for (const lt of leaveTypeSpecs) {
       const leaveType = await tx.leaveType.upsert({
         where: { tenantId_name: { tenantId: tenant.id, name: lt.name } },
-        update: {},
+        update: { code: lt.code, isCompOff: lt.isCompOff },
         create: { tenantId: tenant.id, ...lt },
       });
       for (const employeeId of idByCode.values()) {
@@ -249,7 +261,9 @@ async function seedTenant(name: string, subdomain: string, employees: SeedEmploy
     const earnedLeave = await tx.leaveType.findFirstOrThrow({
       where: { tenantId: tenant.id, name: 'Earned Leave' },
     });
-    const applicant = employees.find((e) => idByCode.get(e.code) === firstEmployeeId && e.managerCode);
+    const applicant = employees.find(
+      (e) => idByCode.get(e.code) === firstEmployeeId && e.managerCode,
+    );
     if (applicant) {
       const start = new Date();
       start.setDate(start.getDate() + 7);
@@ -270,6 +284,16 @@ async function seedTenant(name: string, subdomain: string, employees: SeedEmploy
     }
   });
 
+  // Denormalized headcount — mirrors PlatformAdminService.refreshHeadcount()
+  // so the operator console shows real seat pressure straight after seeding.
+  // `prisma` runs as the BYPASSRLS migration role here, so a direct count is
+  // fine without withTenant().
+  const headcount = await prisma.employee.count({ where: { tenantId: tenant.id } });
+  await prisma.tenant.update({
+    where: { id: tenant.id },
+    data: { employeeCount: headcount },
+  });
+
   return tenant;
 }
 
@@ -288,32 +312,144 @@ async function main() {
   const founderEmail = await seedPlatformAdmin();
 
   const acme = await seedTenant('Acme Hospitals Pvt Ltd', 'acme', [
-    { code: 'ACM-001', first: 'Asha', last: 'Rao', designation: 'CEO', dept: 'Executive', loginEmail: 'admin@acme.test', role: 'COMPANY_ADMIN' },
-    { code: 'ACM-002', first: 'Vikram', last: 'Nair', designation: 'HR Head', dept: 'HR', managerCode: 'ACM-001', loginEmail: 'hr@acme.test', role: 'HR_MANAGER' },
-    { code: 'ACM-003', first: 'Priya', last: 'Menon', designation: 'Nursing Manager', dept: 'Nursing', managerCode: 'ACM-001', loginEmail: 'manager@acme.test', role: 'LINE_MANAGER' },
-    { code: 'ACM-004', first: 'Rahul', last: 'Verma', designation: 'Staff Nurse', dept: 'Nursing', managerCode: 'ACM-003', loginEmail: 'employee@acme.test', role: 'EMPLOYEE' },
-    { code: 'ACM-005', first: 'Sneha', last: 'Iyer', designation: 'Staff Nurse', dept: 'Nursing', managerCode: 'ACM-003', loginEmail: 'employee2@acme.test', role: 'EMPLOYEE' },
-    { code: 'ACM-006', first: 'Kiran', last: 'Das', designation: 'Statutory Auditor', dept: 'Finance', loginEmail: 'auditor@acme.test', role: 'AUDITOR' },
+    {
+      code: 'ACM-001',
+      first: 'Asha',
+      last: 'Rao',
+      designation: 'CEO',
+      dept: 'Executive',
+      loginEmail: 'admin@acme.test',
+      role: 'COMPANY_ADMIN',
+    },
+    {
+      code: 'ACM-002',
+      first: 'Vikram',
+      last: 'Nair',
+      designation: 'HR Head',
+      dept: 'HR',
+      managerCode: 'ACM-001',
+      loginEmail: 'hr@acme.test',
+      role: 'HR_MANAGER',
+    },
+    {
+      code: 'ACM-003',
+      first: 'Priya',
+      last: 'Menon',
+      designation: 'Nursing Manager',
+      dept: 'Nursing',
+      managerCode: 'ACM-001',
+      loginEmail: 'manager@acme.test',
+      role: 'LINE_MANAGER',
+    },
+    {
+      code: 'ACM-004',
+      first: 'Rahul',
+      last: 'Verma',
+      designation: 'Staff Nurse',
+      dept: 'Nursing',
+      managerCode: 'ACM-003',
+      loginEmail: 'employee@acme.test',
+      role: 'EMPLOYEE',
+    },
+    {
+      code: 'ACM-005',
+      first: 'Sneha',
+      last: 'Iyer',
+      designation: 'Staff Nurse',
+      dept: 'Nursing',
+      managerCode: 'ACM-003',
+      loginEmail: 'employee2@acme.test',
+      role: 'EMPLOYEE',
+    },
+    {
+      code: 'ACM-006',
+      first: 'Kiran',
+      last: 'Das',
+      designation: 'Statutory Auditor',
+      dept: 'Finance',
+      loginEmail: 'auditor@acme.test',
+      role: 'AUDITOR',
+    },
   ]);
 
   const beta = await seedTenant('Beta Textiles Ltd', 'beta', [
-    { code: 'BET-001', first: 'Sunil', last: 'Gupta', designation: 'Managing Director', dept: 'Executive', loginEmail: 'admin@beta.test', role: 'COMPANY_ADMIN' },
-    { code: 'BET-002', first: 'Meera', last: 'Pillai', designation: 'HR Manager', dept: 'HR', managerCode: 'BET-001', loginEmail: 'hr@beta.test', role: 'HR_MANAGER' },
-    { code: 'BET-003', first: 'Arjun', last: 'Kumar', designation: 'Production Lead', dept: 'Production', managerCode: 'BET-001', loginEmail: 'manager@beta.test', role: 'LINE_MANAGER' },
-    { code: 'BET-004', first: 'Divya', last: 'Shah', designation: 'Machine Operator', dept: 'Production', managerCode: 'BET-003', loginEmail: 'employee@beta.test', role: 'EMPLOYEE' },
+    {
+      code: 'BET-001',
+      first: 'Sunil',
+      last: 'Gupta',
+      designation: 'Managing Director',
+      dept: 'Executive',
+      loginEmail: 'admin@beta.test',
+      role: 'COMPANY_ADMIN',
+    },
+    {
+      code: 'BET-002',
+      first: 'Meera',
+      last: 'Pillai',
+      designation: 'HR Manager',
+      dept: 'HR',
+      managerCode: 'BET-001',
+      loginEmail: 'hr@beta.test',
+      role: 'HR_MANAGER',
+    },
+    {
+      code: 'BET-003',
+      first: 'Arjun',
+      last: 'Kumar',
+      designation: 'Production Lead',
+      dept: 'Production',
+      managerCode: 'BET-001',
+      loginEmail: 'manager@beta.test',
+      role: 'LINE_MANAGER',
+    },
+    {
+      code: 'BET-004',
+      first: 'Divya',
+      last: 'Shah',
+      designation: 'Machine Operator',
+      dept: 'Production',
+      managerCode: 'BET-003',
+      loginEmail: 'employee@beta.test',
+      role: 'EMPLOYEE',
+    },
   ]);
 
   const gamma = await seedTenant('Gamma Logistics', 'gamma', [
-    { code: 'GAM-001', first: 'Anand', last: 'Krishnan', designation: 'Founder & CEO', dept: 'Executive', loginEmail: 'admin@gamma.test', role: 'COMPANY_ADMIN' },
-    { code: 'GAM-002', first: 'Lakshmi', last: 'Narayan', designation: 'HR Business Partner', dept: 'HR', managerCode: 'GAM-001', loginEmail: 'hr@gamma.test', role: 'HR_MANAGER' },
-    { code: 'GAM-003', first: 'Ravi', last: 'Teja', designation: 'Warehouse Supervisor', dept: 'Operations', managerCode: 'GAM-001', loginEmail: 'employee@gamma.test', role: 'EMPLOYEE' },
+    {
+      code: 'GAM-001',
+      first: 'Anand',
+      last: 'Krishnan',
+      designation: 'Founder & CEO',
+      dept: 'Executive',
+      loginEmail: 'admin@gamma.test',
+      role: 'COMPANY_ADMIN',
+    },
+    {
+      code: 'GAM-002',
+      first: 'Lakshmi',
+      last: 'Narayan',
+      designation: 'HR Business Partner',
+      dept: 'HR',
+      managerCode: 'GAM-001',
+      loginEmail: 'hr@gamma.test',
+      role: 'HR_MANAGER',
+    },
+    {
+      code: 'GAM-003',
+      first: 'Ravi',
+      last: 'Teja',
+      designation: 'Warehouse Supervisor',
+      dept: 'Operations',
+      managerCode: 'GAM-001',
+      loginEmail: 'employee@gamma.test',
+      role: 'EMPLOYEE',
+    },
   ]);
 
   // eslint-disable-next-line no-console
   console.log(`
-Seed complete. Every account below is a real Firebase Auth user
-(FIREBASE_AUTH_EMULATOR_HOST must be set for local dev, or these land in
-your real Firebase project).
+Seed complete. Every account below is a real Firebase Auth user in the
+project configured by FIREBASE_PROJECT_ID / FIREBASE_SERVICE_ACCOUNT_JSON.
 
 Platform admin console:
   email:    ${founderEmail}

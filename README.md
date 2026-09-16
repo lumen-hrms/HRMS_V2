@@ -50,49 +50,65 @@ the actual DDL.
 
 ## Running it locally
 
-Prerequisites: Docker, Node.js 22+. Auth is Firebase — you either point at a
-**real Firebase project** (default for this repo's local dev) or the local
-**Firebase Auth emulator** (needs a JRE; required by the e2e suite).
+Prerequisites: Docker (for MinIO + the e2e-test Postgres), Node.js 22+, and
+credentials for two shared services from the **team vault**:
+
+- **Database** — one shared Postgres (Supabase). Local Docker Postgres is
+  used *only* by the e2e suite. Schema is owned centrally: the migration
+  owner runs `./scripts/dev.sh migrate`; everyone else just pulls +
+  `prisma generate`.
+- **Firebase** — one shared project for Auth (dev, tests and CI all use real
+  Firebase; there is no emulator). Needs the service-account JSON + Web API
+  key server-side and the web app config client-side.
 
 `scripts\dev.bat` (Windows) / `./scripts/dev.sh` (macOS/Linux) does the whole
-sequence — Postgres + MinIO, deps, migrate, then the API + web dev servers.
-It reads `apps/api/.env`: if `FIREBASE_AUTH_EMULATOR_HOST` is set it starts
-and seeds against the emulator; otherwise it runs against your real Firebase
-project and skips auto-seed.
+sequence and checks `apps/api/.env` / `apps/web/.env` for what's missing.
 
 ```bash
-# 1. Start Postgres + MinIO
-docker compose up -d
-
-# 2. API
+# 1. API
 cd apps/api
 npm install
 cp .env.example .env
-#   For REAL Firebase (default): set FIREBASE_PROJECT_ID + FIREBASE_SERVICE_ACCOUNT_JSON,
-#   and DELETE the FIREBASE_AUTH_EMULATOR_HOST line.
-#   For the emulator: keep FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 and run
-#   `npm run emulator` (repo root) in a separate terminal.
+#   From the team vault:
+#     DATABASE_URL / TENANT_DATABASE_URL / PLATFORM_DATABASE_URL  (Supabase)
+#   From the Firebase console:
+#     FIREBASE_PROJECT_ID           – Project settings > General
+#     FIREBASE_SERVICE_ACCOUNT_JSON – Project settings > Service accounts >
+#                                     "Generate new private key" (whole JSON, one line)
+#     FIREBASE_WEB_API_KEY          – Project settings > General > Web API Key
 npm run prisma:generate
-npm run prisma:migrate        # applies schema + creates hrms_app/hrms_platform roles + RLS
-npm run prisma:seed           # OPTIONAL: seeds 3 demo tenants as Firebase users — prints logins
 npm run start:dev             # http://localhost:3000/api
+#   (no migrate/seed here — the shared DB is already migrated + seeded)
 
-# 3. Web (separate terminal)
+# 2. Web (separate terminal)
 cd apps/web
 npm install
-cp .env.example .env          # set VITE_FIREBASE_* to the same project; delete
-                              # VITE_FIREBASE_AUTH_EMULATOR_HOST for real Firebase
+cp .env.example .env          # VITE_FIREBASE_API_KEY / _AUTH_DOMAIN / _PROJECT_ID
+                              # for the SAME Firebase project
 npm run dev                   # http://localhost:5173, proxies /api to :3000
+
+# 3. MinIO (employee documents) — or just `./scripts/dev.sh up` which starts
+#    MinIO + both dev servers
+docker compose up -d minio
 ```
 
-Open http://localhost:5173, enter a tenant subdomain plus an email/password.
-If you ran the seed, use a subdomain of `acme` / `beta` / `gamma` and any
-seeded account (all share password `Passw0rd!123`). There is no MFA — the
-Firebase ID token is the session.
+Open http://localhost:5173, subdomain `acme` / `beta` / `gamma` + any seeded
+account (all share password `Passw0rd!123`). No MFA — the Firebase ID token
+is the session.
 
-The **e2e suite always needs the emulator** (`test/utils/fixtures.ts` mints
-test ID tokens from it) — `dev.bat test` / `dev.sh test` will tell you if
-`FIREBASE_AUTH_EMULATOR_HOST` isn't set.
+**Schema changes:** the migration owner writes the migration, runs
+`./scripts/dev.sh migrate` (applies it to the shared Supabase DB), commits.
+Everyone else: `git pull` + `npm --prefix apps/api run prisma:generate`.
+Nobody else runs migrate/reset against the shared DB.
+
+**e2e tests** run against a **local** Docker Postgres (they create and drop
+tenants — never point them at the shared DB). `./scripts/dev.sh test` brings
+up local Postgres, migrates it, and runs the suite. They sign in against the
+same real Firebase project (`test/utils/fixtures.ts` creates
+`e2e-*@example.test` users and deletes them in `afterAll`) — needs
+`FIREBASE_SERVICE_ACCOUNT_JSON` + `FIREBASE_WEB_API_KEY` +
+`FIREBASE_PROJECT_ID` in `apps/api/.env.test` (gitignored); CI reads them
+from repo secrets of the same names.
 
 The platform-admin console is a separate route: http://localhost:5173/platform-admin,
 login `founder@hrms-platform.dev` / `Passw0rd!123`.

@@ -7,6 +7,7 @@ import type { AppConfig } from '../../config/configuration';
 export interface TenantResolvedRequest extends Request {
   tenantId?: string;
   tenantSubdomain?: string;
+  tenantName?: string;
   tenantStatus?: string;
 }
 
@@ -39,7 +40,7 @@ export class TenantResolutionMiddleware implements NestMiddleware {
 
     const tenant = await this.platformPrisma.tenant.findUnique({
       where: { subdomain },
-      select: { id: true, subdomain: true, status: true },
+      select: { id: true, subdomain: true, name: true, status: true },
     });
 
     if (!tenant) {
@@ -51,6 +52,7 @@ export class TenantResolutionMiddleware implements NestMiddleware {
 
     req.tenantId = tenant.id;
     req.tenantSubdomain = tenant.subdomain;
+    req.tenantName = tenant.name;
     req.tenantStatus = tenant.status;
     next();
   }

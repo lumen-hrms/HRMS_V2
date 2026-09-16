@@ -1,6 +1,6 @@
 import * as React from 'react';
-import lumenLockup from '@/assets/brand/lumen-logo-lockup.png';
-import lumenMark from '@/assets/brand/lumen-mark.png';
+// Brand panel is a fixed navy constant — always the white mark (transparent PNG).
+import lumenMark from '@/assets/brand/lumen-mark-white.png';
 
 /**
  * Shared shell for every auth screen (tenant sign-in, Platform Admin
@@ -23,51 +23,63 @@ export function AuthSplitLayout({
     <div className="flex min-h-screen">
       <div
         data-brand-panel
-        className="relative flex w-[45%] max-md:w-full flex-col justify-center overflow-hidden px-12 py-14 max-md:px-6 max-md:py-9"
-        style={{ background: '#07141F' }}
+        className="relative isolate flex w-[45%] max-md:w-full flex-col justify-center overflow-hidden px-12 py-14 max-md:px-6 max-md:py-9"
+        style={{ background: '#020E19' }}
       >
-        <div
-          className="pointer-events-none absolute inset-x-0 top-[18%] h-px"
-          style={{ background: '#F5B544', opacity: 0.05 }}
-        />
-        <div
-          className="pointer-events-none absolute inset-x-0 top-[52%] h-px"
-          style={{ background: '#F5B544', opacity: 0.04 }}
-        />
-        <div
-          className="pointer-events-none absolute inset-x-0 top-[82%] h-px"
-          style={{ background: '#F5B544', opacity: 0.06 }}
-        />
-
-        <div className="relative z-[2] mb-14 flex items-center">
-          <img src={lumenLockup} alt="Lumen" className="h-8 w-auto" />
-        </div>
+        {/* Ambient motion — slow-drifting aurora blobs + a fine dot grid. */}
+        <span aria-hidden="true" className="brand-aurora brand-aurora--gold" />
+        <span aria-hidden="true" className="brand-aurora brand-aurora--blue" />
+        <span aria-hidden="true" className="brand-grid" />
 
         <div
-          data-brand-large
-          className="relative z-[2] mb-10 flex h-[168px] w-[168px] items-center justify-center max-md:hidden"
-        >
-          <div
-            className="absolute -inset-14 rounded-full"
-            style={{
-              background: 'radial-gradient(circle at 50% 58%, var(--lumen-glow) 0%, transparent 70%)',
-              backdropFilter: 'blur(30px)',
-            }}
-          />
-          <img src={lumenMark} alt="" className="relative h-full w-full object-contain" />
+          className="brand-hairline pointer-events-none absolute inset-x-0 top-[18%] h-px"
+          style={{ background: '#F5B544' }}
+        />
+        <div
+          className="brand-hairline pointer-events-none absolute inset-x-0 top-[52%] h-px"
+          style={{ background: '#F5B544', animationDelay: '-4s' }}
+        />
+        <div
+          className="brand-hairline pointer-events-none absolute inset-x-0 top-[82%] h-px"
+          style={{ background: '#F5B544', animationDelay: '-8s' }}
+        />
+
+        <div className="brand-in relative z-[2] mb-12 flex flex-col items-start gap-5">
+          <div className="relative">
+            <span aria-hidden="true" className="brand-mark-halo" />
+            <img
+              src={lumenMark}
+              alt=""
+              className="relative h-24 w-24 shrink-0 object-contain max-md:h-16 max-md:w-16"
+            />
+          </div>
+          <div className="flex flex-col">
+            <span
+              className="text-[34px] font-bold leading-none tracking-tight max-md:text-[28px]"
+              style={{ color: '#F5F7F9' }}
+            >
+              Lumen
+            </span>
+            <span
+              className="mt-2.5 text-[11px] font-semibold uppercase"
+              style={{ color: '#8FA0AD', letterSpacing: '0.36em' }}
+            >
+              Enterprise Suite
+            </span>
+          </div>
         </div>
 
         <h2
-          className="relative z-[2] mb-5 max-w-[360px] text-[26px] font-bold leading-[1.3]"
-          style={{ color: '#F5F7F9' }}
+          className="brand-in relative z-[2] mb-5 max-w-[360px] text-[26px] font-bold leading-[1.3]"
+          style={{ color: '#F5F7F9', animationDelay: '80ms' }}
         >
           Empower People. Build Tomorrow.
         </h2>
-        {taglineLines.map((line) => (
+        {taglineLines.map((line, i) => (
           <p
             key={line}
-            className="relative z-[2] mb-2.5 max-w-[360px] text-[15px] leading-relaxed"
-            style={{ color: '#AAB7C2' }}
+            className="brand-in relative z-[2] mb-2.5 max-w-[360px] text-[15px] leading-relaxed"
+            style={{ color: '#AAB7C2', animationDelay: `${140 + i * 60}ms` }}
           >
             {line}
           </p>
@@ -75,8 +87,8 @@ export function AuthSplitLayout({
 
         {operatorBadge && (
           <div
-            className="relative z-[2] mt-6 w-fit rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide"
-            style={{ background: 'rgba(245,181,68,0.12)', color: '#F5B544' }}
+            className="brand-in relative z-[2] mt-6 w-fit rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide"
+            style={{ background: 'rgba(245,181,68,0.12)', color: '#F5B544', animationDelay: '260ms' }}
           >
             Operator access
           </div>

@@ -1,48 +1,59 @@
 # HRMS — Project Context & Decisions
 
-Multi-tenant HRMS SaaS, built from `HRMS_SRS_v1.0(1).docx`. This file is the
-condensed decision record — read it before touching architecture, tenancy,
-or security code. It exists so a fresh Claude session (or you, on another
-machine) doesn't have to re-derive these calls from scratch.
+Multi-tenant HRMS SaaS. The domain model was seeded from an early spec
+draft (`HRMS_SRS_v1.0(1).docx`) that is **no longer maintained or
+followed** — this file and `docs/` are the source of truth now. This file
+is the condensed decision record — read it before touching architecture,
+tenancy, or security code. It exists so a fresh Claude session (or you, on
+another machine) doesn't have to re-derive these calls from scratch.
 
-**Builder context:** solo founder, occasional frontend contractor help,
-building toward a working demo for a startup co-founder pitch and a paid
-pilot with two customers (a startup + a hospital) inside 2–3 months.
+**Team context:** a dedicated project team (backend, frontend, infra) is
+building this as a production-grade implementation, delivered in
+structured module slices. First customers are a startup and a hospital.
+This is a solid build, not a throwaway demo — favour correctness and
+clean module boundaries over cutting corners for speed.
 
-## Why this deviates from the SRS
+## Architecture rationale
 
-The SRS's own architecture (microservices on Kubernetes/EKS, Kafka, Istio,
-Keycloak, Elasticsearch, schema-per-tenant, native mobile app, live
-government e-filing APIs) assumes a funded, multi-person team — its own
-Phase-1 roadmap prices "MVP" at 16 weeks with dedicated backend, frontend,
-mobile, DevOps, QA, payroll-SME and compliance-specialist roles in parallel.
-That doesn't fit one person on a 2–3 month clock. The SRS's *domain logic*
-(payroll math, statutory forms, roles, compliance obligations) is kept
-as-is; the *infrastructure and delivery plan* is re-cut. Full reasoning,
-diagrams, cost estimates and the week-by-week plan live in the architecture
-blueprint (ask the founder for the artifact link, or regenerate from this
-file + the SRS if it's been lost).
+A fully distributed architecture (microservices on Kubernetes/EKS, Kafka,
+Istio, Keycloak, Elasticsearch, schema-per-tenant, native mobile app,
+live government e-filing APIs) is more infrastructure than the current
+scale warrants — it carries the operational cost of a large service
+estate before there's load or a customer base to justify it. The domain
+scope (payroll math, statutory forms, roles, compliance obligations) is
+built in full; the delivery vehicle is a **modular monolith** with clean
+internal boundaries so a module *can* be split out later without a
+rewrite. Full reasoning, diagrams and the delivery plan live in the
+architecture blueprint (ask the team lead for the link).
 
 ## Stack (do not deviate without updating this file)
 
 | Layer | Choice | Not this, because |
 |---|---|---|
-| Backend | NestJS (Node.js/TypeScript) + Prisma + PostgreSQL | Not Spring Boot/microservices — one person can't operate 10 services + a mesh + a broker |
+| Backend | NestJS (Node.js/TypeScript) + Prisma + PostgreSQL | Not Spring Boot/microservices — a modular monolith covers the same domain scope without the operational cost of 10 services + a mesh + a broker at this scale |
 | Frontend | React + Vite (TypeScript), client-side rendered, React Router, Tailwind + shadcn/ui | Not Next.js — this is an authenticated dashboard behind login, SSR buys nothing |
-| Multi-tenancy | Shared DB, shared schema, `tenant_id` + PostgreSQL Row-Level Security | Not schema-per-tenant — RLS gives real isolation without per-tenant migration/connection tooling a solo dev would have to build |
+| Multi-tenancy | **Hybrid.** Default = *pooled*: shared DB, shared schema, `tenant_id` + PostgreSQL Row-Level Security. Premium = *dedicated*: database-per-tenant, plan-gated, for enterprise / regulated customers. The tenant→datasource mapping is a runtime lookup, never hardcoded. | Not schema-per-tenant — it carries silo's fan-out-migration cost without silo's physical isolation or independent-scaling upside. Not silo-for-everyone — per-tenant DB / provisioning / migration / backup ops isn't worth it for SMB tenants that pooling + RLS already isolate. |
 | Background jobs | BullMQ on Redis | Not Kafka — payslip PDFs, statutory files, email sends, don't need a broker at this scale |
 | Storage | S3 (private, presigned URLs) | — |
-| Auth | Firebase Auth — ID token *is* the session (Bearer header, SDK-refreshed), `tenantId`/`role` as server-set custom claims. No MFA. | Not a self-issued JWT/bcrypt/TOTP stack (the original choice, kept "for one less system to run and patch") — revisited for ship speed: hosted password reset/sign-in UI beats hand-rolling it solo. Not Keycloak either, same reasoning as before. |
+| Auth | Firebase Auth — ID token *is* the session (Bearer header, SDK-refreshed), `tenantId`/`role` as server-set custom claims. No MFA. | Not a self-issued JWT/bcrypt/TOTP stack (the original choice) — a hosted, audited password reset/sign-in UI beats maintaining our own. Not Keycloak either — one less system to run and patch. |
 | Hosting | AWS ap-south-1 (Mumbai), managed services: ECS Fargate, RDS, S3, CloudFront | Not EKS/Kubernetes — stays in-region for the "India-compliant" story without container-orchestration ops overhead |
 
 ## Multi-tenancy — the load-bearing decision
 
+**Hybrid isolation, two tiers. The *pooled* tier is the default; the
+*dedicated* tier is a plan-gated upsell — not a rewrite of the pooled one.**
+The one invariant that holds across both: the query layer resolves *which
+database* and *which tenant context* from trusted server state (the
+validated token's `tenantId` claim, the resolved subdomain) — **never from
+a raw request parameter** — and the app's runtime Postgres role never has
+`BYPASSRLS`.
+
+### Tier 1 — Pooled (default: STARTER / GROWTH, and ENTERPRISE unless it buys isolation)
+
 **One shared database, one shared schema.** Every tenant-owned table has a
 `tenant_id` column and a Postgres RLS policy keyed to the session variable
 `app.current_tenant_id`, set once per request/transaction from the
-validated Firebase ID token's `tenantId` custom claim — never from a raw
-request parameter. The app's Postgres role must **never** have
-`BYPASSRLS`.
+validated Firebase ID token's `tenantId` custom claim.
 
 Enforcement is layered, not single-point:
 1. Subdomain → tenant resolution; `tenantId`/`role` live as custom claims
@@ -55,7 +66,40 @@ Enforcement is layered, not single-point:
    read/write tenant B's data fails. This suite is non-negotiable —
    treat a regression here as a P0, not a bug.
 
-**Platform Admin (the founder's own operator role) is structurally
+### Tier 2 — Dedicated (database-per-tenant)
+
+A tenant whose subscription carries the *dedicated* isolation entitlement
+gets its **own Postgres database** (own credentials, own encryption key,
+own backup/PITR schedule, own capacity). Sold to enterprise / regulated
+customers (e.g. a hospital with a contractual "our data is physically
+separate" clause). Not the default — the operational cost per tenant only
+pays off when a customer needs and pays for it.
+
+What makes this cheap to add on top of Tier 1 rather than a fork:
+
+- **`tenant → datasource` is a lookup, not a constant.** A tenant record
+  carries its datasource (shared pool, or a dedicated connection string in
+  the platform vault). `TenantPrismaService` resolves the client from that
+  lookup per request; pooled tenants get the shared pool, dedicated tenants
+  get a per-tenant pool from a small registry.
+- **The schema and the query code are identical.** A dedicated DB runs the
+  same migrations and keeps `tenant_id` + RLS (it's one tenant's worth of
+  rows, but keeping the column + policy means zero branching in the query
+  layer — defense in depth, not dead weight).
+- **Provisioning is a platform-admin flow** (module 02): create the DB, run
+  `prisma migrate deploy` against it, seed defaults, record the datasource.
+  Migrations fan out: the shared DB **plus** every dedicated DB, with
+  partial-failure handling.
+- Entitlement lives on `Subscription` (layer 1 of `TENANT_CONFIGURATION.md`),
+  same place `enabledModules` / `features` do.
+
+**Status:** the pooled tier is fully built and test-verified. The dedicated
+tier is a **design target** — the datasource-lookup indirection, the
+per-tenant pool registry, the provisioning flow, and the fan-out migration
+runner are not built yet. Build them before selling the tier; don't
+retrofit hardcoded shared-pool assumptions in the meantime.
+
+**Platform Admin (the platform team's operator role) is structurally
 separate**, not a role flag inside the tenant app: its own schema
 (`tenants`, `subscriptions`, `platform_admin_users`, `platform_audit_log`)
 and its own Postgres role/connection with **zero grants** on tenant
@@ -65,11 +109,20 @@ schema — no join into PII tables required. Genuine support access to a
 tenant's data goes through a logged, time-boxed break-glass flow, not a
 standing permission.
 
-**Why not schema-per-tenant or DB-per-tenant** (both mentioned in the
-SRS): both multiply migration/connection/backup operational complexity
-per tenant — real engineering cost for isolation that RLS already buys at
-2 tenants. Keep DB-per-tenant in mind as a *paid dedicated tier* if a
-future enterprise/hospital contract demands it — not the default.
+**Why hybrid, and not one of the pure models:**
+
+- *Not silo (DB-per-tenant) for everyone* — per-tenant provisioning,
+  migration fan-out, connection pools, and backups are real, permanent ops
+  cost. Pooling + RLS already gives logical isolation the DB engine
+  enforces on every query; most SMB tenants never need more.
+- *Not schema-per-tenant (bridge)* — it has silo's fan-out-migration and
+  `search_path` cost without silo's physical separation, independent
+  scaling, or per-tenant backup/restore. Worst of both.
+- *So: pool by default, silo as a paid tier.* The dedicated tenant gets
+  true physical isolation; the ninety-percent case stays cheap and dense.
+  This is the mainstream SaaS shape (pool default, isolate the contracts
+  that require it) — Workday/Salesforce-scale systems run pooled; vendors
+  in regulated verticals offer DB-per-tenant as an enterprise SKU.
 
 ## Roles (fixed for V1 — no custom role builder yet)
 
@@ -91,7 +144,12 @@ only" (Employee) — those can't be expressed as a static role check alone.
   DB role has no `UPDATE`/`DELETE` grant on it.
 - PII fields (PAN, bank account) get application-layer encryption via a
   KMS data key on top of RDS/S3 encryption-at-rest — a raw DB dump alone
-  should not be enough to read them.
+  should not be enough to read them. **Built** (module 03):
+  `FieldEncryptionService` (`apps/api/src/crypto`) does AES-256-GCM with a
+  key from `FIELD_ENCRYPTION_KEY`; only ciphertext + a masked form are
+  stored, reveal is permissioned + logged. The key today is a static team-
+  vault secret, not yet a real AWS KMS-wrapped data key — that swap lands
+  with the production AWS migration and only touches that one file.
 - No blanket "PII must stay in India" legal claim — DPDP Act 2023 doesn't
   currently mandate that; hosting in Mumbai is a trust/latency choice, not
   a compliance requirement. Don't market it as the latter.
@@ -108,18 +166,119 @@ blueprint — check there before reviving one.
 ## V1 module scope
 
 **Done, merged to `main`, test-verified against real Postgres:** Auth +
-RBAC + tenant isolation (RLS), Platform Admin console (tenant
-onboarding/enable-disable/metadata only), Employee Master, Leave
-Management, role-aware Dashboard — backend and frontend both. See
-`docs/BACKEND_ARCHITECTURE.md` for the full traced reference and its §8
-for known gaps within these modules (line-manager leave-visibility scoping
-is a known-permissive placeholder; audit log tables exist but aren't
-written to yet).
+RBAC + tenant isolation (RLS), the Identity & Access *management* surface
+(NestJS `access` module — `GET /api/access/users` · `/access/me` ·
+`PATCH .../role` · `PATCH .../status` · `POST .../password-reset` ·
+`GET /api/access/audit` · `.../:id/activity` — plus the `LoginAuditEntry`
+table and append-only login-audit writes on every server-observed
+`POST /api/auth/session` outcome; e2e-tested in `test/access.e2e-spec.ts`;
+`VITE_ACCESS_MOCK` defaults **off**), Platform Admin console (tenant
+onboarding/enable-disable/metadata only), Employee Master, role-aware
+Dashboard — backend and frontend both. See `docs/BACKEND_ARCHITECTURE.md`
+for the full traced reference and its §8 for known gaps within these
+modules (the generic `audit_log` is now written to for access-change
+events but has no aggregation/UI yet).
+
+**Leave Management — done, 100% of its originally-scoped gaps closed,
+running live:** the line-manager leave-visibility placeholder is a real
+`reportingManagerId` check, holiday-aware working-day counts, request
+attachments, a tenant-configurable 1-or-2-level approval chain with
+escalation timers (BullMQ `leave` queue / Redis — first use of BullMQ in
+this repo), a monthly/quarterly accrual job (proration-aware for mid-year
+joiners), and every endpoint (team balances, balance adjustments, ledger,
+settings). Every cell of the frontend's role×tab matrix is wired to
+`apps/web/src/lib/leave`, whose `client.ts` defaults `USE_MOCK` to **off**
+(`VITE_LEAVE_MOCK === 'true'` forces the fixture store — same inverted-default
+pattern as `access/client.ts`; `LeaveService` maps every response into the
+frontend's denormalized contract itself). `TenantSettings.allowLopRequests`/`fyStartMonth`,
+`LeaveType.minNoticeDays`/`genderRestriction`/`requiresApproval` are all
+enforced/settable (gender check fails open on unrecognized
+`Employee.gender` — free-text field, no schema enum). Two features closed
+last: **comp-off** — `LeaveType.isCompOff` marks a tenant's designated
+type; `AttendanceService.clockIn()` detects a holiday/weekly-off day and
+calls `LeaveService.creditCompOff()` (idempotent, opt-in per tenant) —
+and **leave↔attendance reconciliation** — approving a request writes
+`AttendanceRecord.status = 'ON_LEAVE'` for its working days (direct Prisma
+access from `LeaveService`, not an `AttendanceService` import, to avoid a
+circular module dependency; reversed on cancel). Both are synchronous
+(at clock-in / approve-cancel time), not a nightly finalization job —
+Attendance's own much bigger "nightly finalization" gap (§5 of
+`docs/MODULE_SPECS.md`) stays exactly as deferred as it was. See
+`docs/MODULE_SPECS.md` §4 and `docs/LEAVE_UI_SPECS.md`.
+
+**Identity & Access — remaining gaps** (`docs/modules/01_IDENTITY_AND_ACCESS.md`
+§9): `BAD_CREDENTIALS` and `TENANT_SUSPENDED` sign-in failures aren't
+server-observable so aren't in the login trail (suspend/resume is logged
+once in `platform_audit_log` instead); no 2-year retention purge job yet.
 
 **Not started:** Payroll, Attendance, Compliance exports are the next
 slice — see the blueprint's 12-week plan for sequencing (payroll is the
 highest-effort, highest-risk module; protect its time budget over breadth
 elsewhere).
+
+## Keeping module status in sync — MANDATORY, no reminder needed
+
+`docs/MODULE_SPECS.md` holds the shared source of truth for module
+progress: the **status table** (✅ / 🟡 / 🔴 + progress bar + % per module)
+and the **per-module `**Status:**` lines**. Every developer reads it to
+know what's live without pulling the code.
+
+**This rule is always in force. Follow it automatically — you do not need
+to be asked, reminded, or given approval in the moment:**
+
+Whenever a change in this repo moves a module's real state — code added,
+removed, or reworked; a gap opened or closed; tests added; a sub-feature
+finished — you MUST update `docs/MODULE_SPECS.md` **in the same change /
+commit that caused the move**:
+1. Adjust that module's row in the status table: mark (✅/🟡/🔴), the
+   ASCII progress bar, and the `%`.
+2. Update the module's `**Status:**` line and its per-module gap list so
+   the named gaps still match reality.
+3. Update the `**Last synced to code:**` date (and commit ref, if known)
+   at the top of the file.
+4. If the change also invalidates the "V1 module scope" summary in this
+   file (`CLAUDE.md`), fix that too.
+
+Keep the bar honest — estimate against "done" as defined by that module's
+**Expectation** section, not against lines of code. If a change is purely
+cosmetic / internal and moves no module's state, no status edit is needed;
+say so briefly rather than silently skipping. If you're unsure which
+module a change belongs to, pick the closest and note the ambiguity in the
+commit message rather than skipping the update.
+
+## Tests are part of the feature — MANDATORY, no reminder needed
+
+**This rule is always in force, same standing as the status-sync rule
+above:** a module or feature is not "done" until it has tests, and an
+existing feature whose behavior changes must have its tests updated in the
+**same change** that changes the behavior — never a follow-up.
+
+1. **New backend logic** (a service method, a new endpoint, a state
+   machine, an authorization check) gets a unit test in the same PR/commit
+   — see `apps/api/src/employees/employees.service.spec.ts` for the
+   pattern (a small hand-built fake of the `TenantPrismaService`/
+   `FieldEncryptionService`/Firebase surface the service touches, not a
+   real DB). Cover the happy path, the rejection paths (bad input, wrong
+   role, wrong tenant), and any invariant the code claims to hold (e.g.
+   "never leaves partial state on failure" needs a test that forces the
+   failure and asserts nothing wrote).
+2. **A changed authorization rule or permission matrix cell** (who can call
+   what, row-scoping, a 403 path) always gets a test — these are exactly
+   the bugs that don't show up by clicking around, per the adversarial
+   tenant-isolation precedent in `CLAUDE.md`'s multi-tenancy section.
+3. **Before calling a change finished, actually run the suite** —
+   `npm run test:api` (or the project's `./scripts/dev.sh test` for the
+   full local gate: unit + e2e + lint + build) — don't assume new tests
+   pass from reading them.
+4. **Before ending a turn that touched frontend code, run what CI runs** —
+   `npm run build` (`tsc -b && vite build` for the web app) and
+   `npm run lint` from the repo root, not just `vite build` alone, which
+   skips the project's type-check step and misses exactly the class of
+   error (unused imports, a field missing from a hand-written interface)
+   that only shows up under `tsc -b`.
+5. **If a change is purely cosmetic/internal and adds no new logic**
+   (e.g. a copy change, a class-name tweak), no new test is needed — say
+   so briefly rather than silently skipping, same as the status-sync rule.
 
 ## Project structure
 
@@ -134,6 +293,15 @@ apps/
 packages/
   shared-types/   DTOs/enums shared by api + web
 infra/            Terraform: VPC, RDS, ECS, S3, CloudFront, IAM
+docs/
+  UPPER_SNAKE_CASE.md   cross-cutting architecture + contracts — source of
+                        truth, kept in sync with code
+  modules/NN_NAME.md    one deep spec per module (personas, flows, technical
+                        + functional expectations, permission matrix) —
+                        source of truth
+  ui-build-prompts/     lowercase NN-name.md prompts fed to a UI build tool
+                        — build inputs, NOT source of truth
+  README.md             the docs naming convention, in full
 ```
 
 ## Working conventions
@@ -145,4 +313,24 @@ infra/            Terraform: VPC, RDS, ECS, S3, CloudFront, IAM
   contract — lets frontend work move somewhat independently of backend
   internals.
 - Prefer the simpler, more boring option on any judgment call not covered
-  above — this is maintained solo.
+  above — keep the codebase approachable for the whole team.
+- **Dev database is shared** — one Supabase Postgres the whole team connects
+  to (via the Supavisor pooler), so everyone sees the same data. Schema is
+  owned centrally: the migration owner runs `./scripts/dev.sh migrate`;
+  everyone else pulls + `prisma generate`. The three-role RLS isolation
+  model is unchanged (created there by `20260101000002_roles_and_rls`).
+  Local Docker Postgres is now used **only** by the e2e suite (it
+  creates/drops tenants — never point it at the shared DB). Connection
+  strings live in the team vault, not git. This is a dev-infra choice; prod
+  is still RDS ap-south-1 per the Stack table.
+- **Testing / preview deploy** — the API runs in Docker on a single
+  free-tier **AWS EC2 `t3.micro`** (`apps/api/Dockerfile`, ap-northeast-1,
+  port 80, `--restart unless-stopped`, plain `node dist/main.js` + the Leave
+  BullMQ worker) and the web app on **Vercel** (`apps/web/vercel.json`,
+  static Vite build with a `/api/*` rewrite proxying to the box —
+  browser↔Vercel is HTTPS, Vercel↔EC2 is server-side HTTP). DB stays on
+  Supabase, Auth on Firebase. Full runbook + env-var lists in
+  `docs/DEPLOY.md`. This is *not* the production target — that's still AWS
+  ap-south-1 **with RDS** (migrate off Supabase) per the Stack table, built
+  as its own infra slice. Migrations are never run from the container; the
+  schema owner applies them to Supabase deliberately.

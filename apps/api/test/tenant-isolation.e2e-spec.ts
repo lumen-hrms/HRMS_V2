@@ -4,6 +4,7 @@ import { PrismaClient } from '@prisma/client';
 import { createTestApp } from './utils/test-app';
 import {
   cleanupTenantFixture,
+  deleteTrackedFirebaseUsers,
   createTenantFixture,
   getIdTokenForEmail,
   superuserPrisma,
@@ -36,6 +37,7 @@ describe('Tenant isolation (e2e)', () => {
   afterAll(async () => {
     await cleanupTenantFixture(tenantA.tenantId);
     await cleanupTenantFixture(tenantB.tenantId);
+    await deleteTrackedFirebaseUsers();
     await superuserPrisma.$disconnect();
     await app.close();
   });
@@ -122,7 +124,7 @@ describe('Tenant isolation (e2e)', () => {
     // superuser fixture connection (arrange step, not part of what's under
     // test), then try to approve it as tenant A's manager.
     const leaveType = await superuserPrisma.leaveType.create({
-      data: { tenantId: tenantB.tenantId, name: 'E2E Leave', annualQuota: 10 },
+      data: { tenantId: tenantB.tenantId, name: 'E2E Leave', code: 'E2E', annualQuota: 10 },
     });
     const leaveRequest = await superuserPrisma.leaveRequest.create({
       data: {
@@ -178,6 +180,22 @@ describe('Tenant isolation (e2e)', () => {
       ).rejects.toThrow(/permission denied/i);
     } finally {
       await rawPlatformClient.$disconnect();
+    }
+  });
+
+  it('fails closed on the new leave tables too: no tenant context set sees zero rows', async () => {
+    const rawAppClient = new PrismaClient({
+      datasources: { db: { url: process.env.TENANT_DATABASE_URL } },
+    });
+    try {
+      // Deliberately do NOT call set_config first — mirrors the `users`
+      // check above for the two tables this module added (leave_approvals,
+      // leave_ledger_entries): RLS must fail closed on these exactly the
+      // same way it does on every other tenant table.
+      expect(await rawAppClient.leaveApproval.count()).toBe(0);
+      expect(await rawAppClient.leaveLedgerEntry.count()).toBe(0);
+    } finally {
+      await rawAppClient.$disconnect();
     }
   });
 

@@ -5,6 +5,14 @@ export interface AppConfig {
   firebase: {
     projectId: string;
     serviceAccountJson?: string;
+    /**
+     * Firebase Web API key — used server-side ONLY to call the Identity
+     * Toolkit REST endpoint that sends a hosted password-reset email
+     * (admin-triggered reset for another user; module 01 §4.4). Not a
+     * secret (it ships in the web client too). Against the Auth emulator
+     * any non-empty value works.
+     */
+    webApiKey?: string;
   };
   db: {
     tenantUrl: string;
@@ -18,6 +26,21 @@ export interface AppConfig {
     bucket: string;
     forcePathStyle: boolean;
   };
+  redis: {
+    url: string;
+  };
+  encryption: {
+    /**
+     * The application-layer "KMS data key" for PII field encryption (PAN,
+     * bank account — CLAUDE.md's security non-negotiable). A base64-encoded
+     * 32-byte AES-256 key. Today this is a static secret from the team
+     * vault, same tier as the DB/Firebase credentials; when the production
+     * AWS deployment lands (CLAUDE.md's Stack table), swap the source for a
+     * real AWS KMS-wrapped data key without touching FieldEncryptionService's
+     * interface — only where the key comes from changes.
+     */
+    fieldKeyBase64?: string;
+  };
 }
 
 export default (): AppConfig => ({
@@ -27,6 +50,7 @@ export default (): AppConfig => ({
   firebase: {
     projectId: process.env.FIREBASE_PROJECT_ID ?? 'hrms-platform-dev',
     serviceAccountJson: process.env.FIREBASE_SERVICE_ACCOUNT_JSON,
+    webApiKey: process.env.FIREBASE_WEB_API_KEY,
   },
   db: {
     tenantUrl: process.env.TENANT_DATABASE_URL as string,
@@ -39,5 +63,11 @@ export default (): AppConfig => ({
     secretKey: process.env.S3_SECRET_KEY ?? '',
     bucket: process.env.S3_BUCKET ?? 'hrms-documents',
     forcePathStyle: (process.env.S3_FORCE_PATH_STYLE ?? 'true') === 'true',
+  },
+  redis: {
+    url: process.env.REDIS_URL ?? 'redis://localhost:6379',
+  },
+  encryption: {
+    fieldKeyBase64: process.env.FIELD_ENCRYPTION_KEY,
   },
 });

@@ -9,10 +9,13 @@ import { DashboardPage } from '@/pages/dashboard';
 import { EmployeeListPage } from '@/pages/employees/list';
 import { EmployeeDetailPage } from '@/pages/employees/detail';
 import { EmployeeCreatePage } from '@/pages/employees/create';
+import { EmployeeBulkImportPage } from '@/pages/employees/import';
 import { OrgChartPage } from '@/pages/org-chart';
 import { DepartmentsPage } from '@/pages/departments';
 import { LeavePage } from '@/pages/leave';
 import { AttendancePage } from '@/pages/attendance';
+import { AccessPage } from '@/pages/access';
+import { AccountPage } from '@/pages/access/account';
 import { PlatformAdminConsole } from '@/pages/platform-admin/console';
 
 export default function App() {
@@ -21,7 +24,7 @@ export default function App() {
       <ToastProvider>
       <BrowserRouter>
         <Routes>
-          <Route path="/platform-admin" element={<PlatformAdminConsole />} />
+          <Route path="/platform-admin/*" element={<PlatformAdminConsole />} />
           <Route
             path="/*"
             element={
@@ -38,11 +41,14 @@ export default function App() {
                     <Route index element={<DashboardPage />} />
                     <Route path="employees" element={<EmployeeListPage />} />
                     <Route path="employees/new" element={<EmployeeCreatePage />} />
+                    <Route path="employees/import" element={<EmployeeBulkImportPage />} />
                     <Route path="employees/:id" element={<EmployeeDetailPage />} />
                     <Route path="org-chart" element={<OrgChartPage />} />
                     <Route path="departments" element={<DepartmentsPage />} />
                     <Route path="leave" element={<LeavePage />} />
                     <Route path="attendance" element={<AttendancePage />} />
+                    <Route path="access" element={<AccessPage />} />
+                    <Route path="account" element={<AccountPage />} />
                   </Route>
                 </Routes>
               </AuthProvider>

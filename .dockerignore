@@ -1,0 +1,21 @@
+# API image builds from the repo root — keep the context small.
+**/node_modules
+**/dist
+**/coverage
+**/.turbo
+.git
+.github
+apps/web
+docs
+infra
+packages
+scripts
+*.docx
+*.md
+**/.env
+**/.env.*
+!apps/api/.env.example
+.pgdata
+.pglog
+*.log
+.DS_Store

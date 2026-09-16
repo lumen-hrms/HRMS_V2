@@ -9,6 +9,8 @@ layouts with all overlays and states instead of guessing.
 tool. It already carries the frontend stack, the design tokens, the data
 dictionary, and the per-role screen map. Pair it with:
 
+- `docs/modules/04_LEAVE_MANAGEMENT.md` — the module source of truth
+  (personas, flows, technical + functional expectations, permissions matrix).
 - `docs/LEAVE_UI_SPECS.md` — the API contract (endpoint inventory, `live` vs
   `planned`, per-screen contracts).
 - `apps/web/src/lib/leave/types.ts` — the exact TypeScript types the screens
@@ -49,8 +51,8 @@ system-of-record feel. Not a marketing site, not a consumer app.
 | Path alias | `@/*` → `src/*`. |
 | Dates/money | Timestamps are ISO UTC strings, display in **IST**, format like `11–12 Aug 2026`. Day counts are decimals (`Decimal(6,2)`) — render `1.5d`. |
 
-<!-- CANONICAL §2.2 — keep this block byte-identical in docs/leave-management.md
-     and docs/employee-master.md (and any future module prompt). -->
+<!-- CANONICAL §2.2 — keep this block byte-identical in every
+     docs/ui-build-prompts/NN-*.md file (and any future module prompt). -->
 ### 2.2 Design system / tokens — single source of truth
 
 **Authoritative token definitions live in `apps/web/src/index.css`** (`:root`,
