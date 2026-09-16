@@ -1,0 +1,33 @@
+name: Deploy API to EC2
+
+# Testing-deploy CD, per docs/DEPLOY.md. Rebuilds and restarts the API
+# container on the EC2 box on every push to dev. Not used for the web app
+# (Vercel already auto-deploys from git on its own) and not part of the
+# real prod pipeline (still AWS ap-south-1 + RDS, per CLAUDE.md's Stack
+# table) — this only targets the free-tier testing box.
+
+on:
+  push:
+    branches: [dev]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH and redeploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            cd ~/HRMS_V2
+            git checkout dev
+            git pull origin dev
+            DOCKER_BUILDKIT=0 docker build -f apps/api/Dockerfile -t hrms-api .
+            docker rm -f hrms-api || true
+            docker run -d --name hrms-api --restart unless-stopped \
+              --env-file apps/api/.env -p 80:3000 --network hrms hrms-api
+            sleep 5
+            curl -f http://localhost/api/health

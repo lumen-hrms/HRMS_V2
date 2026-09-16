@@ -153,30 +153,36 @@ verbatim, just strip any surrounding quotes.)
 
 ### 2c. Build + run
 
+**Redis is required to boot, not optional** — `LeaveAccrualProcessor.onModuleInit()`
+(`apps/api/src/leave/leave-accrual.processor.ts`) does
+`await this.leaveQueue.upsertJobScheduler(...)` against BullMQ, which hangs
+`onModuleInit` forever (never resolves, never throws) if `REDIS_URL` isn't
+reachable — `app.listen()` never gets called and the API just sits there,
+looking "up" in `docker ps` while `curl`ing it fails with `Connection reset
+by peer`. Start Redis and put both containers on one Docker network first:
+
 ```bash
 cd ~/hrms
+docker network create hrms
+docker run -d --name redis --restart unless-stopped --network hrms redis:7-alpine
+
 # BuildKit isn't installed on a fresh AL2023 Docker — force the legacy builder.
 DOCKER_BUILDKIT=0 docker build -f apps/api/Dockerfile -t hrms-api .
 
+# .env must include: REDIS_URL=redis://redis:6379
 docker run -d --name hrms-api --restart unless-stopped \
-  --env-file apps/api/.env -p 80:3000 hrms-api
+  --env-file apps/api/.env -p 80:3000 --network hrms hrms-api
 
 curl http://localhost/api/health          # -> {"status":"ok",...}
 ```
 
 From your laptop: `curl http://<elastic-ip>/api/health`.
 
-### Optional extras
+(TODO for the team: wrap that `upsertJobScheduler` call with a timeout/catch
+so a missing Redis degrades gracefully instead of hanging the whole API —
+this doc works around the bug, it doesn't fix it.)
 
-- **Redis / scheduled Leave jobs.** The Leave BullMQ queue
-  (`leave-escalation` / `leave-accrual`) reads `REDIS_URL` (default
-  `redis://localhost:6379`). Without a reachable Redis the API still boots
-  and every request-path feature works — only the *timed* jobs don't run
-  (you'll see ioredis reconnect logs). To enable: `docker run -d --name
-  redis --restart unless-stopped redis:7-alpine`, add
-  `REDIS_URL=redis://redis:6379` to `.env`, and put both containers on one
-  network (`docker network create hrms && docker network connect hrms
-  redis && ...--network hrms` on the api run).
+### Optional extras
 - **S3 / document uploads.** `StorageService` fails soft without it — the
   rest of the API is fine. To enable, add `S3_ENDPOINT` / `S3_REGION` /
   `S3_ACCESS_KEY` / `S3_SECRET_KEY` / `S3_BUCKET` to `.env` (any
@@ -241,14 +247,20 @@ needed. A clean reseed is an owner action from a laptop:
 
 ## 6. Redeploying
 
-**API** (SSH to the box):
+**API — automatic.** `.github/workflows/deploy-api.yml` SSHes into the box
+and re-runs the build/run steps below on every push to `dev`. Needs two
+repo secrets (Settings → Secrets and variables → Actions): `EC2_HOST` (the
+Elastic IP) and `EC2_SSH_KEY` (the full contents of the `.pem` key) — add
+these directly in the GitHub UI, never paste a private key elsewhere.
+
+**API — manual** (SSH to the box, same thing the workflow runs):
 
 ```bash
 cd ~/hrms && git pull
 DOCKER_BUILDKIT=0 docker build -f apps/api/Dockerfile -t hrms-api .
 docker rm -f hrms-api
 docker run -d --name hrms-api --restart unless-stopped \
-  --env-file apps/api/.env -p 80:3000 hrms-api
+  --env-file apps/api/.env -p 80:3000 --network hrms hrms-api
 ```
 
 **Web:** push to the tracked branch → Vercel auto-builds. Or `vercel --prod`
