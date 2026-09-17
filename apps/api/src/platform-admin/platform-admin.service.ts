@@ -5,6 +5,7 @@ import {
   Inject,
   Injectable,
   Logger,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -504,9 +505,30 @@ export class PlatformAdminService {
       if (err?.code === 'auth/email-already-exists') {
         throw new BadRequestException('That admin email is already registered with Firebase');
       }
-      throw err;
+      // Anything else here is almost always the Admin SDK itself failing to
+      // authenticate to Google (revoked/rotated service-account key, clock
+      // skew) rather than a bad request — surface that distinctly instead of
+      // letting a raw Firebase error reach the client as an opaque 500.
+      this.logger.error(
+        `Firebase Admin could not create the tenant admin user for ${email} — check FIREBASE_SERVICE_ACCOUNT_JSON`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      throw new ServiceUnavailableException(
+        'Could not create the tenant admin — the identity provider is unreachable. Check the Firebase Admin service-account credentials.',
+      );
     }
-    await this.firebaseAuth.setCustomUserClaims(firebaseUid, { tenantId, role: 'COMPANY_ADMIN' });
+
+    try {
+      await this.firebaseAuth.setCustomUserClaims(firebaseUid, { tenantId, role: 'COMPANY_ADMIN' });
+    } catch (err) {
+      this.logger.error(
+        `Firebase Admin could not set custom claims for ${email} — check FIREBASE_SERVICE_ACCOUNT_JSON`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      throw new ServiceUnavailableException(
+        'Could not finish setting up the tenant admin — the identity provider is unreachable. Check the Firebase Admin service-account credentials.',
+      );
+    }
 
     const user = await scoped.user.create({
       data: { tenantId, email, firebaseUid, role: 'COMPANY_ADMIN' },
