@@ -22,7 +22,37 @@
 > code are the source of truth.)
 >
 > **Last synced to code:** 2026-09-18. Landed since the previous sync
-> (2026-09-15) — including a second pass later the same day:
+> (2026-09-15) — including two later passes the same day:
+>
+> - **Attendance & Time Tracking reaches 100%.** Every item on §5's
+>   Known-gaps list is closed: web clock-in/out now write `Punch` rows
+>   (source `WEB`) as the source-of-truth capture the nightly job reads;
+>   `AttendanceFinalizationProcessor` (new BullMQ `attendance` queue, same
+>   `upsertJobScheduler` daily-cron pattern as the other processors) runs
+>   two jobs — `finalize` (02:00 UTC, per tenant per employee, resolves
+>   *yesterday*: holiday → weekly-off → punches → genuine unexplained
+>   `ABSENT`, skipping any day that already has a real outcome) and
+>   `resolve-cutoff` (03:00 UTC, auto-approves/rejects still-`PENDING`
+>   regularization requests on each tenant's own `payrollCutoffDay`, per
+>   `unactionedBehavior`). Regularization requests now enforce
+>   `regularizationWindowDays`/`regularizationMonthlyCap` at request time
+>   and flag the day `PENDING_REGULARIZATION`; a full approve/reject/
+>   bulk-approve flow exists for Line Manager (recursive subtree, mirroring
+>   Leave's `recursiveReportIds` pattern) and HR/Admin, audited via
+>   `audit_log`. New manager/HR views: `GET /attendance/team/roster` (team
+>   tab) and `POST /attendance/mark` (manual marking, FR-ATT-001) on the
+>   web app's new **Team** and **Approvals** tabs (visible to Line Manager
+>   and HR/Admin; Settings stays Admin/HR-only). `today()`/`stats()` now
+>   report overtime hours (time beyond `Shift.minHoursFullDay` — converting
+>   to statutory per-state overtime pay stays Payroll's job, not built).
+>   `getLopDays(employeeId, month)` + `GET /attendance/lop-days` is the
+>   defined Payroll export contract. GPS/biometric/selfie-QR capture and
+>   `POST /attendance/ingest` remain explicitly deferred (CLAUDE.md), not
+>   counted against 100%. 152 API unit tests pass (40 in
+>   `attendance.service.spec.ts`, 10 new in
+>   `attendance-finalization.processor.spec.ts`); `tsc`/`vite build`/lint
+>   clean on both apps. Not e2e/browser-verified — no test credentials for
+>   a Line Manager/HR session in this environment.
 >
 > - **Tenant Configuration reaches 100%.** The last piece — a skippable,
 >   resumable first-run setup wizard
@@ -229,7 +259,7 @@
 | 2. Platform Admin | ✅ | `███████████████████░` 99% — full operator console UI (tenants list, new-tenant wizard, tenant detail tabs, **Plans catalog**, audit screen); onboarding emails a hosted reset link; **operator-editable `platform.plans`** (per-seat list price / default seats / modules / features / isolation tier) with snapshot-at-assign + re-snapshot-on-renewal; **per-tenant negotiated per-seat rate** (`PATCH .../pricing`; monthly = rate × seats, computed); `PATCH .../plan` + `POST .../renew` live (renewal now also runs on a daily scheduled job off `renewsAt`); `PlatformAuditLog` written for every operator action and readable (`GET .../audit`), now true append-only at the DB grant level; `GET tenants/:id` and `POST .../refresh-headcount` live. Break-glass has a full audited request/track/expire/revoke lifecycle but does not yet grant an operator actual elevated tenant-data access during the window — that escalation mechanism is a deliberate follow-on |
 | 3. Employee Master + Org Structure | ✅ | `████████████████████` 100% — lifecycle state machine, the full field set (statutory/bank via KMS-style AES-256-GCM encryption, emergency contacts, comp-adjacent fields), bulk-import UI, document hardening, department edit/delete-with-reassign, an interactive org chart (search/expand/collapse/zoom/quick-view), a real photo-upload widget, a proper reveal-reason dialog, and Leave's recursive Line-Manager scoping mirror are all live. Only the deliberately-deferred BU→Team hierarchy remains |
 | 4. Leave Management | ✅ | `████████████████████` 100% — backend fully wired & tested; FE live path built and running against the real API by default (`client.ts`'s `USE_MOCK` now defaults to **off**, matching `access/client.ts` — set `VITE_LEAVE_MOCK=true` to force the fixture store); `allowLopRequests`/`minNoticeDays`/`fyStartMonth`/`genderRestriction`/`requiresApproval` all enforced/settable; mid-year-joiner proration; comp-off credit on holiday/weekly-off clock-in; approved leave reconciles into `AttendanceRecord.ON_LEAVE` |
-| 5. Attendance & Time Tracking | 🟡 | `█████████████░░░░░░░` 60% — now reads the tenant's `Shift`/`tenant_settings` config instead of hardcoded constants, and is gated behind the `ATTENDANCE` plan entitlement. Still missing: nightly finalization job, manager-facing views, regularization-approval routes |
+| 5. Attendance & Time Tracking | ✅ | `████████████████████` 100% — reads the tenant's `Shift`/`tenant_settings` config, gated behind the `ATTENDANCE` plan entitlement; punches write-path, a nightly finalization job (holiday → weekly-off → punches → genuine absence), full regularization approval (window/cap enforcement, approve/reject/bulk-approve, audited, auto-resolved at payroll cut-off), manager/HR team roster + manual marking, overtime hours, and a `getLopDays()` export contract for Payroll are all live. GPS/biometric/selfie-QR capture and `POST /attendance/ingest` stay explicitly deferred (CLAUDE.md) |
 | 6. Dashboard | ✅ | `█████████████████░░░` 85% |
 | 7. Payroll Engine | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
 | 8. Statutory Compliance | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
@@ -556,11 +586,10 @@ must validate and report per-row rather than fail the batch.
 ### Known gaps / TODO
 
 - The Line-Manager recursive-subtree decision (§4.1 of the deep spec) is
-  now mirrored in Leave (module 04) — see the 2026-09-18 sync note at the
-  top of this file for exactly which checks changed and which stayed
-  direct-only on purpose. Attendance (module 05) has no manager-facing
-  views at all yet to mirror into — nothing to fix here; that's module 05's
-  own pre-existing gap (§5 "Known gaps" #5, manager/HR views).
+  now mirrored in both Leave (module 04) and Attendance (module 05, its
+  `teamRoster`/`pendingRegularizations`/approve-reject scoping) — see the
+  2026-09-18 sync notes at the top of this file for exactly which checks
+  changed and which stayed direct-only on purpose.
 - BU/Team hierarchy levels remain deliberately deferred (flat hierarchy is
   V1 scope, not a gap).
 
@@ -706,34 +735,37 @@ What follows is a scope note, not a gap:
 
 **Deep spec:** `docs/modules/05_ATTENDANCE.md` ·
 **UI prompt:** `docs/ui-build-prompts/05-attendance.md`
-**Status:** 🟡 60% — employee self-service, now shift/tenant-config-aware and
+**Status:** ✅ 100% — employee self-service, shift/tenant-config-aware and
 plan-gated; a Company Admin/HR Manager Settings tab manages shifts +
-attendance/general config
+attendance/general config; a nightly finalization job, full regularization
+approval, and manager/HR team views are all live. Only the explicitly
+deferred capture channels (GPS/biometric/selfie-QR, `POST /attendance/ingest`)
+remain unbuilt — see `CLAUDE.md` → "Explicitly deferred".
 **Code:** `apps/api/src/attendance`, `apps/web/src/pages/attendance`
 
 ### Expectation
 
 Per-employee daily attendance from clock-in/out with breaks; a monthly
 calendar + stats view; a regularisation (correction-request) workflow
-with **manager approval within 7 days**; and month-end data that feeds
-LOP into payroll. Manual marking by HR with an audit trail. Shifts and
-overtime per state law. Biometric/GPS capture is **deferred**.
+with manager approval; and month-end data that feeds LOP into payroll.
+Manual marking by HR with an audit trail. Shifts and overtime hours.
+Biometric/GPS capture is **deferred**.
 
 ### Feature list
 
 | Feature | SRS | V1 status |
 |---|---|---|
-| Clock-in / clock-out | — | ✅ `POST /attendance/clock-in`, `/clock-out` |
+| Clock-in / clock-out | — | ✅ `POST /attendance/clock-in`, `/clock-out` — also writes a `Punch` row (source `WEB`), the source-of-truth capture the nightly job and any future device/import source read |
 | Break start / end | — | ✅ `AttendanceBreak` rows |
-| "Today" status card | FR-ESS-001 | ✅ `GET /attendance/today` |
+| "Today" status card | FR-ESS-001 | ✅ `GET /attendance/today` — now includes `overtimeMs` |
 | Monthly calendar (per-day status) | — | ✅ `GET /attendance/calendar?month=` |
-| Monthly stats (present/absent/late/hours) | — | ✅ `GET /attendance/stats?month=` |
-| Regularisation request (reason, subject to approval, 7-day window) | FR-ATT-009 | 🟡 employee can **create / list / cancel**; **no approver endpoint**, no 7-day enforcement |
-| Manual attendance marking by HR + audit trail | FR-ATT-001 | 🔴 |
-| Shift definitions (Fixed / Rotational / Flexible) | FR-ATT-006 | ✅ `Shift` catalogue (CRUD via `/attendance/shifts`, Settings tab) — `type` (FIXED/FLEXI/ROTATIONAL) is stored and settable; clock-in status logic reads the resolved shift's start time/grace, but doesn't yet branch behavior per `type` (e.g. FLEXI's core-hours window) |
-| Late-arrival / early-departure flags + grace period | FR-ATT-008 | ✅ `AttendanceStatus` has a late value; grace period is per-shift and settable (`Shift.graceMinutes`, Settings tab) — no longer a hardcoded constant |
-| Overtime calculation (state rates) | FR-ATT-007 | 🔴 |
-| Month-end feed into payroll LOP | FR-ATT-010 | 🔴 (blocked on Payroll) |
+| Monthly stats (present/absent/late/hours) | — | ✅ `GET /attendance/stats?month=` — now includes `overtimeHours` |
+| Regularisation request (reason, subject to approval, window) | FR-ATT-009 | ✅ create/list/cancel, **plus** `regularizationWindowDays` (raise-by deadline) and `regularizationMonthlyCap` enforced at request time; flags the day `PENDING_REGULARIZATION` while under dispute |
+| Manual attendance marking by HR + audit trail | FR-ATT-001 | ✅ `POST /attendance/mark` — reasoned, writes `audit_log` |
+| Shift definitions (Fixed / Rotational / Flexible) | FR-ATT-006 | ✅ `Shift` catalogue (CRUD via `/attendance/shifts`, Settings tab) — `type` is stored/settable; FLEXI's core-hours window isn't yet a distinct behavior branch |
+| Late-arrival / early-departure flags + grace period | FR-ATT-008 | ✅ per-shift, settable |
+| Overtime calculation | FR-ATT-007 | ✅ hours beyond `Shift.minHoursFullDay`, on `today()`/`stats()`. **Scope note:** this measures TIME only — converting to statutory per-state overtime PAY is Payroll's job (module 07, not built) |
+| Month-end feed into payroll LOP | FR-ATT-010 | ✅ `getLopDays(employeeId, month)` + `GET /attendance/lop-days` — the defined contract; Payroll itself doesn't exist yet to call it |
 | GPS geo-fenced check-in | FR-ATT-002 | 🔴 deferred |
 | Biometric device (ZKTeco/eSSL) integration | FR-ATT-003 | 🔴 deferred (see `CLAUDE.md`) |
 | Selfie / QR check-in | FR-ATT-004/005 | 🔴 deferred |
@@ -741,94 +773,96 @@ overtime per state law. Biometric/GPS capture is **deferred**.
 ### Happy path (employee, today)
 
 1. Employee → **Attendance** → **Clock in** (`POST /attendance/clock-in`)
-   → an `AttendanceRecord` for today is opened; status computed
-   (e.g. `PRESENT` / late).
+   → an `AttendanceRecord` for today is opened (status computed) and a
+   `Punch` row is written.
 2. Takes lunch → **Start break** / **End break** → `AttendanceBreak` rows;
    worked-hours exclude break time.
-3. End of day → **Clock out** → record closed, total hours finalised.
+3. End of day → **Clock out** → record closed, total hours finalised;
+   overtime shown once effective time exceeds the shift's target.
 4. Views the **calendar** for the month and the **stats** summary.
 
-### Happy path (regularisation — partially built)
+### Happy path (regularisation)
 
 1. Employee forgot to clock in Tuesday → **Request regularisation** →
    picks the date, a `RegularizationReasonType`, and a note →
-   `POST /attendance/regularization` → `RegularizationRequest` at
-   `PENDING`.
-2. *(Target, not built)* Their manager sees it in a pending queue and
-   approves/rejects within 7 days; on approval the `AttendanceRecord` for
-   that date is created/updated and the audit trail records who changed
-   it.
+   `POST /attendance/regularization` → rejected if the date is outside
+   `regularizationWindowDays` or the monthly cap is reached; otherwise
+   creates a `PENDING` `RegularizationRequest` and flags that day
+   `PENDING_REGULARIZATION`.
+2. Their manager (recursive subtree) or HR/Admin sees it in **Attendance →
+   Approvals** → `POST .../:id/approve` finalizes the day PRESENT/LATE from
+   the requested times (or `/reject` reverts it to its base
+   holiday/weekly-off/absent status) — both write an `audit_log` row.
+   Multiple requests can be bulk-approved.
 3. Employee can `POST /attendance/regularization/:id/cancel` while it's
    still pending.
+4. If nobody decides it before the tenant's `payrollCutoffDay`, the nightly
+   `resolve-cutoff` job auto-resolves it per `unactionedBehavior`
+   (`AUTO_APPROVE`/`AUTO_REJECT`), auditing the resolution with actor `null`.
+
+### Happy path (manager/HR views)
+
+1. A Line Manager or HR/Admin opens **Attendance → Team** → picks a date →
+   `GET /attendance/team/roster?date=` shows every report's status for that
+   day (scoped to the caller's recursive subtree; unscoped for HR/Admin).
+2. HR/Admin can **Mark** any row directly (`POST /attendance/mark`) for the
+   one-off cases self-service/regularization don't cover.
+3. **Attendance → Approvals** is the regularisation queue from the happy
+   path above.
+
+### Happy path (nightly finalization — no human involved)
+
+Once a day (02:00 UTC), for every non-suspended tenant, every employee,
+*yesterday*: if the day already has a real outcome (a self-service
+clock-in, Leave's synchronous `ON_LEAVE` write, or an active regularization
+dispute) it's left untouched. Otherwise: holiday → `HOLIDAY`; tenant
+weekly-off → `WEEKLY_OFF`; else if `Punch` rows exist (a future
+biometric/import source, or any punches that outlived a same-day clock-out
+failure) → derive `PRESENT`/`LATE` from first-IN/last-OUT; else → `ABSENT`
+(the day `getLopDays()` later counts).
 
 ### Functionalities / API
 
-| Method | Path |
-|---|---|
-| `POST` | `/api/attendance/clock-in` · `/clock-out` · `/break/start` · `/break/end` |
-| `GET` | `/api/attendance/today` |
-| `GET` | `/api/attendance/calendar?month=YYYY-MM` |
-| `GET` | `/api/attendance/stats?month=YYYY-MM` |
-| `POST` | `/api/attendance/regularization` |
-| `GET` | `/api/attendance/regularization` |
-| `POST` | `/api/attendance/regularization/:id/cancel` |
-| `GET` | `/api/attendance/shifts` |
-| `POST` · `PATCH` · `DELETE` | `/api/attendance/shifts[/:id]` | Company Admin, HR Manager (write) |
+| Method | Path | Roles |
+|---|---|---|
+| `POST` | `/api/attendance/clock-in` · `/clock-out` · `/break/start` · `/break/end` | self-service |
+| `GET` | `/api/attendance/today` · `/calendar?month=` · `/stats?month=` | self-service |
+| `POST` | `/api/attendance/regularization` | self-service |
+| `GET` | `/api/attendance/regularization` | self-service (own) |
+| `GET` | `/api/attendance/regularization/pending` | any (scoped: recursive subtree for Line Manager, all for HR/Admin, `[]` otherwise) |
+| `POST` | `/api/attendance/regularization/:id/cancel` | owner only, while `PENDING` |
+| `POST` | `/api/attendance/regularization/:id/approve` · `/reject` | Line Manager (subtree), HR Manager, Company Admin |
+| `POST` | `/api/attendance/regularization/bulk-approve` | Line Manager, HR Manager, Company Admin — `{ids}` → per-id `{id, ok, error?}` |
+| `GET` | `/api/attendance/team/roster?date=` | any (scoped like `pending`) |
+| `POST` | `/api/attendance/mark` | Company Admin, HR Manager — reasoned + audited |
+| `GET` | `/api/attendance/lop-days?employeeId=&month=` | Company Admin, HR Manager |
+| `GET` | `/api/attendance/shifts` | any (read) |
+| `POST` · `PATCH` · `DELETE` | `/api/attendance/shifts[/:id]` | Company Admin, HR Manager |
 | `GET` | `/api/attendance/settings` | Company Admin, HR Manager, Auditor |
 | `PATCH` | `/api/attendance/settings` | Company Admin only |
 
-Self-service routes (`clock-in`/`clock-out`/`break/*`/`today`/`calendar`/
-`stats`/`regularization`) are `JwtAuthGuard + TenantGuard + EntitlementGuard`
-only (no `@Roles`) — every route there is self-service for the calling
-employee. The whole controller is gated behind `@RequiresModule('ATTENDANCE')`
-(module 13's `EntitlementGuard`) — a tenant on a plan without Attendance
-(e.g. `STARTER`) gets a 403, not a broken self-service page. The new
-shifts/settings routes additionally carry `@Roles(...)`.
+Every route sits behind `JwtAuthGuard + TenantGuard + EntitlementGuard`
+(`@RequiresModule('ATTENDANCE')` at the controller — a tenant on a plan
+without Attendance gets a 403, not a broken self-service page), plus
+`RolesGuard` where a route carries `@Roles(...)`.
 
-### Known gaps / TODO (priority order)
+### Known gaps / TODO
 
-> **Config foundation landed** (migration `20260905000001`): `shifts`,
-> `holidays`, `attendance_settings`, `tenant_settings`, and the `punches`
-> capture table now exist and are seeded with defaults on tenant creation.
-> See `docs/TENANT_CONFIGURATION.md`.
+All originally-tracked gaps are closed. What's left is explicitly deferred,
+not gaps:
 
-1. ~~**Refactor `attendance.service.ts`**~~ — **done.** `resolveShift()`
-   reads `Employee.shiftId` (falls back to the tenant's `isDefault` shift);
-   `clockIn()`'s late/on-time call and `today()`'s `targetHours` both read
-   the resolved shift instead of `SHIFT_START_HOUR`/`GRACE_MINUTES`/
-   `TARGET_HOURS` constants. Shift CRUD + an attendance/general Settings tab
-   (`apps/web/src/pages/attendance/settings-tab.tsx`, Company Admin/HR
-   Manager only) are live.
-2. **Punch write-path** — web clock-in writes `punches` rows (`source:
-   WEB`); `attendance_records.checkInAt/checkOutAt` become first-IN /
-   last-OUT derived values.
-3. **Nightly finalization job** (BullMQ) — per employee/day: holiday →
-   weekly-off → approved leave → punches ⇒ final status + hours. Clean
-   days auto-final, no human. *(Holiday/weekly-off detection on clock-in,
-   and `ON_LEAVE` rows for approved leave, are now written synchronously
-   by `AttendanceService.clockIn()`/`LeaveService` respectively — see §4 —
-   but there is still no job to finalize a day that has* **no** *clock-in
-   and no approved leave, e.g. a genuine unexplained absence.)*
-4. **Regularisation approval** — `POST .../regularization/:id/approve` &
-   `/reject` for `LINE_MANAGER` / `HR_MANAGER`; enforce
-   `attendance_settings.regularizationWindowDays` +
-   `regularizationMonthlyCap`; bulk-approve; **auto-resolve at payroll
-   cut-off** per `unactionedBehavior`; write an audit row on every
-   decision. *(The guardrail values themselves are now settable via
-   `PATCH /attendance/settings` — enforcing them at decision time is this
-   item.)*
-5. **Manager / HR views** — team roster for a day, pending regularisation
-   queue, manual mark with reason (FR-ATT-001).
-6. Overtime calculation (per-state rates) — needs the `Shift` end time,
-   now available.
-7. **Month-end LOP export contract for Payroll** —
-   `getLopDays(employeeId, month)`; define the interface now so Payroll
-   can build against it.
-8. ~~First-run setup wizard~~ — **done**, see module 13
-   (`apps/web/src/components/setup-wizard`).
-9. `POST /attendance/ingest` for biometric/CSV — per client, gated behind
-   `subscription.features.biometricIntegration` (`@RequiresFeature`, ready
-   to use).
+- GPS geo-fenced check-in, biometric device integration, selfie/QR
+  check-in — CLAUDE.md → "Explicitly deferred".
+- `POST /attendance/ingest` for biometric/CSV import — per-client work,
+  gated behind `subscription.features.biometricIntegration`
+  (`@RequiresFeature('biometricIntegration')` is ready to use whenever
+  this is built).
+- FLEXI shifts' core-hours window (`Shift.coreStartTime`/`coreEndTime`) is
+  stored and settable but not yet read by any status-computation branch —
+  a FLEXI shift today behaves like FIXED. Not part of V1's tracked scope;
+  revisit if a client actually needs flexi-hours enforcement.
+- Statutory per-state overtime **pay** conversion is Payroll's job (module
+  07, not built) — Attendance measures overtime hours only, by design.
 
 ---
 

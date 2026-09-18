@@ -5,14 +5,15 @@
 > sets them*. Read `CLAUDE.md` (multi-tenancy) and `docs/MODULE_SPECS.md`
 > (per-module contracts) alongside it.
 >
-> **Status:** 2026-09-18 — **100%.** Schema + onboarding defaults + seed,
-> the `EntitlementGuard` (Layer 1 enforcement), `attendance.service.ts`
-> reading `Shift`/`TenantSettings` instead of hardcoded constants, in-app
-> Settings screens (shift catalogue CRUD + attendance/general settings),
-> and a skippable/resumable first-run setup wizard are all live. What's
-> left is Attendance's own separate nightly-finalization/
-> regularization-approval-enforcement gaps (module 05) — not this module's.
-> See "Build status" at the end.
+> **Status:** 2026-09-18 — **100%**, and module 05 (Attendance), the main
+> consumer of this config, reached 100% the same day too — the nightly
+> finalization job and regularization-approval enforcement that used to be
+> listed here as "module 05's gap" are built. Schema + onboarding defaults
+> + seed, the `EntitlementGuard` (Layer 1 enforcement),
+> `attendance.service.ts` reading `Shift`/`TenantSettings` instead of
+> hardcoded constants, in-app Settings screens (shift catalogue CRUD +
+> attendance/general settings), and a skippable/resumable first-run setup
+> wizard are all live. See "Build status" at the end.
 
 ---
 
@@ -189,6 +190,6 @@ finalization job and the punch write-path are the next slice.
 | `attendance.service.ts` reads `shifts` / `tenant_settings` instead of hardcoded constants | ✅ |
 | In-app Settings screens (shift catalogue CRUD; attendance mode/capture/regularization guardrails; general tenant_settings — timezone/weekly-offs/payroll-cutoff) | ✅ `apps/web/src/pages/attendance/settings-tab.tsx`, a Settings tab on the Attendance page for Company Admin/HR Manager |
 | First-run setup wizard | ✅ `apps/web/src/components/setup-wizard/setup-wizard.tsx` — 5 steps (work week/timezone, default shift, holidays, leave types, payroll cut-off) orchestrating existing endpoints; skippable, resumable via `TenantSettings.setupWizardStatus`/`setupWizardStep` (`GET`/`PATCH /api/tenant-config/wizard`, new `apps/api/src/tenant-config` module) |
-| Nightly finalization job (punches + leave + holidays → status) | 🔴 next — module 05's own gap, not this module's |
-| Regularization approval + guardrails enforcement (cap, window, auto-resolve at cutoff) | 🔴 next — module 05's own gap; the guardrail *values* are now settable here, enforcing them at decision time is separate |
+| Nightly finalization job (punches + leave + holidays → status) | ✅ `AttendanceFinalizationProcessor` (module 05) |
+| Regularization approval + guardrails enforcement (cap, window, auto-resolve at cutoff) | ✅ (module 05) |
 | `POST /attendance/ingest` for biometric/CSV (per-tenant device key) | 🔴 per-client, deferred |
