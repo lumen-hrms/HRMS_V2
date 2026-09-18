@@ -465,11 +465,13 @@ describe('LeaveService', () => {
     });
   });
 
-  describe('assertCanViewEmployee() — Line Manager visibility', () => {
-    it('rejects a Line Manager who does not directly manage the target employee', async () => {
+  describe('assertCanViewEmployee() — Line Manager recursive-subtree visibility', () => {
+    it('rejects a Line Manager who is not anywhere in the target employee’s management chain', async () => {
       const tenantPrisma = buildFakeTenantPrisma({
         employee: {
-          findUnique: jest.fn().mockResolvedValue({ reportingManagerId: 'someone-else' }),
+          findMany: jest
+            .fn()
+            .mockResolvedValue([{ id: 'target-emp', reportingManagerId: 'someone-else' }]),
         },
       });
       const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
@@ -486,7 +488,9 @@ describe('LeaveService', () => {
     it('allows a Line Manager who directly manages the target employee', async () => {
       const tenantPrisma = buildFakeTenantPrisma({
         employee: {
-          findUnique: jest.fn().mockResolvedValue({ reportingManagerId: 'mgr-1' }),
+          findMany: jest
+            .fn()
+            .mockResolvedValue([{ id: 'target-emp', reportingManagerId: 'mgr-1' }]),
         },
         leaveBalance: { findMany: jest.fn().mockResolvedValue([]) },
       });
@@ -499,6 +503,86 @@ describe('LeaveService', () => {
           2026,
         ),
       ).resolves.toEqual([]);
+    });
+
+    it('allows a Line Manager to view an INDIRECT report (skip-level) — the module 03 mirroring fix', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        employee: {
+          findMany: jest.fn().mockResolvedValue([
+            { id: 'sub-mgr', reportingManagerId: 'mgr-1' },
+            { id: 'target-emp', reportingManagerId: 'sub-mgr' },
+          ]),
+        },
+        leaveBalance: { findMany: jest.fn().mockResolvedValue([]) },
+      });
+      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
+
+      await expect(
+        service.getBalances(
+          'target-emp',
+          user({ role: 'LINE_MANAGER', employeeId: 'mgr-1' }),
+          2026,
+        ),
+      ).resolves.toEqual([]);
+    });
+  });
+
+  describe('teamBalances() / teamCalendar() — recursive-subtree scoping', () => {
+    it('teamBalances includes a skip-level (indirect) report for a Line Manager', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        employee: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 'sub-mgr',
+              reportingManagerId: 'mgr-1',
+              firstName: 'Sub',
+              lastName: 'Mgr',
+              department: null,
+              leaveBalances: [],
+            },
+            {
+              id: 'indirect-report',
+              reportingManagerId: 'sub-mgr',
+              firstName: 'Indirect',
+              lastName: 'Report',
+              department: null,
+              leaveBalances: [],
+            },
+          ]),
+        },
+        leaveRequest: { groupBy: jest.fn().mockResolvedValue([]) },
+        leaveLedgerEntry: { groupBy: jest.fn().mockResolvedValue([]) },
+      });
+      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
+
+      const result = await service.teamBalances(
+        user({ role: 'LINE_MANAGER', employeeId: 'mgr-1' }),
+        2026,
+      );
+
+      expect(result.map((r) => r.employeeId)).toEqual(['sub-mgr', 'indirect-report']);
+    });
+
+    it('teamCalendar scopes to the full recursive subtree, not just direct reports', async () => {
+      const findMany = jest.fn().mockResolvedValue([
+        { id: 'sub-mgr', reportingManagerId: 'mgr-1' },
+        { id: 'indirect-report', reportingManagerId: 'sub-mgr' },
+      ]);
+      const tenantPrisma = buildFakeTenantPrisma({
+        employee: { findMany },
+        leaveRequest: { findMany: jest.fn().mockResolvedValue([]) },
+      });
+      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
+
+      await service.teamCalendar(
+        user({ role: 'LINE_MANAGER', employeeId: 'mgr-1' }),
+        '2026-01-01',
+        '2026-01-31',
+      );
+
+      const requestWhere = ((tenantPrisma.client.leaveRequest as any).findMany as jest.Mock).mock
+        .calls[0][0].where;
+      expect(requestWhere.employeeId).toEqual({ in: ['sub-mgr', 'indirect-report'] });
     });
   });
 

@@ -32,6 +32,8 @@ import { SuspendDialog } from './components/suspend-dialog';
 import { ChangePlanDialog } from './components/change-plan-dialog';
 import { AdjustPricingDialog } from './components/adjust-pricing-dialog';
 import { BreakGlassDialog } from './components/breakglass-dialog';
+import { BreakGlassStatusSheet } from './components/breakglass-status-sheet';
+import type { BreakGlassGrant } from './lib/types';
 
 type Tab = 'overview' | 'subscription' | 'activity' | 'danger';
 type Dialog = 'suspend' | 'resume' | 'plan' | 'pricing' | 'breakglass' | null;
@@ -45,10 +47,20 @@ export function TenantDetailPage() {
   const [tab, setTab] = React.useState<Tab>('overview');
   const [dialog, setDialog] = React.useState<Dialog>(null);
   const [busy, setBusy] = React.useState(false);
+  const [activeGrant, setActiveGrant] = React.useState<BreakGlassGrant | null>(null);
+  const [showGrantStatus, setShowGrantStatus] = React.useState(false);
+
+  const loadActiveGrant = React.useCallback(() => {
+    platformApi
+      .getActiveBreakGlass(id)
+      .then(setActiveGrant)
+      .catch(() => setActiveGrant(null));
+  }, [id]);
 
   const load = React.useCallback(() => {
     setState('loading');
-    // GET /tenants/:id is TODO(api) — fall back to the list.
+    // Falls back to the list if the detail lookup ever fails (e.g. a stale
+    // id) rather than dead-ending on a blank page.
     platformApi
       .getTenant(id)
       .then((d) => {
@@ -65,7 +77,8 @@ export function TenantDetailPage() {
           })
           .catch(() => setState('notfound')),
       );
-  }, [id]);
+    loadActiveGrant();
+  }, [id, loadActiveGrant]);
   React.useEffect(load, [load]);
 
   if (state === 'loading') {
@@ -112,16 +125,13 @@ export function TenantDetailPage() {
   async function refreshHeadcount() {
     setBusy(true);
     try {
-      await platformApi.refreshHeadcount(tenant!.id);
-      toast({ title: 'Headcount refreshed' });
+      const { employeeCount } = await platformApi.refreshHeadcount(tenant!.id);
+      toast({ title: 'Headcount refreshed', description: `${employeeCount} employees` });
       load();
     } catch (e) {
       toast({
-        title:
-          isPlatformApiError(e) && e.status === 404
-            ? 'Headcount-refresh API not wired yet'
-            : 'Refresh failed',
-        tone: 'info',
+        title: isPlatformApiError(e) ? e.message : 'Refresh failed',
+        tone: 'error',
       });
     } finally {
       setBusy(false);
@@ -187,8 +197,11 @@ export function TenantDetailPage() {
               <DropdownMenuItem disabled={busy} onClick={refreshHeadcount}>
                 <RefreshCw className="h-3.5 w-3.5" /> Refresh headcount
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setDialog('breakglass')}>
-                <ShieldAlert className="h-3.5 w-3.5" /> Break-glass access
+              <DropdownMenuItem
+                onClick={() => (activeGrant ? setShowGrantStatus(true) : setDialog('breakglass'))}
+              >
+                <ShieldAlert className="h-3.5 w-3.5" />
+                {activeGrant ? 'Break-glass access (active)' : 'Break-glass access'}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               {suspended ? (
@@ -243,8 +256,8 @@ export function TenantDetailPage() {
             Resend admin password-reset email
           </Button>
           <p className="mt-4 text-xs text-muted-foreground">
-            Headcount trend (`headcountHistory`) and the seeded admin email are TODO(api) — this
-            console shows counts and metadata only, never employee names.
+            Headcount trend is one data point today (no time-series table yet) — this console
+            shows counts and metadata only, never employee names.
           </p>
         </TabsContent>
 
@@ -391,7 +404,20 @@ export function TenantDetailPage() {
         tenant={dialog === 'breakglass' ? tenant : null}
         open={dialog === 'breakglass'}
         onOpenChange={(v) => !v && setDialog(null)}
-        onGranted={() => setDialog(null)}
+        onGranted={() => {
+          setDialog(null);
+          loadActiveGrant();
+        }}
+      />
+      <BreakGlassStatusSheet
+        tenantId={tenant.id}
+        grant={activeGrant}
+        open={showGrantStatus}
+        onOpenChange={setShowGrantStatus}
+        onRevoked={() => {
+          setShowGrantStatus(false);
+          loadActiveGrant();
+        }}
       />
     </div>
   );

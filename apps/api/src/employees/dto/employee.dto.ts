@@ -144,9 +144,8 @@ export class UpdateEmployeeDto {
   @IsString()
   nationality?: string;
 
-  @IsOptional()
-  @IsString()
-  photoUrl?: string;
+  // Photo is set via `POST /employees/:id/photo` (a real upload, not a
+  // pasted URL) — not part of the generic PATCH surface.
 
   // Employment extras.
   @IsOptional()

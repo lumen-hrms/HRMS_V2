@@ -14,7 +14,19 @@ export type PlatformAuditAction =
   | 'headcount.refreshed'
   | 'breakglass.requested'
   | 'breakglass.used'
-  | 'breakglass.expired';
+  | 'breakglass.expired'
+  | 'breakglass.revoked';
+
+/** Mirrors apps/web/src/pages/platform-admin/lib/types.ts BreakGlassGrant. */
+export interface BreakGlassGrantDto {
+  id: string;
+  tenantName: string;
+  reason: string;
+  grantedAt: string;
+  expiresAt: string;
+  status: 'ACTIVE' | 'EXPIRED' | 'REVOKED';
+  accessCount: number;
+}
 
 /** `GET /api/platform-admin/audit` row — shaped for the console's Audit
  * screen and the tenant-detail Activity tab. */

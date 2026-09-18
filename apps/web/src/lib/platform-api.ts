@@ -9,6 +9,7 @@
  */
 import { auth } from './firebase';
 import type {
+  BreakGlassGrant,
   CreatedTenant,
   CreateTenantInput,
   Plan,
@@ -129,25 +130,31 @@ export const platformApi = {
     return raw.get<PlatformAuditEntry[]>(`/audit${qs ? `?${qs}` : ''}`);
   },
 
-  // ---- TODO(api): endpoints not built yet — these will 404 until the
-  //      backend catches up (docs/modules/02_PLATFORM_ADMIN.md §9). Screens
-  //      call them and degrade gracefully.
-
-  /** TODO(api) `GET /tenants/:id` */
+  /** `GET /tenants/:id` — tenant detail (superset of the list row). */
   getTenant(id: string) {
     return raw.get<TenantDetail>(`/tenants/${id}`);
   },
 
-  /** TODO(api) `POST /tenants/:id/refresh-headcount` */
+  /** `POST /tenants/:id/refresh-headcount` — recompute the denormalized employee count. */
   refreshHeadcount(id: string) {
     return raw.post<{ employeeCount: number }>(`/tenants/${id}/refresh-headcount`);
   },
 
-  /** TODO(api) `POST /tenants/:id/breakglass` */
+  /** `POST /tenants/:id/breakglass` — request time-boxed, read-only, audited support access. */
   requestBreakGlass(id: string, reason: string, ttlMinutes: number) {
     return raw.post<{ id: string; expiresAt: string }>(`/tenants/${id}/breakglass`, {
       reason,
       ttlMinutes,
     });
+  },
+
+  /** `GET /tenants/:id/breakglass` — the tenant's current ACTIVE grant, if any. */
+  getActiveBreakGlass(id: string) {
+    return raw.get<BreakGlassGrant | null>(`/tenants/${id}/breakglass`);
+  },
+
+  /** `POST /tenants/:id/breakglass/:grantId/revoke` */
+  revokeBreakGlass(id: string, grantId: string) {
+    return raw.post<{ status: 'REVOKED' }>(`/tenants/${id}/breakglass/${grantId}/revoke`);
   },
 };

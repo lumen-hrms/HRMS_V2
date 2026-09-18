@@ -1,19 +1,18 @@
-import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service';
 import { LeaveService } from '../leave/leave.service';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
-import type { CreateRegularizationDto } from './dto/attendance.dto';
-
-/**
- * Shift policy is hardcoded for now — there's no per-tenant shift/grace
- * config yet (that's future work, flagged in the Attendance design brief
- * as a settings screen not built in this pass). 09:00 start, 15min grace
- * before a check-in counts as LATE, 8h target for the progress ring.
- */
-const SHIFT_START_HOUR = 9;
-const SHIFT_START_MINUTE = 0;
-const GRACE_MINUTES = 15;
-const TARGET_HOURS = 8;
+import type {
+  CreateRegularizationDto,
+  CreateShiftDto,
+  UpdateAttendanceSettingsDto,
+  UpdateShiftDto,
+} from './dto/attendance.dto';
 
 /** Midnight UTC for "today" — a deliberate simplification for MVP scope
  * (matches the DATE column, no per-tenant timezone config yet). Swap for
@@ -49,10 +48,35 @@ export class AttendanceService {
     return user.employeeId;
   }
 
-  private isLate(checkInAt: Date): boolean {
+  private isLate(checkInAt: Date, shift: { startTime: string; graceMinutes: number }): boolean {
+    const [hour, minute] = shift.startTime.split(':').map(Number);
     const graceEnd = new Date(checkInAt);
-    graceEnd.setUTCHours(SHIFT_START_HOUR, SHIFT_START_MINUTE + GRACE_MINUTES, 0, 0);
+    graceEnd.setUTCHours(hour, minute + shift.graceMinutes, 0, 0);
     return checkInAt > graceEnd;
+  }
+
+  /**
+   * The tenant's per-tenant shift/grace config (docs/TENANT_CONFIGURATION.md
+   * layer 2), not a hardcoded constant. `Employee.shiftId` is a per-employee
+   * override (layer 3); falls back to the tenant's one `isDefault` shift,
+   * seeded on every tenant at onboarding (`PlatformAdminService.seedTenantDefaults`).
+   */
+  private async resolveShift(employeeId: string, tenantId: string) {
+    const employee = await this.tenantPrisma.client.employee.findUnique({
+      where: { id: employeeId },
+      include: { shift: true },
+    });
+    if (employee?.shift) return employee.shift;
+
+    const defaultShift = await this.tenantPrisma.client.shift.findFirst({
+      where: { tenantId, isDefault: true },
+    });
+    if (!defaultShift) {
+      throw new BadRequestException(
+        'No default shift configured for this tenant — contact your admin',
+      );
+    }
+    return defaultShift;
   }
 
   // ---- Clock in/out ----
@@ -70,16 +94,17 @@ export class AttendanceService {
     }
 
     const now = new Date();
-    const [holiday, settings] = await Promise.all([
+    const [holiday, settings, shift] = await Promise.all([
       this.tenantPrisma.client.holiday.findFirst({ where: { date } }),
       this.tenantPrisma.client.tenantSettings.findUniqueOrThrow({ where: { tenantId } }),
+      this.resolveShift(employeeId, tenantId),
     ]);
     const isWeeklyOff = settings.weeklyOffDays.includes(date.getUTCDay());
     const status = holiday
       ? 'HOLIDAY'
       : isWeeklyOff
         ? 'WEEKLY_OFF'
-        : this.isLate(now)
+        : this.isLate(now, shift)
           ? 'LATE'
           : 'PRESENT';
 
@@ -180,19 +205,20 @@ export class AttendanceService {
 
   async today(user: AuthenticatedUser) {
     const employeeId = this.requireEmployee(user);
-    const record = await this.tenantPrisma.client.attendanceRecord.findUnique({
-      where: {
-        tenantId_employeeId_date: {
-          tenantId: this.tenantPrisma.tenantId,
-          employeeId,
-          date: todayDateOnly(),
+    const tenantId = this.tenantPrisma.tenantId;
+    const [record, shift] = await Promise.all([
+      this.tenantPrisma.client.attendanceRecord.findUnique({
+        where: {
+          tenantId_employeeId_date: { tenantId, employeeId, date: todayDateOnly() },
         },
-      },
-      include: { breaks: { orderBy: { startAt: 'asc' } } },
-    });
+        include: { breaks: { orderBy: { startAt: 'asc' } } },
+      }),
+      this.resolveShift(employeeId, tenantId),
+    ]);
+    const targetHours = Number(shift.minHoursFullDay);
 
     if (!record) {
-      return { record: null, effectiveMs: 0, isOnBreak: false, targetHours: TARGET_HOURS };
+      return { record: null, effectiveMs: 0, isOnBreak: false, targetHours };
     }
 
     const breakMs = record.breaks.reduce((sum, b) => {
@@ -204,7 +230,7 @@ export class AttendanceService {
     const effectiveMs = Math.max(grossMs - breakMs, 0);
     const isOnBreak = record.breaks.some((b) => !b.endAt);
 
-    return { record, effectiveMs, isOnBreak, targetHours: TARGET_HOURS };
+    return { record, effectiveMs, isOnBreak, targetHours };
   }
 
   async calendar(user: AuthenticatedUser, month: string) {
@@ -296,5 +322,89 @@ export class AttendanceService {
       where: { id },
       data: { status: 'CANCELLED' },
     });
+  }
+
+  // ---- Tenant configuration: shifts + attendance/general settings ----
+  // (docs/TENANT_CONFIGURATION.md layer 2 — "engine wiring" + Settings UI)
+
+  listShifts() {
+    return this.tenantPrisma.client.shift.findMany({ orderBy: { name: 'asc' } });
+  }
+
+  async createShift(dto: CreateShiftDto) {
+    const tenantId = this.tenantPrisma.tenantId;
+    if (dto.isDefault) {
+      await this.tenantPrisma.client.shift.updateMany({
+        where: { tenantId, isDefault: true },
+        data: { isDefault: false },
+      });
+    }
+    return this.tenantPrisma.client.shift.create({ data: { tenantId, ...dto } });
+  }
+
+  async updateShift(id: string, dto: UpdateShiftDto) {
+    const shift = await this.tenantPrisma.client.shift.findUnique({ where: { id } });
+    if (!shift) throw new NotFoundException('Shift not found');
+
+    if (dto.isDefault) {
+      await this.tenantPrisma.client.shift.updateMany({
+        where: { tenantId: this.tenantPrisma.tenantId, isDefault: true, id: { not: id } },
+        data: { isDefault: false },
+      });
+    }
+    return this.tenantPrisma.client.shift.update({ where: { id }, data: dto });
+  }
+
+  async deleteShift(id: string) {
+    const shift = await this.tenantPrisma.client.shift.findUnique({ where: { id } });
+    if (!shift) throw new NotFoundException('Shift not found');
+    if (shift.isDefault) {
+      throw new BadRequestException(
+        'Cannot delete the default shift — set another shift as default first',
+      );
+    }
+    await this.tenantPrisma.client.shift.delete({ where: { id } });
+    return { deleted: true };
+  }
+
+  async getAttendanceConfig() {
+    const tenantId = this.tenantPrisma.tenantId;
+    const [attendanceSettings, tenantSettings] = await Promise.all([
+      this.tenantPrisma.client.attendanceSettings.findUniqueOrThrow({ where: { tenantId } }),
+      this.tenantPrisma.client.tenantSettings.findUniqueOrThrow({ where: { tenantId } }),
+    ]);
+    return {
+      mode: attendanceSettings.mode,
+      captureMethods: attendanceSettings.captureMethods,
+      regularizationWindowDays: attendanceSettings.regularizationWindowDays,
+      regularizationMonthlyCap: attendanceSettings.regularizationMonthlyCap,
+      unactionedBehavior: attendanceSettings.unactionedBehavior,
+      timezone: tenantSettings.timezone,
+      weeklyOffDays: tenantSettings.weeklyOffDays,
+      payrollCutoffDay: tenantSettings.payrollCutoffDay,
+    };
+  }
+
+  async updateAttendanceConfig(dto: UpdateAttendanceSettingsDto) {
+    const tenantId = this.tenantPrisma.tenantId;
+    const { timezone, weeklyOffDays, payrollCutoffDay, ...attendanceFields } = dto;
+    const tenantFieldsGiven =
+      timezone !== undefined || weeklyOffDays !== undefined || payrollCutoffDay !== undefined;
+
+    await Promise.all([
+      Object.keys(attendanceFields).length > 0
+        ? this.tenantPrisma.client.attendanceSettings.update({
+            where: { tenantId },
+            data: attendanceFields,
+          })
+        : Promise.resolve(),
+      tenantFieldsGiven
+        ? this.tenantPrisma.client.tenantSettings.update({
+            where: { tenantId },
+            data: { timezone, weeklyOffDays, payrollCutoffDay },
+          })
+        : Promise.resolve(),
+    ]);
+    return this.getAttendanceConfig();
   }
 }

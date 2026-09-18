@@ -13,10 +13,9 @@ const TTLS = [15, 30, 60, 120];
 
 /**
  * Request time-boxed, read-only, fully-audited support access to one tenant.
- * `POST /api/platform-admin/tenants/:id/breakglass` — TODO(api): the whole
- * break-glass flow is "design before building" (docs/modules/
- * 02_PLATFORM_ADMIN.md §9). The dialog is here so the surface exists; the
- * call 404s and shows an info toast until the backend lands.
+ * `POST /api/platform-admin/tenants/:id/breakglass` creates the auditable
+ * grant record; it does not itself widen the platform role's DB grants —
+ * see the migration comment on `platform.break_glass_grants`.
  */
 export function BreakGlassDialog({
   tenant,
@@ -57,12 +56,7 @@ export function BreakGlassDialog({
       onOpenChange(false);
       onGranted(grant.expiresAt);
     } catch (e) {
-      if (isPlatformApiError(e) && e.status === 404) {
-        toast({ title: 'Break-glass isn’t wired yet', tone: 'info' });
-        onOpenChange(false);
-      } else {
-        setErr(isPlatformApiError(e) ? e.message : 'Request failed — retry.');
-      }
+      setErr(isPlatformApiError(e) ? e.message : 'Request failed — retry.');
     } finally {
       setBusy(false);
     }
@@ -73,7 +67,7 @@ export function BreakGlassDialog({
       <DialogContent>
         <DialogHeader
           title="Request break-glass access"
-          description={`${tenant.name} · TODO(api) — flow not built`}
+          description={tenant.name}
           onClose={() => onOpenChange(false)}
         />
 

@@ -5,10 +5,14 @@
 > sets them*. Read `CLAUDE.md` (multi-tenancy) and `docs/MODULE_SPECS.md`
 > (per-module contracts) alongside it.
 >
-> **Status:** foundation landed (migration `20260905000001_tenant_configuration`).
-> Schema + onboarding defaults + seed are in. The enforcement guard, the
-> in-app Settings screens, and the attendance engine that consumes this
-> config are the next slices (see "Build status" at the end).
+> **Status:** 2026-09-18 — **100%.** Schema + onboarding defaults + seed,
+> the `EntitlementGuard` (Layer 1 enforcement), `attendance.service.ts`
+> reading `Shift`/`TenantSettings` instead of hardcoded constants, in-app
+> Settings screens (shift catalogue CRUD + attendance/general settings),
+> and a skippable/resumable first-run setup wizard are all live. What's
+> left is Attendance's own separate nightly-finalization/
+> regularization-approval-enforcement gaps (module 05) — not this module's.
+> See "Build status" at the end.
 
 ---
 
@@ -50,10 +54,17 @@ and written to two columns on `platform.subscriptions`:
 `ENTERPRISE`, default `STARTER`) drives this. Tenant `status` still starts
 `TRIAL` regardless — status and plan are orthogonal.
 
-**Not yet built:** an `EntitlementGuard` that blocks routes for modules
-not in `enabled_modules`, and a `@RequiresFeature('biometricIntegration')`
-check on the future punch-ingest endpoint. The columns exist and are
-populated; nothing reads them yet.
+**Built:** `EntitlementGuard` (`apps/api/src/common/guards/entitlement.guard.ts`)
+blocks a route when the tenant's `Subscription.enabledModules` doesn't
+include the module named by a `@RequiresModule(...)` decorator, or
+`Subscription.features` doesn't have a flag named by `@RequiresFeature(...)`
+set to `true`. Wired onto `LeaveController` (`@RequiresModule('LEAVE')`) and
+`AttendanceController` (`@RequiresModule('ATTENDANCE')`) — both sit in the
+guard chain after `JwtAuthGuard`/`TenantGuard` (needs `request.user.tenantId`)
+and query `platform.subscriptions` directly (that table isn't on the
+tenant-scoped Prisma client). No decorator on a route = no check, same
+opt-in shape as `RolesGuard`. `@RequiresFeature('biometricIntegration')` is
+ready for the future punch-ingest endpoint whenever that's built.
 
 ---
 
@@ -90,8 +101,11 @@ flat day list.
 | `is_default` | `true` for "General" | The fallback for employees with no `Employee.shift_id`. Exactly one per tenant |
 
 **This replaces the hardcoded `SHIFT_START_HOUR` / `GRACE_MINUTES` /
-`TARGET_HOURS` constants in `attendance.service.ts`** — that refactor is
-part of the next slice.
+`TARGET_HOURS` constants in `attendance.service.ts`.** `resolveShift()`
+resolves `Employee.shiftId` (layer 3 override) if set, else the tenant's one
+`isDefault` shift (seeded at onboarding); `clockIn()`'s late/on-time call and
+`today()`'s `targetHours` (progress-ring goal) both read from the resolved
+shift now, not a constant.
 
 ### `holidays`
 
@@ -171,9 +185,10 @@ finalization job and the punch write-path are the next slice.
 | Schema: entitlement columns, `tenant_settings`, `shifts`, `holidays`, `attendance_settings`, `punches`, `employees.shift_id` | ✅ migration `20260905000001` |
 | Onboarding: `plan` → entitlements; `seedTenantDefaults` | ✅ |
 | Seed script parity (defaults + demo holidays per tenant) | ✅ |
-| `EntitlementGuard` (block modules not in plan) + `@RequiresFeature` | 🔴 next |
-| `attendance.service.ts` reads `shifts` / `tenant_settings` instead of hardcoded constants | 🔴 next |
-| Nightly finalization job (punches + leave + holidays → status) | 🔴 next |
-| Regularization approval + guardrails (cap, window, auto-resolve at cutoff) | 🔴 next |
-| In-app Settings screens + first-run setup wizard | 🔴 next |
+| `EntitlementGuard` (block modules not in plan) + `@RequiresFeature` | ✅ wired onto Leave + Attendance |
+| `attendance.service.ts` reads `shifts` / `tenant_settings` instead of hardcoded constants | ✅ |
+| In-app Settings screens (shift catalogue CRUD; attendance mode/capture/regularization guardrails; general tenant_settings — timezone/weekly-offs/payroll-cutoff) | ✅ `apps/web/src/pages/attendance/settings-tab.tsx`, a Settings tab on the Attendance page for Company Admin/HR Manager |
+| First-run setup wizard | ✅ `apps/web/src/components/setup-wizard/setup-wizard.tsx` — 5 steps (work week/timezone, default shift, holidays, leave types, payroll cut-off) orchestrating existing endpoints; skippable, resumable via `TenantSettings.setupWizardStatus`/`setupWizardStep` (`GET`/`PATCH /api/tenant-config/wizard`, new `apps/api/src/tenant-config` module) |
+| Nightly finalization job (punches + leave + holidays → status) | 🔴 next — module 05's own gap, not this module's |
+| Regularization approval + guardrails enforcement (cap, window, auto-resolve at cutoff) | 🔴 next — module 05's own gap; the guardrail *values* are now settable here, enforcing them at decision time is separate |
 | `POST /attendance/ingest` for biometric/CSV (per-tenant device key) | 🔴 per-client, deferred |

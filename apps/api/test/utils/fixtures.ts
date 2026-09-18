@@ -59,7 +59,15 @@ async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
       const msg = `${err?.code ?? ''} ${err?.message ?? ''}`;
       const throttled =
         err?.code === 'auth/too-many-requests' ||
-        /TOO_MANY_ATTEMPTS|QUOTA_EXCEEDED|RESOURCE_EXHAUSTED|rate|429/i.test(msg);
+        // TOO_MANY_ATTEMPTS/QUOTA_EXCEEDED/RESOURCE_EXHAUSTED are distinctive
+        // enough to match loosely. `rate`/`429` are not — a bare `/rate/i`
+        // used to false-positive on "geneRATE a new key file" in Firebase's
+        // invalid-credential error text, which made a non-recoverable auth
+        // failure look throttled and burn ~15s of retries before failing
+        // anyway, so those two stay word-bounded.
+        /TOO_MANY_ATTEMPTS|QUOTA_EXCEEDED|RESOURCE_EXHAUSTED|\brate.?limit(ed)?\b|\b429\b/i.test(
+          msg,
+        );
       if (!throttled) throw err;
       await sleep(500 * 2 ** attempt);
     }
@@ -152,7 +160,16 @@ export async function createTenantFixture(label: string): Promise<TenantFixture>
       name: `E2E ${label}`,
       subdomain,
       status: 'ACTIVE',
-      subscription: { create: { plan: 'TRIAL', seats: 10 } },
+      // `enabledModules` must cover every module the e2e suites exercise
+      // (Leave, Attendance) — otherwise `EntitlementGuard` 403s before the
+      // tenant-isolation checks these fixtures exist for ever run.
+      subscription: {
+        create: {
+          plan: 'TRIAL',
+          seats: 10,
+          enabledModules: ['CORE_HR', 'LEAVE', 'ATTENDANCE'],
+        },
+      },
     },
   });
 

@@ -52,6 +52,14 @@ enum IsolationTier {
   @@schema("platform")
 }
 
+enum BreakGlassStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+
+  @@schema("platform")
+}
+
 // The operator-editable plan catalog (Platform Admin → Plans). `key` matches
 // the `SubscriptionPlan` values a tenant can be onboarded onto
 // (STARTER/GROWTH/ENTERPRISE — TRIAL is a status, not a sold plan). Seeded
@@ -93,6 +101,7 @@ model Tenant {
   updatedAt     DateTime     @updatedAt @map("updated_at")
 
   subscription Subscription?
+  breakGlassGrants BreakGlassGrant[]
 
   @@map("tenants")
   @@schema("platform")
@@ -153,6 +162,34 @@ model PlatformAuditLog {
   createdAt  DateTime @default(now()) @map("created_at")
 
   @@map("platform_audit_log")
+  @@schema("platform")
+}
+
+// Time-boxed, logged, read-only support access to one tenant — the
+// "break-glass" flow CLAUDE.md's multi-tenancy section calls for instead of
+// a standing grant. This table is the auditable control-plane record
+// (who/why/when/expiry/revoke) that platform-admin.service.ts's
+// request/status/revoke endpoints manage. It does NOT itself widen the
+// `hrms_platform` role's DB grants — actually elevating a read against one
+// tenant's data for the grant's lifetime is a separate connection-pool
+// escalation mechanism, deliberately not built yet (see docs/MODULE_SPECS.md
+// module 02 "Known gaps").
+model BreakGlassGrant {
+  id           String            @id @default(uuid()) @db.Uuid
+  tenantId     String            @map("tenant_id") @db.Uuid
+  tenant       Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  requestedBy  String            @map("requested_by")
+  reason       String
+  status       BreakGlassStatus  @default(ACTIVE)
+  accessCount  Int               @default(0) @map("access_count")
+  grantedAt    DateTime          @default(now()) @map("granted_at")
+  expiresAt    DateTime          @map("expires_at")
+  revokedAt    DateTime?         @map("revoked_at")
+  revokedBy    String?           @map("revoked_by")
+
+  @@index([tenantId])
+  @@index([status, expiresAt])
+  @@map("break_glass_grants")
   @@schema("platform")
 }
 
@@ -291,6 +328,15 @@ enum ShiftType {
   @@schema("public")
 }
 
+enum TenantSetupWizardStatus {
+  PENDING
+  IN_PROGRESS
+  DISMISSED
+  COMPLETED
+
+  @@schema("public")
+}
+
 enum AttendanceMode {
   // Employees clock themselves in/out via the web app (startup default).
   SELF_SERVICE
@@ -391,7 +437,10 @@ model Employee {
   maritalStatus String? @map("marital_status")
   bloodGroup    String? @map("blood_group")
   nationality   String?
-  photoUrl      String? @map("photo_url")
+  // Object-storage key for the uploaded avatar (private bucket, like
+  // documents) — resolved to a short-lived presigned URL on read
+  // (`photoUrl` in the API response), never stored as a raw/public URL.
+  photoKey      String? @map("photo_key")
 
   departmentId String?     @map("department_id") @db.Uuid
   department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
@@ -841,6 +890,12 @@ model TenantSettings {
   // resolveLeaveYear() (apps/api/src/leave/leave-year.util.ts) to shift the
   // balance-year boundary for apply()/getBalances()/teamBalances()/the accrual job.
   fyStartMonth        Int    @default(4) @map("fy_start_month")
+
+  // First-run setup wizard (docs/TENANT_CONFIGURATION.md "Onboarding flow"
+  // step 3) — skippable, resumable. `setupWizardStep` is the 0-indexed step
+  // to resume at; meaningless once status is DISMISSED/COMPLETED.
+  setupWizardStatus TenantSetupWizardStatus @default(PENDING) @map("setup_wizard_status")
+  setupWizardStep   Int                     @default(0) @map("setup_wizard_step")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

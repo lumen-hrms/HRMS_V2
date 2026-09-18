@@ -7,6 +7,7 @@ function buildFakeTenantPrisma(employee: Record<string, any>, overrides: Record<
   const client: any = {
     employee: {
       findFirst: jest.fn().mockResolvedValue(employee),
+      findUnique: jest.fn().mockResolvedValue(employee),
       findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn((args: any) => ({ ...employee, ...args.data })),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -66,21 +67,35 @@ function actor(overrides: Partial<AuthenticatedUser> = {}): AuthenticatedUser {
   };
 }
 
+function fakeStorage(overrides: Record<string, any> = {}) {
+  return {
+    buildKey: jest.fn(
+      (tenantId: string, employeeId: string, name: string) => `${tenantId}/${employeeId}/${name}`,
+    ),
+    upload: jest.fn().mockResolvedValue(undefined),
+    delete: jest.fn().mockResolvedValue(undefined),
+    getPresignedDownloadUrl: jest.fn().mockResolvedValue('https://signed.example/photo'),
+    ...overrides,
+  };
+}
+
 function buildService(
   employee: Record<string, any>,
   firebaseOverrides: Record<string, any> = {},
   prismaOverrides: Record<string, any> = {},
+  storageOverrides: Record<string, any> = {},
 ) {
   const tenantPrisma = buildFakeTenantPrisma(employee, prismaOverrides);
   const firebaseAuth = fakeFirebaseAuth(firebaseOverrides);
   const fieldEncryption = fakeFieldEncryption();
+  const storage = fakeStorage(storageOverrides);
   const service = new EmployeesService(
     tenantPrisma as any,
-    {} as any,
+    storage as any,
     fieldEncryption as any,
     firebaseAuth as any,
   );
-  return { service, tenantPrisma, firebaseAuth, fieldEncryption };
+  return { service, tenantPrisma, firebaseAuth, fieldEncryption, storage };
 }
 
 describe('EmployeesService.transitionLifecycle', () => {
@@ -490,7 +505,6 @@ describe('EmployeesService.update (RULE-1 self-edit whitelist)', () => {
         maritalStatus: undefined,
         bloodGroup: undefined,
         nationality: undefined,
-        photoUrl: undefined,
       },
     });
   });
@@ -585,5 +599,73 @@ describe('EmployeesService emergency-contact write authorization', () => {
         actor({ role: 'EMPLOYEE', employeeId: 'emp-1' }),
       ),
     ).rejects.toThrow(ForbiddenException);
+  });
+});
+
+describe('EmployeesService.uploadPhoto', () => {
+  const file = {
+    originalname: 'me.jpg',
+    mimetype: 'image/jpeg',
+    size: 1024,
+    buffer: Buffer.from('x'),
+  } as any;
+
+  it('uploads, updates photoKey, deletes the old object, and returns a resolved URL', async () => {
+    const { service, tenantPrisma, storage } = buildService({
+      id: 'emp-1',
+      employeeCode: 'LUM-1',
+      photoKey: 'old/key.jpg',
+    });
+
+    const result = await service.uploadPhoto('emp-1', file, actor({ role: 'HR_MANAGER' }));
+
+    expect(storage.upload).toHaveBeenCalled();
+    expect(storage.delete).toHaveBeenCalledWith('old/key.jpg');
+    expect(tenantPrisma.client.employee.update).toHaveBeenCalledWith({
+      where: { id: 'emp-1' },
+      data: { photoKey: expect.any(String) },
+    });
+    expect(result).toEqual({ photoUrl: 'https://signed.example/photo' });
+  });
+
+  it('lets an Employee upload their own photo but not someone else’s', async () => {
+    const { service } = buildService({ id: 'emp-1', employeeCode: 'LUM-1' });
+
+    await expect(
+      service.uploadPhoto('emp-1', file, actor({ role: 'EMPLOYEE', employeeId: 'emp-1' })),
+    ).resolves.toBeDefined();
+    await expect(
+      service.uploadPhoto('someone-else', file, actor({ role: 'EMPLOYEE', employeeId: 'emp-1' })),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('rejects an unsupported file type', async () => {
+    const { service } = buildService({ id: 'emp-1', employeeCode: 'LUM-1' });
+    await expect(
+      service.uploadPhoto(
+        'emp-1',
+        { ...file, mimetype: 'application/pdf' },
+        actor({ role: 'HR_MANAGER' }),
+      ),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('rejects a file over the 5 MB limit', async () => {
+    const { service } = buildService({ id: 'emp-1', employeeCode: 'LUM-1' });
+    await expect(
+      service.uploadPhoto(
+        'emp-1',
+        { ...file, size: 6 * 1024 * 1024 },
+        actor({ role: 'HR_MANAGER' }),
+      ),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('404s for an unknown employee', async () => {
+    const { service, tenantPrisma } = buildService({ id: 'emp-1', employeeCode: 'LUM-1' });
+    tenantPrisma.client.employee.findUnique.mockResolvedValueOnce(null);
+    await expect(
+      service.uploadPhoto('missing', file, actor({ role: 'HR_MANAGER' })),
+    ).rejects.toThrow('Employee not found');
   });
 });

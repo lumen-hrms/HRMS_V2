@@ -5,6 +5,7 @@ import {
   Inject,
   Injectable,
   Logger,
+  NotFoundException,
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -24,9 +25,11 @@ import type {
   ChangeTenantPlanDto,
   CreateTenantDto,
   PlatformAuditQueryDto,
+  RequestBreakGlassDto,
 } from './dto/platform-admin.dto';
 import type {
   AuthenticatedPlatformAdmin,
+  BreakGlassGrantDto,
   PlatformAuditAction,
   PlatformAuditEntryDto,
 } from './platform-admin.types';
@@ -91,6 +94,18 @@ function mapAuditRow(row: {
     case 'plan.updated':
       after = Array.isArray(m.changed) ? (m.changed as string[]).join(', ') : null;
       note = str(m.note);
+      break;
+    case 'headcount.refreshed':
+      before = str(m.from);
+      after = str(m.to);
+      break;
+    case 'breakglass.requested':
+      after = m.expiresAt ? `expires ${str(m.expiresAt)}` : null;
+      note = str(m.reason);
+      break;
+    case 'breakglass.revoked':
+    case 'breakglass.expired':
+      note = str(m.reason ?? m.note);
       break;
     default:
       note = str(m.note ?? m.reason);
@@ -163,6 +178,36 @@ export class PlatformAdminService {
       include: { subscription: true },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  /**
+   * `GET /api/platform-admin/tenants/:id` — the console's tenant-detail
+   * page. `firstAdminEmail` reads the tenant's oldest COMPANY_ADMIN login
+   * over the scoped `hrms_app` connection (same pattern as
+   * `resendAdminReset`); `headcountHistory` has no dedicated time-series
+   * table yet, so it's the one current data point until that's built.
+   */
+  async getTenant(tenantId: string) {
+    const tenant = await this.platformPrisma.tenant.findUnique({
+      where: { id: tenantId },
+      include: { subscription: true },
+    });
+    if (!tenant) throw new NotFoundException('Tenant not found');
+
+    const scoped = withTenantContext(this.tenantPrismaRaw, tenantId);
+    const admin = await scoped.user.findFirst({
+      where: { tenantId, role: 'COMPANY_ADMIN' },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const recentAudit = await this.audit({ tenantId });
+
+    return {
+      ...tenant,
+      firstAdminEmail: admin?.email ?? null,
+      headcountHistory: [{ at: tenant.updatedAt.toISOString(), count: tenant.employeeCount }],
+      recentAudit: recentAudit.slice(0, 20),
+    };
   }
 
   async updateTenantStatus(
@@ -619,5 +664,165 @@ export class PlatformAdminService {
       where: { id: tenantId },
       data: { employeeCount: count },
     });
+    return count;
+  }
+
+  /**
+   * `POST /api/platform-admin/tenants/:id/refresh-headcount` — expose the
+   * existing on-demand `refreshHeadcount()` (already called internally by
+   * `createTenant`) as an operator-triggerable route, with an audit row.
+   */
+  async refreshHeadcountRoute(tenantId: string, actorEmail?: string) {
+    const before = await this.platformPrisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { employeeCount: true, name: true },
+    });
+    if (!before) throw new NotFoundException('Tenant not found');
+
+    const employeeCount = await this.refreshHeadcount(tenantId);
+
+    if (employeeCount !== before.employeeCount) {
+      await this.platformPrisma.platformAuditLog
+        .create({
+          data: {
+            actorEmail: actorEmail ?? 'unknown',
+            action: 'headcount.refreshed',
+            targetType: 'tenant',
+            targetId: tenantId,
+            metadata: { tenantName: before.name, from: before.employeeCount, to: employeeCount },
+          },
+        })
+        .catch(() => undefined);
+    }
+
+    return { employeeCount };
+  }
+
+  // ---- Break-glass support access ----
+  //
+  // The auditable control-plane record for time-boxed, logged, read-only
+  // support access (CLAUDE.md's multi-tenancy section). Deliberately does
+  // NOT itself widen `hrms_platform`'s grants — see the migration comment
+  // on `platform.break_glass_grants`.
+
+  async requestBreakGlass(tenantId: string, dto: RequestBreakGlassDto, actorEmail?: string) {
+    const tenant = await this.platformPrisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { name: true },
+    });
+    if (!tenant) throw new NotFoundException('Tenant not found');
+
+    const existing = await this.platformPrisma.breakGlassGrant.findFirst({
+      where: { tenantId, status: 'ACTIVE', expiresAt: { gt: new Date() } },
+    });
+    if (existing) {
+      throw new ConflictException('This tenant already has an active break-glass grant');
+    }
+
+    const expiresAt = new Date(Date.now() + dto.ttlMinutes * 60_000);
+    const grant = await this.platformPrisma.breakGlassGrant.create({
+      data: {
+        tenantId,
+        requestedBy: actorEmail ?? 'unknown',
+        reason: dto.reason,
+        expiresAt,
+      },
+    });
+
+    await this.platformPrisma.platformAuditLog
+      .create({
+        data: {
+          actorEmail: actorEmail ?? 'unknown',
+          action: 'breakglass.requested',
+          targetType: 'tenant',
+          targetId: tenantId,
+          metadata: {
+            tenantName: tenant.name,
+            reason: dto.reason,
+            expiresAt: expiresAt.toISOString(),
+          },
+        },
+      })
+      .catch(() => undefined);
+
+    return { id: grant.id, expiresAt: expiresAt.toISOString() };
+  }
+
+  /** `GET /api/platform-admin/tenants/:id/breakglass` — the tenant's current ACTIVE grant, if any. */
+  async getActiveBreakGlass(tenantId: string): Promise<BreakGlassGrantDto | null> {
+    const grant = await this.platformPrisma.breakGlassGrant.findFirst({
+      where: { tenantId, status: 'ACTIVE', expiresAt: { gt: new Date() } },
+      include: { tenant: { select: { name: true } } },
+      orderBy: { grantedAt: 'desc' },
+    });
+    if (!grant) return null;
+
+    return {
+      id: grant.id,
+      tenantName: grant.tenant.name,
+      reason: grant.reason,
+      grantedAt: grant.grantedAt.toISOString(),
+      expiresAt: grant.expiresAt.toISOString(),
+      status: grant.status,
+      accessCount: grant.accessCount,
+    };
+  }
+
+  async revokeBreakGlass(tenantId: string, grantId: string, actorEmail?: string) {
+    const grant = await this.platformPrisma.breakGlassGrant.findUnique({
+      where: { id: grantId },
+      include: { tenant: { select: { name: true } } },
+    });
+    if (!grant || grant.tenantId !== tenantId) throw new NotFoundException('Grant not found');
+    if (grant.status !== 'ACTIVE') throw new BadRequestException('This grant is not active');
+
+    await this.platformPrisma.breakGlassGrant.update({
+      where: { id: grantId },
+      data: { status: 'REVOKED', revokedAt: new Date(), revokedBy: actorEmail ?? 'unknown' },
+    });
+
+    await this.platformPrisma.platformAuditLog
+      .create({
+        data: {
+          actorEmail: actorEmail ?? 'unknown',
+          action: 'breakglass.revoked',
+          targetType: 'tenant',
+          targetId: tenantId,
+          metadata: { tenantName: grant.tenant.name },
+        },
+      })
+      .catch(() => undefined);
+
+    return { status: 'REVOKED' as const };
+  }
+
+  /**
+   * Flips ACTIVE grants past `expiresAt` to EXPIRED and audits it — called
+   * by `BreakGlassExpiryProcessor` (a daily BullMQ job). Not a route: expiry
+   * is time-driven, not operator-triggered.
+   */
+  async expireOverdueBreakGlassGrants() {
+    const overdue = await this.platformPrisma.breakGlassGrant.findMany({
+      where: { status: 'ACTIVE', expiresAt: { lte: new Date() } },
+      include: { tenant: { select: { name: true } } },
+    });
+    for (const grant of overdue) {
+      await this.platformPrisma.breakGlassGrant.update({
+        where: { id: grant.id },
+        data: { status: 'EXPIRED' },
+      });
+      await this.platformPrisma.platformAuditLog
+        .create({
+          data: {
+            actorEmail: 'system:breakglass-expiry',
+            action: 'breakglass.expired',
+            targetType: 'tenant',
+            targetId: grant.tenantId,
+            metadata: { tenantName: grant.tenant.name },
+          },
+        })
+        .catch(() => undefined);
+    }
+    return overdue.length;
   }
 }
