@@ -5,9 +5,69 @@ on:
   push:
     branches: [main]
 
+# api-lint / api-unit / api-build need nothing but the checked-out repo —
+# splitting them out of the old single serial job lets them run in parallel
+# with each other and with api-e2e (the only job that needs live Postgres +
+# Redis + real Firebase), instead of lint→unit→e2e→build one after another.
+# Wall-clock time is roughly max(job time), not sum(job time).
 jobs:
-  api:
-    name: API — lint, unit + e2e tests, build
+  api-lint:
+    name: API — lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/api/package-lock.json
+      - run: npm ci
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+      - run: npm run lint
+
+  api-unit:
+    name: API — unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/api/package-lock.json
+      - run: npm ci
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+      - name: Unit tests
+        run: npm test -- --ci
+
+  api-build:
+    name: API — build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/api/package-lock.json
+      - run: npm ci
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+      - run: npm run build
+
+  api-e2e:
+    name: API — e2e tests (tenant isolation + auth + identity & access)
     runs-on: ubuntu-latest
 
     services:
@@ -83,17 +143,8 @@ jobs:
       - name: Run migrations (creates hrms_app/hrms_platform roles + RLS policies)
         run: npm run prisma:migrate
 
-      - name: Lint
-        run: npm run lint
-
-      - name: Unit tests
-        run: npm test -- --ci
-
-      - name: E2E tests (tenant isolation + auth + identity & access)
+      - name: E2E tests
         run: npm run test:e2e
-
-      - name: Build
-        run: npm run build
 
   web:
     name: Web — lint, typecheck, build
