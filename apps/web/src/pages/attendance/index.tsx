@@ -10,6 +10,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useAuth } from '@/context/auth-context';
 import { cn } from '@/lib/utils';
 import { AttendanceSettingsTab } from './settings-tab';
+import { AttendanceTeamTab } from './team-tab';
+import { AttendanceApprovalsTab } from './approvals-tab';
 
 interface AttendanceBreakRow {
   id: string;
@@ -30,12 +32,14 @@ interface TodayResponse {
   effectiveMs: number;
   isOnBreak: boolean;
   targetHours: number;
+  overtimeMs: number;
 }
 interface StatsResponse {
   daysPresent: number;
   workingDays: number;
   punctualityRate: number;
   remainingLeave: number;
+  overtimeHours: number;
 }
 const REASON_LABELS: Record<string, string> = {
   MISSED_PUNCH_IN: 'Missed Punch In',
@@ -72,26 +76,40 @@ function fmtDuration(ms: number) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+type Tab = 'my' | 'team' | 'approvals' | 'settings';
+
 export function AttendancePage() {
   const { user } = useAuth();
-  const canManageSettings = user?.role === 'COMPANY_ADMIN' || user?.role === 'HR_MANAGER';
+  const isAdmin = user?.role === 'COMPANY_ADMIN' || user?.role === 'HR_MANAGER';
+  const isManager = user?.role === 'LINE_MANAGER';
+  const hasTeamView = isAdmin || isManager;
 
-  const [tab, setTab] = React.useState<'my' | 'settings'>('my');
+  const [tab, setTab] = React.useState<Tab>('my');
 
-  if (!canManageSettings) return <MyAttendanceTab />;
+  if (!hasTeamView) return <MyAttendanceTab />;
 
   return (
-    <Tabs value={tab} onValueChange={(v) => setTab(v as 'my' | 'settings')}>
+    <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
       <TabsList>
         <TabsTrigger value="my">My Attendance</TabsTrigger>
-        <TabsTrigger value="settings">Settings</TabsTrigger>
+        <TabsTrigger value="team">Team</TabsTrigger>
+        <TabsTrigger value="approvals">Approvals</TabsTrigger>
+        {isAdmin && <TabsTrigger value="settings">Settings</TabsTrigger>}
       </TabsList>
       <TabsContent value="my">
         <MyAttendanceTab />
       </TabsContent>
-      <TabsContent value="settings">
-        <AttendanceSettingsTab />
+      <TabsContent value="team">
+        <AttendanceTeamTab canMark={isAdmin} />
       </TabsContent>
+      <TabsContent value="approvals">
+        <AttendanceApprovalsTab />
+      </TabsContent>
+      {isAdmin && (
+        <TabsContent value="settings">
+          <AttendanceSettingsTab />
+        </TabsContent>
+      )}
     </Tabs>
   );
 }
@@ -191,7 +209,7 @@ function MyAttendanceTab() {
         <>
           <Card className="p-6">
             <div className="flex flex-wrap items-center gap-8">
-              <ProgressRing pct={pct} />
+              <ProgressRing pct={pct} targetHours={today?.targetHours ?? 8} />
               <div className="flex flex-1 flex-col gap-1.5">
                 <Badge
                   variant={isClockedIn ? 'success' : 'outline'}
@@ -207,6 +225,11 @@ function MyAttendanceTab() {
                 <div className="text-4xl font-bold tabular-nums tracking-tight">
                   {fmtDuration(displayMs)} <span className="text-base font-normal text-muted-foreground">today</span>
                 </div>
+                {(today?.overtimeMs ?? 0) > 0 && (
+                  <div className="text-sm font-medium text-lumen-gold">
+                    +{fmtDuration(today!.overtimeMs)} overtime
+                  </div>
+                )}
                 {isClockedIn && (
                   <div className="flex items-center gap-1.5 text-sm text-lumen-success">
                     ✓ On schedule · Expected completion ~{' '}
@@ -242,7 +265,7 @@ function MyAttendanceTab() {
             </div>
           </Card>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard
               label="Days Present"
               value={`${stats?.daysPresent ?? 0}`}
@@ -263,6 +286,13 @@ function MyAttendanceTab() {
               suffix="days balance"
               footer=""
               tone="info"
+            />
+            <StatCard
+              label="Overtime"
+              value={`${stats?.overtimeHours ?? 0}h`}
+              suffix="this month"
+              footer=""
+              tone="warning"
             />
           </div>
 
@@ -291,7 +321,7 @@ function breakMsSoFar(record: AttendanceRecordRow): number {
   }, 0);
 }
 
-function ProgressRing({ pct }: { pct: number }) {
+function ProgressRing({ pct, targetHours }: { pct: number; targetHours: number }) {
   const r = 42;
   const c = 2 * Math.PI * r;
   const offset = c - (pct / 100) * c;
@@ -315,7 +345,7 @@ function ProgressRing({ pct }: { pct: number }) {
       <div className="absolute flex flex-col items-center">
         <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Target</span>
         <span className="text-lg font-bold text-lumen-gold">{pct}%</span>
-        <span className="text-[10px] text-muted-foreground">8h goal</span>
+        <span className="text-[10px] text-muted-foreground">{targetHours}h goal</span>
       </div>
     </div>
   );
