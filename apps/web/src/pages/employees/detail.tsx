@@ -185,6 +185,30 @@ export function EmployeeDetailPage() {
     }
   }
 
+  async function handlePhotoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !id) return;
+    setUploading(true);
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const headers: Record<string, string> = {};
+      const token = await getAccessToken();
+      const subdomain = getTenantSubdomain();
+      if (token) headers.Authorization = `Bearer ${token}`;
+      if (subdomain) headers['X-Tenant-Subdomain'] = subdomain;
+      const res = await fetch(`/api/employees/${id}/photo`, { method: 'POST', headers, body: formData });
+      if (!res.ok) throw new Error((await res.json()).message ?? 'Photo upload failed');
+      load();
+    } catch (err) {
+      setError(isApiError(err) ? err.message : (err as Error).message);
+    } finally {
+      setUploading(false);
+      e.target.value = '';
+    }
+  }
+
   async function handleDownload(docId: string) {
     const { url } = await api.get<{ url: string }>(`/documents/${docId}/download-url`);
     window.open(url, '_blank');
@@ -210,13 +234,32 @@ export function EmployeeDetailPage() {
     <div className="flex max-w-4xl flex-col gap-5">
       <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-4">
-          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-secondary text-lg font-semibold text-secondary-foreground">
+          <label
+            className={`group relative flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-secondary text-lg font-semibold text-secondary-foreground ${
+              canManage || isSelf ? 'cursor-pointer' : ''
+            }`}
+            title={canManage || isSelf ? 'Change photo (JPEG/PNG/WebP, max 5MB)' : undefined}
+          >
             {employee.photoUrl ? (
               <img src={employee.photoUrl} alt="" className="h-14 w-14 rounded-full object-cover" />
             ) : (
               initials || '—'
             )}
-          </div>
+            {(canManage || isSelf) && (
+              <>
+                <span className="absolute inset-0 hidden items-center justify-center rounded-full bg-black/50 group-hover:flex">
+                  <Upload className="h-4 w-4 text-white" />
+                </span>
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="hidden"
+                  disabled={uploading}
+                  onChange={handlePhotoUpload}
+                />
+              </>
+            )}
+          </label>
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-xl font-semibold">
@@ -629,17 +672,20 @@ function MaskedRow({
 }) {
   const [revealed, setRevealed] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [confirmOpen, setConfirmOpen] = React.useState(false);
+  const [reason, setReason] = React.useState('');
 
   async function reveal() {
-    const reason = window.prompt(`Reason for revealing ${label} (this is logged)`);
-    if (!reason) return;
+    if (reason.trim().length < 5) return;
     setBusy(true);
     try {
       const result = await api.post<{ field: string; value: string }>(`/employees/${employeeId}/reveal`, {
         field,
-        reason,
+        reason: reason.trim(),
       });
       setRevealed(result.value);
+      setConfirmOpen(false);
+      setReason('');
     } catch {
       // silently ignore — the masked value stays shown
     } finally {
@@ -654,8 +700,7 @@ function MaskedRow({
         {revealed ?? masked ?? '—'}
         {canReveal && masked && !revealed && (
           <button
-            onClick={reveal}
-            disabled={busy}
+            onClick={() => setConfirmOpen(true)}
             title="Reveal (logged)"
             className="text-muted-foreground hover:text-foreground"
           >
@@ -663,6 +708,30 @@ function MaskedRow({
           </button>
         )}
       </span>
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent>
+          <DialogHeader title={`Reveal ${label}`} onClose={() => setConfirmOpen(false)} />
+          <p className="mb-3 text-sm text-muted-foreground">
+            This reveal is logged against your account. State why you need to see the unmasked
+            value.
+          </p>
+          <Textarea
+            rows={2}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. Verifying bank details ahead of this month's payroll run."
+          />
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button onClick={reveal} disabled={busy || reason.trim().length < 5}>
+              {busy ? '…' : 'Reveal'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

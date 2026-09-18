@@ -22,7 +22,41 @@ function buildFakeTenantPrisma(overrides: Record<string, any> = {}) {
     },
     holiday: { findFirst: jest.fn().mockResolvedValue(null) },
     tenantSettings: {
-      findUniqueOrThrow: jest.fn().mockResolvedValue({ weeklyOffDays: [0, 6] }),
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        weeklyOffDays: [0, 6],
+        timezone: 'Asia/Kolkata',
+        payrollCutoffDay: 25,
+      }),
+      update: jest.fn((args: any) => args.data),
+    },
+    employee: {
+      // No per-employee shift override by default — resolveShift() falls
+      // back to the tenant's `isDefault` shift.
+      findUnique: jest.fn().mockResolvedValue({ shift: null }),
+    },
+    shift: {
+      findFirst: jest.fn().mockResolvedValue({
+        id: 'shift-1',
+        startTime: '09:00',
+        graceMinutes: 15,
+        minHoursFullDay: 8,
+      }),
+      findUnique: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn((args: any) => ({ id: 'shift-new', ...args.data })),
+      update: jest.fn((args: any) => ({ id: args.where.id, ...args.data })),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      delete: jest.fn().mockResolvedValue({ id: 'shift-1' }),
+    },
+    attendanceSettings: {
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        mode: 'SELF_SERVICE',
+        captureMethods: ['WEB'],
+        regularizationWindowDays: 7,
+        regularizationMonthlyCap: 3,
+        unactionedBehavior: 'AUTO_APPROVE',
+      }),
+      update: jest.fn((args: any) => args.data),
     },
     ...overrides,
   };
@@ -131,6 +165,56 @@ describe('AttendanceService', () => {
       expect(result.status).toBe('WEEKLY_OFF');
       expect(leave.creditCompOff).toHaveBeenCalledWith('emp-1', expect.any(Date), 'weekly-off');
     });
+
+    it('uses the employee’s own shift override instead of the tenant default', async () => {
+      // 09:20 is LATE against the 09:00+15min tenant default, but PRESENT
+      // against a 09:00+30min grace shift assigned directly to this employee.
+      jest.setSystemTime(new Date('2026-03-02T09:20:00Z'));
+      const tenantPrisma = buildFakeTenantPrisma({
+        attendanceRecord: {
+          findUnique: jest.fn().mockResolvedValue(null),
+          upsert: jest.fn((args: any) => ({ id: 'rec-1', ...args.create })),
+        },
+        employee: {
+          findUnique: jest.fn().mockResolvedValue({
+            shift: { id: 'shift-2', startTime: '09:00', graceMinutes: 30, minHoursFullDay: 8 },
+          }),
+        },
+      });
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+
+      const result = await service.clockIn(user());
+      expect(result.status).toBe('PRESENT');
+    });
+
+    it('rejects clocking in when the tenant has no default shift configured', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        attendanceRecord: { findUnique: jest.fn().mockResolvedValue(null) },
+        shift: { findFirst: jest.fn().mockResolvedValue(null) },
+      });
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+      await expect(service.clockIn(user())).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('today()', () => {
+    it('reports targetHours from the resolved shift’s minHoursFullDay, not a hardcoded constant', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        attendanceRecord: { findUnique: jest.fn().mockResolvedValue(null) },
+        shift: {
+          findFirst: jest.fn().mockResolvedValue({
+            id: 'shift-1',
+            startTime: '09:00',
+            graceMinutes: 15,
+            minHoursFullDay: 9,
+          }),
+        },
+      });
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+
+      const result = await service.today(user());
+      expect(result).toEqual({ record: null, effectiveMs: 0, isOnBreak: false, targetHours: 9 });
+    });
   });
 
   describe('clockOut()', () => {
@@ -238,6 +322,99 @@ describe('AttendanceService', () => {
       await expect(service.cancelRegularization('reg-1', user())).rejects.toThrow(
         BadRequestException,
       );
+    });
+  });
+
+  describe('shifts', () => {
+    it('unsets the previous default shift when creating a new default one', async () => {
+      const tenantPrisma = buildFakeTenantPrisma();
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+
+      await service.createShift({
+        name: 'Night',
+        startTime: '21:00',
+        endTime: '06:00',
+        isDefault: true,
+      } as any);
+
+      expect(tenantPrisma.client.shift.updateMany).toHaveBeenCalledWith({
+        where: { tenantId: 'tenant-1', isDefault: true },
+        data: { isDefault: false },
+      });
+      expect(tenantPrisma.client.shift.create).toHaveBeenCalled();
+    });
+
+    it('404s updating a shift that does not exist', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        shift: { findUnique: jest.fn().mockResolvedValue(null) },
+      });
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+      await expect(service.updateShift('missing', { name: 'X' })).rejects.toThrow(
+        'Shift not found',
+      );
+    });
+
+    it('blocks deleting the default shift', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        shift: { findUnique: jest.fn().mockResolvedValue({ id: 'shift-1', isDefault: true }) },
+      });
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+      await expect(service.deleteShift('shift-1')).rejects.toThrow(BadRequestException);
+    });
+
+    it('deletes a non-default shift', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        shift: {
+          findUnique: jest.fn().mockResolvedValue({ id: 'shift-2', isDefault: false }),
+          delete: jest.fn().mockResolvedValue({ id: 'shift-2' }),
+        },
+      });
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+      await expect(service.deleteShift('shift-2')).resolves.toEqual({ deleted: true });
+    });
+  });
+
+  describe('getAttendanceConfig() / updateAttendanceConfig()', () => {
+    it('merges attendance_settings with the general slice of tenant_settings', async () => {
+      const tenantPrisma = buildFakeTenantPrisma();
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+
+      const result = await service.getAttendanceConfig();
+      expect(result).toEqual({
+        mode: 'SELF_SERVICE',
+        captureMethods: ['WEB'],
+        regularizationWindowDays: 7,
+        regularizationMonthlyCap: 3,
+        unactionedBehavior: 'AUTO_APPROVE',
+        timezone: 'Asia/Kolkata',
+        weeklyOffDays: [0, 6],
+        payrollCutoffDay: 25,
+      });
+    });
+
+    it('only writes tenantSettings when a general field is actually given', async () => {
+      const tenantPrisma = buildFakeTenantPrisma();
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+
+      await service.updateAttendanceConfig({ regularizationWindowDays: 10 });
+
+      expect(tenantPrisma.client.attendanceSettings.update).toHaveBeenCalledWith({
+        where: { tenantId: 'tenant-1' },
+        data: { regularizationWindowDays: 10 },
+      });
+      expect(tenantPrisma.client.tenantSettings.update).not.toHaveBeenCalled();
+    });
+
+    it('writes tenantSettings when a general field is given', async () => {
+      const tenantPrisma = buildFakeTenantPrisma();
+      const service = new AttendanceService(tenantPrisma as any, fakeLeave() as any);
+
+      await service.updateAttendanceConfig({ weeklyOffDays: [0] });
+
+      expect(tenantPrisma.client.tenantSettings.update).toHaveBeenCalledWith({
+        where: { tenantId: 'tenant-1' },
+        data: { timezone: undefined, weeklyOffDays: [0], payrollCutoffDay: undefined },
+      });
     });
   });
 });

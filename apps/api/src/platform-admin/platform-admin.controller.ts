@@ -10,6 +10,7 @@ import {
   CreateTenantDto,
   PlatformAuditQueryDto,
   PlatformSessionDto,
+  RequestBreakGlassDto,
   UpdatePlanDto,
   UpdateTenantStatusDto,
 } from './dto/platform-admin.dto';
@@ -33,6 +34,12 @@ export class PlatformAdminController {
   @Get('tenants')
   listTenants() {
     return this.service.listTenants();
+  }
+
+  @UseGuards(PlatformJwtAuthGuard)
+  @Get('tenants/:id')
+  getTenant(@Param('id') id: string) {
+    return this.service.getTenant(id);
   }
 
   @UseGuards(PlatformJwtAuthGuard)
@@ -84,6 +91,41 @@ export class PlatformAdminController {
     @Req() req: Request & { user?: AuthenticatedPlatformAdmin },
   ) {
     return this.service.adjustPricing(id, dto, req.user?.email);
+  }
+
+  @UseGuards(PlatformJwtAuthGuard)
+  @Post('tenants/:id/refresh-headcount')
+  refreshHeadcount(
+    @Param('id') id: string,
+    @Req() req: Request & { user?: AuthenticatedPlatformAdmin },
+  ) {
+    return this.service.refreshHeadcountRoute(id, req.user?.email);
+  }
+
+  @UseGuards(PlatformJwtAuthGuard)
+  @Post('tenants/:id/breakglass')
+  requestBreakGlass(
+    @Param('id') id: string,
+    @Body() dto: RequestBreakGlassDto,
+    @Req() req: Request & { user?: AuthenticatedPlatformAdmin },
+  ) {
+    return this.service.requestBreakGlass(id, dto, req.user?.email);
+  }
+
+  @UseGuards(PlatformJwtAuthGuard)
+  @Get('tenants/:id/breakglass')
+  getActiveBreakGlass(@Param('id') id: string) {
+    return this.service.getActiveBreakGlass(id);
+  }
+
+  @UseGuards(PlatformJwtAuthGuard)
+  @Post('tenants/:id/breakglass/:grantId/revoke')
+  revokeBreakGlass(
+    @Param('id') id: string,
+    @Param('grantId') grantId: string,
+    @Req() req: Request & { user?: AuthenticatedPlatformAdmin },
+  ) {
+    return this.service.revokeBreakGlass(id, grantId, req.user?.email);
   }
 
   @UseGuards(PlatformJwtAuthGuard)

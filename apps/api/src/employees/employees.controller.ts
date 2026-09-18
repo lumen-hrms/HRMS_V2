@@ -142,6 +142,16 @@ export class EmployeesController {
     return this.service.listDocuments(id, user);
   }
 
+  @Post(':id/photo')
+  @UseInterceptors(FileInterceptor('file'))
+  uploadPhoto(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.uploadPhoto(id, file, user);
+  }
+
   @Post(':id/documents')
   @UseInterceptors(FileInterceptor('file'))
   uploadDocument(

@@ -16,6 +16,8 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../common/guards/tenant.guard';
+import { EntitlementGuard } from '../common/guards/entitlement.guard';
+import { RequiresModule } from '../common/decorators/requires-module.decorator';
 import { CurrentUser, AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import { LeaveService } from './leave.service';
 import {
@@ -29,7 +31,8 @@ import {
   UpdateLeaveTypeDto,
 } from './dto/leave.dto';
 
-@UseGuards(JwtAuthGuard, TenantGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, TenantGuard, EntitlementGuard, RolesGuard)
+@RequiresModule('LEAVE')
 @Controller('leave')
 export class LeaveController {
   constructor(private readonly service: LeaveService) {}

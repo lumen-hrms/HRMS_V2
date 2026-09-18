@@ -35,6 +35,8 @@ import type {
 
 const ALLOWED_DOCUMENT_MIME_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
 const MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB, module 03 §3/FR-EMP-005
+const ALLOWED_PHOTO_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const MAX_PHOTO_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 
 type LifecycleState =
   'PRE_JOINING' | 'PROBATION' | 'CONFIRMED' | 'NOTICE_PERIOD' | 'SUSPENDED' | 'SEPARATED';
@@ -210,7 +212,9 @@ export class EmployeesService {
       include: { department: true, reportingManager: true },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
     });
-    return employees.map((e) => this.sanitize(e));
+    // No per-row presign here — the list view never renders an avatar
+    // image today (see apps/web/src/pages/employees/list.tsx).
+    return employees.map((e) => ({ ...this.sanitize(e), photoUrl: null as string | null }));
   }
 
   async get(id: string, user: AuthenticatedUser) {
@@ -219,7 +223,50 @@ export class EmployeesService {
       include: { department: true, reportingManager: true, directReports: true },
     });
     if (!employee) throw new NotFoundException('Employee not found');
-    return this.sanitize(employee);
+    const { photoKey, ...rest } = this.sanitize(employee);
+    return { ...rest, photoUrl: await this.resolvedPhotoUrl(photoKey) };
+  }
+
+  /** Resolves the private object-storage key into a short-lived, viewable URL. */
+  private async resolvedPhotoUrl(photoKey: string | null): Promise<string | null> {
+    if (!photoKey) return null;
+    return this.storage.getPresignedDownloadUrl(photoKey, 3600);
+  }
+
+  /**
+   * Uploads a new avatar image (self, or Admin/HR for anyone) — replaces
+   * `photoUrl` as a hand-typed URL field (module 03 gap). Deletes the
+   * previous object, same lifecycle as document replacement, so orphaned
+   * objects don't accumulate.
+   */
+  async uploadPhoto(employeeId: string, file: Express.Multer.File, actor: AuthenticatedUser) {
+    this.assertCanEditEmployee(employeeId, actor);
+    const existing = await this.tenantPrisma.client.employee.findUnique({
+      where: { id: employeeId },
+      select: { photoKey: true },
+    });
+    if (!existing) throw new NotFoundException('Employee not found');
+
+    if (!ALLOWED_PHOTO_MIME_TYPES.includes(file.mimetype)) {
+      throw new BadRequestException(
+        `Unsupported image type "${file.mimetype}" — allowed: JPEG, PNG, WebP.`,
+      );
+    }
+    if (file.size > MAX_PHOTO_SIZE_BYTES) {
+      throw new BadRequestException('Image exceeds the 5 MB limit.');
+    }
+
+    const tenantId = this.tenantPrisma.tenantId;
+    const key = this.storage.buildKey(tenantId, employeeId, file.originalname);
+    await this.storage.upload(key, file.buffer, file.mimetype);
+    if (existing.photoKey) {
+      await this.storage.delete(existing.photoKey).catch(() => undefined);
+    }
+    await this.tenantPrisma.client.employee.update({
+      where: { id: employeeId },
+      data: { photoKey: key },
+    });
+    return { photoUrl: await this.resolvedPhotoUrl(key) };
   }
 
   async create(dto: CreateEmployeeDto, actor?: AuthenticatedUser) {
@@ -325,7 +372,6 @@ export class EmployeesService {
     'maritalStatus',
     'bloodGroup',
     'nationality',
-    'photoUrl',
   ] as const;
 
   /**
@@ -366,7 +412,6 @@ export class EmployeesService {
           maritalStatus: dto.maritalStatus,
           bloodGroup: dto.bloodGroup,
           nationality: dto.nationality,
-          photoUrl: dto.photoUrl,
         }
       : {
           firstName: dto.firstName,
@@ -380,7 +425,6 @@ export class EmployeesService {
           maritalStatus: dto.maritalStatus,
           bloodGroup: dto.bloodGroup,
           nationality: dto.nationality,
-          photoUrl: dto.photoUrl,
           employmentType: dto.employmentType as any,
           workLocation: dto.workLocation,
           ctcAnnual: dto.ctcAnnual,

@@ -152,7 +152,16 @@ export async function createTenantFixture(label: string): Promise<TenantFixture>
       name: `E2E ${label}`,
       subdomain,
       status: 'ACTIVE',
-      subscription: { create: { plan: 'TRIAL', seats: 10 } },
+      // `enabledModules` must cover every module the e2e suites exercise
+      // (Leave, Attendance) — otherwise `EntitlementGuard` 403s before the
+      // tenant-isolation checks these fixtures exist for ever run.
+      subscription: {
+        create: {
+          plan: 'TRIAL',
+          seats: 10,
+          enabledModules: ['CORE_HR', 'LEAVE', 'ATTENDANCE'],
+        },
+      },
     },
   });
 

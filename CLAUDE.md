@@ -173,7 +173,10 @@ RBAC + tenant isolation (RLS), the Identity & Access *management* surface
 table and append-only login-audit writes on every server-observed
 `POST /api/auth/session` outcome; e2e-tested in `test/access.e2e-spec.ts`;
 `VITE_ACCESS_MOCK` defaults **off**), Platform Admin console (tenant
-onboarding/enable-disable/metadata only), Employee Master, role-aware
+onboarding/enable-disable/metadata, plus tenant detail, audited headcount
+refresh, scheduled renewal, and break-glass request tracking), Employee
+Master (interactive org chart, a real photo-upload widget, and Leave's
+recursive Line-Manager scoping mirror all landed 2026-09-18), role-aware
 Dashboard — backend and frontend both. See `docs/BACKEND_ARCHITECTURE.md`
 for the full traced reference and its §8 for known gaps within these
 modules (the generic `audit_log` is now written to for access-change
@@ -206,15 +209,42 @@ Attendance's own much bigger "nightly finalization" gap (§5 of
 `docs/MODULE_SPECS.md`) stays exactly as deferred as it was. See
 `docs/MODULE_SPECS.md` §4 and `docs/LEAVE_UI_SPECS.md`.
 
-**Identity & Access — remaining gaps** (`docs/modules/01_IDENTITY_AND_ACCESS.md`
-§9): `BAD_CREDENTIALS` and `TENANT_SUSPENDED` sign-in failures aren't
-server-observable so aren't in the login trail (suspend/resume is logged
-once in `platform_audit_log` instead); no 2-year retention purge job yet.
+**Identity & Access — done, 100%.** `BAD_CREDENTIALS` and `TENANT_SUSPENDED`
+sign-in failures staying out of the server-side login trail is an
+owner-approved scope decision (`docs/modules/01_IDENTITY_AND_ACCESS.md` §9),
+not an open gap — suspend/resume is logged once in `platform_audit_log`
+instead. A daily BullMQ job (`LoginAuditRetentionProcessor`) purges
+`login_audit_entries` past the 2-year retention window, per tenant.
 
-**Not started:** Payroll, Attendance, Compliance exports are the next
-slice — see the blueprint's 12-week plan for sequencing (payroll is the
-highest-effort, highest-risk module; protect its time budget over breadth
-elsewhere).
+**Platform Admin — done, 99%.** Tenant detail (`GET tenants/:id`), an
+audited headcount-refresh route, and a scheduled renewal job (driving
+`renewSubscription()` off `Subscription.renewsAt` instead of manual-only)
+are all live; `platform_audit_log` is now true append-only at the DB grant
+level. Break-glass has a full audited request/track/expire/revoke lifecycle
+(`platform.break_glass_grants`) but doesn't yet grant an operator actual
+elevated read access to a tenant's data during the grant window — that
+escalation mechanism (a temporary, scoped credential or RLS bypass, itself
+logged per-query) is a deliberate follow-on, the one thing keeping this
+module below 100%.
+
+**Tenant Configuration — done, 100%.** Layer 1 (plan entitlements) is now
+enforced, not just stored: `EntitlementGuard` + `@RequiresModule`/
+`@RequiresFeature` block a route when the tenant's plan doesn't include it,
+wired onto Leave and Attendance. Layer 2 (tenant business config) has both
+its engine wiring (`attendance.service.ts` reads the tenant's `Shift` +
+`tenant_settings` instead of hardcoded constants) and its UI (a Settings
+tab for shifts + attendance/general config, plus a skippable/resumable
+first-run setup wizard for a Company Admin's first login). See
+`docs/TENANT_CONFIGURATION.md`.
+
+**Attendance — 🟡 60%, in progress alongside Tenant Configuration.**
+Self-service clock-in/out/breaks/calendar/stats and shift-aware
+late/grace/target-hours logic are live and plan-gated. Still missing: a
+nightly finalization job, manager-facing views, and regularization-approval
+routes (docs/MODULE_SPECS.md §5). Payroll and Compliance exports remain
+**not started** — see the blueprint's 12-week plan for sequencing (payroll
+is the highest-effort, highest-risk module; protect its time budget over
+breadth elsewhere).
 
 ## Keeping module status in sync — MANDATORY, no reminder needed
 

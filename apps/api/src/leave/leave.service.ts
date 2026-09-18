@@ -17,6 +17,7 @@ import type {
 } from './dto/leave.dto';
 import { LEAVE_QUEUE } from './leave.constants';
 import { resolveLeaveYear } from './leave-year.util';
+import { recursiveReportIds } from '../common/reporting-hierarchy';
 
 const ADMIN_ROLES = ['COMPANY_ADMIN', 'HR_MANAGER'];
 
@@ -58,6 +59,21 @@ export class LeaveService {
     private readonly storage: StorageService,
     @InjectQueue(LEAVE_QUEUE) private readonly leaveQueue: Queue,
   ) {}
+
+  /**
+   * Every employee in `managerId`'s full reporting subtree, any depth — the
+   * same recursive scoping Employees uses (module 03's Line-Manager
+   * decision), now mirrored here instead of Leave's previous direct-report-
+   * only equality checks. Direct Prisma access rather than importing
+   * EmployeesService, same as the rest of this file — see CLAUDE.md's note
+   * on avoiding a circular module dependency with Attendance.
+   */
+  private async recursiveReportIds(managerId: string): Promise<string[]> {
+    const employees = await this.tenantPrisma.client.employee.findMany({
+      select: { id: true, reportingManagerId: true },
+    });
+    return [...recursiveReportIds(employees, managerId)];
+  }
 
   // ---- Tenant settings (leave-specific slice) ----
 
@@ -414,10 +430,13 @@ export class LeaveService {
       const settings = await this.getTenantSettings();
       year = resolveLeaveYear(new Date(), settings.fyStartMonth);
     }
+    const scopeIds = ADMIN_ROLES.includes(user.role)
+      ? null
+      : user.employeeId
+        ? await this.recursiveReportIds(user.employeeId)
+        : [];
     const employees = await this.tenantPrisma.client.employee.findMany({
-      where: ADMIN_ROLES.includes(user.role)
-        ? {}
-        : { reportingManagerId: user.employeeId ?? '__none__' },
+      where: scopeIds === null ? {} : { id: { in: scopeIds } },
       include: {
         department: true,
         leaveBalances: { where: { year }, include: { leaveType: true } },
@@ -818,16 +837,19 @@ export class LeaveService {
     return rows.map((r) => this.toRequestDto(r));
   }
 
-  /** Team calendar: approved/pending leave for a manager's direct reports (whole company for HR/Admin). */
+  /** Team calendar: approved/pending leave for a manager's full reporting subtree (whole company for HR/Admin). */
   async teamCalendar(user: AuthenticatedUser, from: string, to: string) {
+    const scopeIds = ADMIN_ROLES.includes(user.role)
+      ? null
+      : user.employeeId
+        ? await this.recursiveReportIds(user.employeeId)
+        : [];
     const rows = await this.tenantPrisma.client.leaveRequest.findMany({
       where: {
         status: { in: ['PENDING_L1', 'PENDING_L2', 'APPROVED'] },
         startDate: { lte: new Date(to) },
         endDate: { gte: new Date(from) },
-        ...(ADMIN_ROLES.includes(user.role)
-          ? {}
-          : { employee: { reportingManagerId: user.employeeId ?? '__none__' } }),
+        ...(scopeIds === null ? {} : { employeeId: { in: scopeIds } }),
       },
       include: { employee: true, leaveType: true },
     });
@@ -843,15 +865,15 @@ export class LeaveService {
     }));
   }
 
+  /** Mirrors Employees' recursive-subtree row scoping (module 03) — a Line
+   *  Manager can view leave data for anyone in their reporting subtree, any
+   *  depth, not just direct reports. */
   private async assertCanViewEmployee(employeeId: string, user: AuthenticatedUser) {
     if (ADMIN_ROLES.includes(user.role) || user.role === 'AUDITOR') return;
     if (user.employeeId === employeeId) return;
-    if (user.role === 'LINE_MANAGER') {
-      const target = await this.tenantPrisma.client.employee.findUnique({
-        where: { id: employeeId },
-        select: { reportingManagerId: true },
-      });
-      if (target?.reportingManagerId === user.employeeId) return;
+    if (user.role === 'LINE_MANAGER' && user.employeeId) {
+      const subordinates = await this.recursiveReportIds(user.employeeId);
+      if (subordinates.includes(employeeId)) return;
     }
     throw new ForbiddenException('Not authorized to view this employee’s leave data');
   }

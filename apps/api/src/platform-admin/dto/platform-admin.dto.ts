@@ -127,6 +127,7 @@ const AUDIT_ACTIONS = [
   'breakglass.requested',
   'breakglass.used',
   'breakglass.expired',
+  'breakglass.revoked',
 ] as const;
 
 /** GET /api/platform-admin/audit?tenantId=&action=&from=&to=&q= */
@@ -150,6 +151,18 @@ export class PlatformAuditQueryDto {
   @IsOptional()
   @IsString()
   q?: string;
+}
+
+/** POST /api/platform-admin/tenants/:id/breakglass */
+export class RequestBreakGlassDto {
+  @Transform(trim)
+  @IsString()
+  @MinLength(10)
+  reason!: string;
+
+  @IsInt()
+  @IsIn([15, 30, 60, 120])
+  ttlMinutes!: number;
 }
 
 /** PATCH /api/platform-admin/plans/:key — every field optional (partial edit). */

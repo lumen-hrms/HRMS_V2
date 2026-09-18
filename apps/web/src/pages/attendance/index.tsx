@@ -6,8 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader } from '@/components/ui/dialog';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useAuth } from '@/context/auth-context';
 import { cn } from '@/lib/utils';
+import { AttendanceSettingsTab } from './settings-tab';
 
 interface AttendanceBreakRow {
   id: string;
@@ -71,6 +73,30 @@ function fmtDuration(ms: number) {
 }
 
 export function AttendancePage() {
+  const { user } = useAuth();
+  const canManageSettings = user?.role === 'COMPANY_ADMIN' || user?.role === 'HR_MANAGER';
+
+  const [tab, setTab] = React.useState<'my' | 'settings'>('my');
+
+  if (!canManageSettings) return <MyAttendanceTab />;
+
+  return (
+    <Tabs value={tab} onValueChange={(v) => setTab(v as 'my' | 'settings')}>
+      <TabsList>
+        <TabsTrigger value="my">My Attendance</TabsTrigger>
+        <TabsTrigger value="settings">Settings</TabsTrigger>
+      </TabsList>
+      <TabsContent value="my">
+        <MyAttendanceTab />
+      </TabsContent>
+      <TabsContent value="settings">
+        <AttendanceSettingsTab />
+      </TabsContent>
+    </Tabs>
+  );
+}
+
+function MyAttendanceTab() {
   const { user } = useAuth();
   const [today, setToday] = React.useState<TodayResponse | null>(null);
   const [stats, setStats] = React.useState<StatsResponse | null>(null);

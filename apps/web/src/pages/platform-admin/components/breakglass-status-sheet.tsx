@@ -2,21 +2,22 @@ import * as React from 'react';
 import { Sheet } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast';
+import { platformApi, isPlatformApiError } from '@/lib/platform-api';
 import { fmtCountdown, fmtDateTime } from '../lib/format';
 import type { BreakGlassGrant } from '../lib/types';
 
 /**
  * Live status of an ACTIVE break-glass grant for a tenant — reason, granted
- * time, a countdown to expiry, access count, and Revoke now. Only rendered
- * when a grant is active. TODO(api): no backend for the grant lifecycle yet,
- * so in practice this never shows; it exists for when it does.
+ * time, a countdown to expiry, access count, and Revoke now.
  */
 export function BreakGlassStatusSheet({
+  tenantId,
   grant,
   open,
   onOpenChange,
   onRevoked,
 }: {
+  tenantId: string;
   grant: BreakGlassGrant | null;
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -24,6 +25,7 @@ export function BreakGlassStatusSheet({
 }) {
   const { toast } = useToast();
   const [now, setNow] = React.useState(() => Date.now());
+  const [busy, setBusy] = React.useState(false);
 
   React.useEffect(() => {
     if (!open) return;
@@ -44,12 +46,24 @@ export function BreakGlassStatusSheet({
         <Button
           variant="destructive"
           className="w-full"
-          onClick={() => {
-            toast({ title: 'Break-glass access revoked' });
-            onRevoked();
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await platformApi.revokeBreakGlass(tenantId, grant.id);
+              toast({ title: 'Break-glass access revoked' });
+              onRevoked();
+            } catch (e) {
+              toast({
+                title: isPlatformApiError(e) ? e.message : 'Revoke failed — retry',
+                tone: 'error',
+              });
+            } finally {
+              setBusy(false);
+            }
           }}
         >
-          Revoke access now
+          {busy ? '…' : 'Revoke access now'}
         </Button>
       }
     >

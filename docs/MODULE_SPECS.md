@@ -21,8 +21,94 @@
 > spec draft that is no longer maintained — ignore them; this file and the
 > code are the source of truth.)
 >
-> **Last synced to code:** 2026-09-15. Landed since the previous sync
-> (2026-09-11):
+> **Last synced to code:** 2026-09-18. Landed since the previous sync
+> (2026-09-15) — including a second pass later the same day:
+>
+> - **Tenant Configuration reaches 100%.** The last piece — a skippable,
+>   resumable first-run setup wizard
+>   (`apps/web/src/components/setup-wizard/setup-wizard.tsx`, mounted in
+>   `AppLayout`, Company Admin only) — is live. Five steps (work week +
+>   timezone, default shift, holidays, leave types, payroll cut-off day),
+>   each orchestrating existing endpoints (Attendance's general settings +
+>   shifts, Leave's holidays + types) rather than introducing new business
+>   logic. Progress is tracked on `TenantSettings.setupWizardStatus`
+>   (`PENDING`/`IN_PROGRESS`/`DISMISSED`/`COMPLETED`) +
+>   `setupWizardStep`, via a new minimal `apps/api/src/tenant-config` module
+>   (`GET`/`PATCH /api/tenant-config/wizard`, migration
+>   `20260919090000_tenant_setup_wizard`). A step only PATCHes its endpoint
+>   when the wizard actually advances (Next/Back/Skip), not on every
+>   keystroke — each step registers a "commit" callback the wizard calls
+>   once before transitioning. Not e2e/browser-verified this pass (no test
+>   Company Admin credentials in this environment) — verified by `tsc`,
+>   `vite build`, lint, and the new `tenant-config.service.spec.ts` only.
+>
+> Landed earlier the same day:
+>
+> - **Identity & Access reaches 100%.** `LoginAuditRetentionProcessor` (new
+>   BullMQ `access` queue, same `upsertJobScheduler` daily-cron pattern as
+>   `LeaveAccrualProcessor`) purges `login_audit_entries` older than the
+>   2-year retention window, per tenant. `BAD_CREDENTIALS`/`TENANT_SUSPENDED`
+>   staying unlogged is the pre-existing owner-approved scope decision
+>   (§1 "Known gaps"), not an open gap.
+> - **Platform Admin reaches 99%.** Closed: `GET /tenants/:id` (detail
+>   endpoint), `POST /tenants/:id/refresh-headcount` (audited), a scheduled
+>   renewal job (`PlatformScheduledJobsProcessor`, daily, drives
+>   `renewSubscription()` off `Subscription.renewsAt` instead of manual-only),
+>   and `platform_audit_log` tightened to true append-only (`REVOKE UPDATE,
+>   DELETE ... FROM hrms_platform`). Break-glass gained its auditable
+>   control-plane lifecycle — `platform.break_glass_grants`
+>   (request/track/expire/revoke, one-active-grant-per-tenant, hourly
+>   auto-expiry job, full console wiring replacing the old TODO(api) stub) —
+>   but this is the logged request/approval trail only; it does **not** yet
+>   grant an operator any actual elevated read against a tenant's data
+>   during the window (that's a separate connection-pool escalation
+>   mechanism, deliberately still unbuilt — same category as the dedicated
+>   DB-per-tenant tier). Kept at 99%, not 100%, until that's addressed.
+> - **Employee Master + Org Structure reaches 100%.** Org chart
+>   (`apps/web/src/pages/org-chart.tsx`) gained search (auto-expands
+>   ancestors of a match), expand/collapse (per-node + all), zoom, and a
+>   click-to-drawer quick view. The PAN/bank reveal reason is now a proper
+>   confirm dialog, not `window.prompt`. `photoUrl` is a real upload now, not
+>   a hand-typed URL: `Employee.photoKey` (renamed from `photoUrl`, migration
+>   `20260918110000_employee_photo_key`) stores a private object-storage key,
+>   resolved to a short-lived (1h) presigned URL only on `GET /employees/:id`
+>   (not in list views, which never render an avatar); `POST
+>   /employees/:id/photo` uploads (JPEG/PNG/WebP, ≤5MB, self or Admin/HR,
+>   deletes the previous object). The Line-Manager recursive-subtree
+>   scoping decision is now mirrored into Leave (`teamBalances`,
+>   `teamCalendar`, `assertCanViewEmployee` all walk the full reporting
+>   subtree via a new shared `recursiveReportIds()` helper in
+>   `apps/api/src/common/reporting-hierarchy.ts`, reused instead of
+>   duplicating `EmployeesService`'s private BFS to avoid a circular module
+>   dependency) — L1-approval-specific checks (`approve()`/`reject()`'s
+>   "only the direct reporting manager" gate, `pendingApprovals()`) stay
+>   direct-only on purpose, since L1 approval is specifically the direct
+>   manager's job. Attendance has no manager-facing views at all yet to
+>   mirror into — that's module 05's own pre-existing, separately-tracked
+>   gap (§5 "Known gaps" #5), not something this pass touched.
+> - **Tenant Configuration reaches 80%.** `EntitlementGuard` +
+>   `@RequiresModule`/`@RequiresFeature` (`apps/api/src/common/guards/
+>   entitlement.guard.ts`) enforce Layer-1 plan entitlements — wired onto
+>   `LeaveController` (`@RequiresModule('LEAVE')`) and `AttendanceController`
+>   (`@RequiresModule('ATTENDANCE')`); a tenant whose plan excludes a module
+>   now gets a 403 instead of a page that quietly half-works.
+>   `attendance.service.ts` no longer hardcodes `SHIFT_START_HOUR`/
+>   `GRACE_MINUTES`/`TARGET_HOURS` — `resolveShift()` reads
+>   `Employee.shiftId` (falls back to the tenant's `isDefault` `Shift`) for
+>   both the late/on-time call and the progress-ring target. New Settings UI
+>   (`apps/web/src/pages/attendance/settings-tab.tsx`, a tab on the
+>   Attendance page for Company Admin/HR Manager only): shift catalogue CRUD,
+>   attendance mode/capture-methods/regularization guardrails, and the
+>   general (non-Leave) slice of `tenant_settings` (timezone, weekly-off
+>   days, payroll cut-off day). The e2e tenant fixture
+>   (`apps/api/test/utils/fixtures.ts`) had to be updated to set
+>   `enabledModules` — it previously left the subscription's module list
+>   empty, which `EntitlementGuard` would now correctly 403 before the
+>   tenant-isolation checks those suites exist to run ever executed. Still
+>   open: a first-run setup wizard (UX nicety, defaults already apply) —
+>   see `docs/TENANT_CONFIGURATION.md`.
+>
+> Landed in the 2026-09-15 sync (2026-09-11):
 >
 > - **Platform Admin — audit read API.** `GET /api/platform-admin/audit`
 >   (`tenantId`/`action`/`from`/`to`/`q` filters) closes the last open item
@@ -139,19 +225,19 @@
 
 | Module | Status | Progress |
 |---|---|---|
-| 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ | `███████████████████░` 97% — auth/RBAC/tenancy live; `access` module wired (Users, role/status/reset, login+access audit, My Account) with e2e RBAC + append-only tests; `LoginAuditEntry` table written on every session outcome. Remaining: `BAD_CREDENTIALS`/`TENANT_SUSPENDED` not server-observable (§1 gaps) |
-| 2. Platform Admin | ✅ | `███████████████████░` 97% — full operator console UI (tenants list, new-tenant wizard, tenant detail tabs, **Plans catalog**, audit screen); onboarding emails a hosted reset link; **operator-editable `platform.plans`** (per-seat list price / default seats / modules / features / isolation tier) with snapshot-at-assign + re-snapshot-on-renewal; **per-tenant negotiated per-seat rate** (`PATCH .../pricing`; monthly = rate × seats, computed); `PATCH .../plan` + `POST .../renew` live; `PlatformAuditLog` written for create / status / plan-change / renewal / price-adjust / plan-edit AND now readable — `GET .../audit`. Pending: `GET tenants/:id`, refresh-headcount route, scheduled renewal job, break-glass |
-| 3. Employee Master + Org Structure | 🟡 | `███████████████████░` 97% — lifecycle state machine, the full field set (statutory/bank via KMS-style AES-256-GCM encryption, emergency contacts, comp-adjacent fields), bulk-import UI, document hardening, and department edit/delete-with-reassign are all live. Only org-chart search/expand/zoom polish and the deliberately-deferred BU→Team hierarchy remain |
+| 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ | `████████████████████` 100% — auth/RBAC/tenancy live; `access` module wired (Users, role/status/reset, login+access audit, My Account) with e2e RBAC + append-only tests; `LoginAuditEntry` table written on every session outcome, with a daily BullMQ job purging entries past the 2-year retention window. `BAD_CREDENTIALS`/`TENANT_SUSPENDED` staying server-unobserved is an owner-approved scope decision (§1), not a gap |
+| 2. Platform Admin | ✅ | `███████████████████░` 99% — full operator console UI (tenants list, new-tenant wizard, tenant detail tabs, **Plans catalog**, audit screen); onboarding emails a hosted reset link; **operator-editable `platform.plans`** (per-seat list price / default seats / modules / features / isolation tier) with snapshot-at-assign + re-snapshot-on-renewal; **per-tenant negotiated per-seat rate** (`PATCH .../pricing`; monthly = rate × seats, computed); `PATCH .../plan` + `POST .../renew` live (renewal now also runs on a daily scheduled job off `renewsAt`); `PlatformAuditLog` written for every operator action and readable (`GET .../audit`), now true append-only at the DB grant level; `GET tenants/:id` and `POST .../refresh-headcount` live. Break-glass has a full audited request/track/expire/revoke lifecycle but does not yet grant an operator actual elevated tenant-data access during the window — that escalation mechanism is a deliberate follow-on |
+| 3. Employee Master + Org Structure | ✅ | `████████████████████` 100% — lifecycle state machine, the full field set (statutory/bank via KMS-style AES-256-GCM encryption, emergency contacts, comp-adjacent fields), bulk-import UI, document hardening, department edit/delete-with-reassign, an interactive org chart (search/expand/collapse/zoom/quick-view), a real photo-upload widget, a proper reveal-reason dialog, and Leave's recursive Line-Manager scoping mirror are all live. Only the deliberately-deferred BU→Team hierarchy remains |
 | 4. Leave Management | ✅ | `████████████████████` 100% — backend fully wired & tested; FE live path built and running against the real API by default (`client.ts`'s `USE_MOCK` now defaults to **off**, matching `access/client.ts` — set `VITE_LEAVE_MOCK=true` to force the fixture store); `allowLopRequests`/`minNoticeDays`/`fyStartMonth`/`genderRestriction`/`requiresApproval` all enforced/settable; mid-year-joiner proration; comp-off credit on holiday/weekly-off clock-in; approved leave reconciles into `AttendanceRecord.ON_LEAVE` |
-| 5. Attendance & Time Tracking | 🟡 | `███████████░░░░░░░░░░` 55% |
+| 5. Attendance & Time Tracking | 🟡 | `█████████████░░░░░░░` 60% — now reads the tenant's `Shift`/`tenant_settings` config instead of hardcoded constants, and is gated behind the `ATTENDANCE` plan entitlement. Still missing: nightly finalization job, manager-facing views, regularization-approval routes |
 | 6. Dashboard | ✅ | `█████████████████░░░` 85% |
 | 7. Payroll Engine | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
 | 8. Statutory Compliance | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
 | 9. Documents | 🟡 | `████████████░░░░░░░░` 60% (lives inside Employee Master today) |
 | 10. Notifications | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
 | 11. Reports & Analytics | 🔴 | `██░░░░░░░░░░░░░░░░░░` 10% (only the Dashboard aggregates exist) |
-| 12. Audit Log | 🟡 | `██████░░░░░░░░░░░░░░` 30% — three append-only trails live: `login_audit_entries` (sign-in outcomes), `public.audit_log` (`access.*` change events — role/status/reset/login-created), `platform.platform_audit_log` (tenant create/status/plan/renewal/price-adjust/plan-edit). `login_audit_entries` + `audit_log` have no `UPDATE`/`DELETE` grant. Missing: a generic audit interceptor, employee field/salary + attendance-decision coverage, an aggregation/query UI, retention-purge job |
-| 13. Tenant Configuration | 🟡 | `██████░░░░░░░░░░░░░░` 30% — schema + onboarding defaults landed; guard, Settings UI, engine wiring next. See `docs/TENANT_CONFIGURATION.md` |
+| 12. Audit Log | 🟡 | `███████░░░░░░░░░░░░░` 35% — three append-only trails live: `login_audit_entries` (sign-in outcomes, with a daily retention-purge job), `public.audit_log` (`access.*` change events — role/status/reset/login-created), `platform.platform_audit_log` (tenant create/status/plan/renewal/price-adjust/plan-edit/breakglass — now readable + expanded). All three tables have no `UPDATE`/`DELETE` grant (true append-only). Missing: a generic audit interceptor, employee field/salary + attendance-decision coverage, an aggregation/query UI |
+| 13. Tenant Configuration | ✅ | `████████████████████` 100% — schema, onboarding defaults, `EntitlementGuard` (+ `@RequiresModule`/`@RequiresFeature`, wired onto Leave + Attendance), `attendance.service.ts` reading tenant `Shift`/`tenant_settings` instead of hardcoded constants, Settings screens (shift CRUD + attendance/general settings), and a skippable/resumable first-run setup wizard (`apps/web/src/components/setup-wizard`, `apps/api/src/tenant-config`) are all live. See `docs/TENANT_CONFIGURATION.md` |
 
 Deferred to a later phase — **do not build without a scope discussion**
 (`CLAUDE.md` → "Explicitly deferred"): Onboarding, Recruitment/ATS,
@@ -191,9 +277,10 @@ live e-filing APIs, SSO.
 
 **Deep spec:** `docs/modules/01_IDENTITY_AND_ACCESS.md` ·
 **UI prompt:** `docs/ui-build-prompts/01-identity-access.md`
-**Status:** ✅ auth/RBAC/tenancy · ✅ `access` module wired
+**Status:** ✅ 100% — auth/RBAC/tenancy · ✅ `access` module wired
 (`/api/access/*`) with e2e RBAC + append-only tests · ✅ `LoginAuditEntry`
-written on every session outcome · `VITE_ACCESS_MOCK` defaults off
+written on every session outcome, with a daily BullMQ retention-purge job ·
+`VITE_ACCESS_MOCK` defaults off
 **Code:** `apps/api/src/auth`, `apps/api/src/access`, `apps/api/src/firebase`,
 `apps/api/src/common/{guards,decorators,tenancy}`, `apps/api/src/prisma`,
 `apps/web/src/pages/access`, `apps/web/src/lib/access`
@@ -221,7 +308,7 @@ and a **P0 gate**, not a nice-to-have.
 | JWT access + refresh rotation | FR-AUTH-004 | ➖ replaced — the Firebase ID token *is* the session, SDK-refreshed client-side; no server-minted tokens (see `CLAUDE.md`) |
 | MFA (TOTP) for admin roles | FR-AUTH-002 | ➖ **cut for V1** — no MFA (documented decision) |
 | Google / Azure AD SSO | FR-AUTH-003 | 🔴 deferred |
-| Login audit log (IP, device, timestamp, outcome), 2-yr retention | FR-AUTH-008 | ✅ `LoginAuditEntry` (append-only) written on every `POST /api/auth/session` outcome the server can see (`SUCCESS`, `USER_INACTIVE`, `CLAIM_MISMATCH`, `TOKEN_EXPIRED`); read via `GET /api/access/audit?feed=login`. Retention purge job still TODO |
+| Login audit log (IP, device, timestamp, outcome), 2-yr retention | FR-AUTH-008 | ✅ `LoginAuditEntry` (append-only) written on every `POST /api/auth/session` outcome the server can see (`SUCCESS`, `USER_INACTIVE`, `CLAIM_MISMATCH`, `TOKEN_EXPIRED`); read via `GET /api/access/audit?feed=login`. `LoginAuditRetentionProcessor` (daily BullMQ job, `access` queue) purges entries older than 2 years, per tenant |
 | Access-change trail (role change, activate/deactivate, reset, login created) | — | ✅ written to append-only `audit_log` (`access.*` actions, `metadata.module = "identity-access"`); read via `GET /api/access/audit?feed=access` |
 | User administration (list logins, change role, activate/deactivate, send reset) | FR-RBAC-004 | ✅ `access` module — `@Roles`-gated + service-layer invariants (RULE-2 ceiling, keep ≥1 active Company Admin, no self-deactivation); Firebase claim + `disabled` flag kept in sync |
 | Custom role builder / granular per-module permissions | FR-RBAC-002 | 🔴 deferred — roles are fixed for V1 |
@@ -272,9 +359,8 @@ creation) and on every role change. Never trust a claim the client could set.
   `TenantResolutionMiddleware` before the session handler. Instead, one
   `tenant.status_changed` row is written to `platform_audit_log` on the
   operator's suspend/resume action (module 02).
-- **Retention purge** — `LoginAuditEntry` has a 2-year retention
-  requirement; the scheduled purge job is not built yet.
-- Decide if/when SSO (FR-AUTH-003) re-enters scope for the hospital pilot.
+- Decide if/when SSO (FR-AUTH-003) re-enters scope for the hospital pilot
+  (explicitly deferred — see `CLAUDE.md`).
 
 ---
 
@@ -282,16 +368,19 @@ creation) and on every role change. Never trust a claim the client could set.
 
 **Deep spec:** `docs/modules/02_PLATFORM_ADMIN.md` ·
 **UI prompt:** `docs/ui-build-prompts/02-platform-admin.md`
-**Status:** ✅ core live · full operator console UI (`/platform-admin/*` —
+**Status:** ✅ 99% — full operator console UI (`/platform-admin/*` —
 login, tenants list, new-tenant wizard, tenant detail w/ 4 tabs, **Plans
 catalog**, audit screen) · ✅ operator-editable `platform.plans` (per-seat
 list price / default seats / modules / features / isolation tier) with
 **snapshot-at-assign + re-snapshot-on-renewal** · ✅ **per-tenant
 negotiated per-seat rate** (`PATCH .../pricing`; monthly = rate × seats,
 computed) · ✅ `PATCH .../plan` + `POST .../renew` (renewal keeps the
-negotiated rate, refreshes modules) · `PlatformAuditLog` written for
-create / status / plan-change / renewal / price-adjust / plan-catalog-edit
-· 🔴 audit-read API / refresh-headcount route / break-glass pending
+negotiated rate, refreshes modules) + a daily scheduled job driving renewal
+off `renewsAt` · `PlatformAuditLog` written for every operator action,
+readable (`GET .../audit`), and now true append-only at the DB grant level
+· ✅ `GET tenants/:id` + `POST .../refresh-headcount` · 🟡 break-glass has
+a full audited request/track/expire/revoke lifecycle but no underlying
+elevated-read mechanism yet (see "Known gaps")
 **Code:** `apps/api/src/platform-admin` (`+ plans.service.ts`),
 `apps/web/src/pages/platform-admin` (`console.tsx` gate → `shell.tsx` +
 `tenants` / `tenant-new` / `tenant-detail` / `plans` / `audit` +
@@ -315,14 +404,14 @@ future logged, time-boxed break-glass flow, not a standing grant.
 | Create tenant (name, subdomain, plan, seats, negotiated per-seat rate, first admin name+email) | ✅ `createTenant()` — creates `Tenant` + `Subscription` (seat count + per-seat rate per plan default or deal override), seeds the Company Admin via the `hrms_app` connection with a **random password + a hosted password-reset email** (no operator-typed password); rolls back the tenant row if seeding fails. The reset-email send is non-fatal (the tenant is still created if it fails) and the response now carries `adminResetEmailSent: boolean` so the wizard doesn't lie about the outcome — a resend action exists (`POST .../resend-admin-reset`) for when it's `false` |
 | List tenants with subscription info | ✅ |
 | Enable / suspend / set trial | ✅ `PATCH .../status` — `SUSPENDED` locks out every user of that tenant immediately at the resolution layer; carries an audit `reason` |
-| Denormalized employee headcount per tenant | ✅ `refreshHeadcount()` writes `platform.tenants.employeeCount` (on-demand internal call; the `POST .../refresh-headcount` route is TODO) |
-| Platform audit log | 🟡 written for `tenant.created` / `tenant.status_changed` / `tenant.plan_changed` / `subscription.renewed` / `subscription.price_adjusted` / `plan.updated` (actor email, before/after, reason in `metadata`); `headcount.refreshed` + break-glass events + the **read API** pending |
+| Denormalized employee headcount per tenant | ✅ `refreshHeadcount()` writes `platform.tenants.employeeCount`; `POST /api/platform-admin/tenants/:id/refresh-headcount` exposes it as an audited operator route (`headcount.refreshed`, written only when the count actually changed) |
+| Platform audit log | ✅ written for `tenant.created` / `tenant.status_changed` / `tenant.plan_changed` / `subscription.renewed` / `subscription.price_adjusted` / `plan.updated` / `headcount.refreshed` / `breakglass.requested` / `breakglass.revoked` / `breakglass.expired` (actor email, before/after, reason in `metadata`); readable via `GET .../audit`; `hrms_platform` has no `UPDATE`/`DELETE` grant on the table (true append-only) |
 | Operator-editable plan catalog | ✅ `platform.plans` (**list price per seat / month**, default seat count, modules / features / isolation tier) — `GET`/`PATCH /api/platform-admin/plans[/:key]`, **Plans** screen. Editing a plan never mutates a live `Subscription` (each carries a snapshot); new tenants snapshot the current plan, and **renewal re-snapshots** (`POST .../:id/renew`) — adds modules the plan gained, removes ones it dropped, **keeps the tenant's negotiated per-seat rate + seat count**. `entitlements.ts` stays as the seed + code fallback. Pricing is a stored reference figure — no billing integration. |
 | Per-seat pricing + per-tenant negotiation | ✅ `Subscription.pricePerSeat` is the **negotiated** rate for that one tenant (defaults to the plan's list price at assign-time, operator tunes it). **Effective monthly = `pricePerSeat × seats`**, computed at display, never stored. `PATCH /api/platform-admin/tenants/:id/pricing` `{pricePerSeat?, seats?, reason}` adjusts commercials without a plan change (`subscription.price_adjusted` audit). A plan change resets the rate to the new plan's list price. |
 | Change a tenant's plan | ✅ `PATCH /api/platform-admin/tenants/:id/plan` — re-snapshots the new plan's current definition onto the `Subscription` and **resets the per-seat rate to the new plan's list price**; `tenant.plan_changed` audit. |
 | Operator console UI | ✅ full multi-screen console — see Status line |
 | Billing / plan enforcement (seat limits, dunning) | 🔴 not started |
-| Break-glass support access to tenant data | 🔴 not started (deliberate — design before building) |
+| Break-glass support access to tenant data | 🟡 `platform.break_glass_grants` gives the full audited control-plane lifecycle — request (`POST .../breakglass`, one active grant per tenant, TTL 15/30/60/120 min), status (`GET .../breakglass`), revoke (`POST .../breakglass/:grantId/revoke`), and an hourly job auto-expiring overdue grants — console fully wired (request dialog + live status sheet with countdown + revoke). Does **not** yet grant an operator any actual elevated read against the tenant's data during the window — that's a separate connection-pool escalation mechanism, deliberately still unbuilt |
 
 ### Happy path
 
@@ -351,29 +440,29 @@ future logged, time-boxed break-glass flow, not a standing grant.
 | `POST` | `/api/platform-admin/tenants/:id/renew` | `PlatformJwtAuthGuard` | ✅ re-snapshots current plan modules/features, **keeps negotiated rate + seats**, bumps `renewsAt` +1y; writes `subscription.renewed` |
 | `GET` | `/api/platform-admin/plans` | `PlatformJwtAuthGuard` | ✅ catalog + per-plan tenant counts |
 | `PATCH` | `/api/platform-admin/plans/:key` | `PlatformJwtAuthGuard` | ✅ edit list price per seat / default seats / modules / features / isolation tier; writes `plan.updated` |
-| `GET` | `/api/platform-admin/tenants/:id` | `PlatformJwtAuthGuard` | 🔴 TODO(api) |
-| `POST` | `/api/platform-admin/tenants/:id/refresh-headcount` | `PlatformJwtAuthGuard` | 🔴 TODO(api) |
-| `GET` | `/api/platform-admin/audit` | `PlatformJwtAuthGuard` | 🔴 TODO(api) |
-| `POST` | `/api/platform-admin/tenants/:id/breakglass` | `PlatformJwtAuthGuard` | 🔴 TODO(api) — design first |
+| `GET` | `/api/platform-admin/tenants/:id` | `PlatformJwtAuthGuard` | ✅ tenant detail — subscription, `firstAdminEmail`, `headcountHistory` (one data point today — no time-series table yet), `recentAudit` |
+| `POST` | `/api/platform-admin/tenants/:id/refresh-headcount` | `PlatformJwtAuthGuard` | ✅ audited (`headcount.refreshed`, only when the count changed) |
+| `GET` | `/api/platform-admin/audit` | `PlatformJwtAuthGuard` | ✅ |
+| `POST` | `/api/platform-admin/tenants/:id/breakglass` | `PlatformJwtAuthGuard` | ✅ `{reason (≥10 chars), ttlMinutes (15\|30\|60\|120)}` → `{id, expiresAt}`; 409s if the tenant already has an active grant; writes `breakglass.requested` |
+| `GET` | `/api/platform-admin/tenants/:id/breakglass` | `PlatformJwtAuthGuard` | ✅ the tenant's current ACTIVE grant, or `null` |
+| `POST` | `/api/platform-admin/tenants/:id/breakglass/:grantId/revoke` | `PlatformJwtAuthGuard` | ✅ writes `breakglass.revoked` |
 
 ### Known gaps / TODO
 
-- **Audit read API** — `GET /api/platform-admin/audit`. Rows are being
-  written (create / status / plan-change / renewal / price-adjust /
-  plan-catalog-edit); the console's Audit screen + tenant-detail Activity
-  tab are built and degrade gracefully until this lands.
-- **`POST /api/platform-admin/tenants/:id/refresh-headcount`** — expose the
-  existing `refreshHeadcount()` as a route; also a scheduled BullMQ job.
-- **`GET /api/platform-admin/tenants/:id`** — detail endpoint (the console
-  currently falls back to filtering the list).
-- **Break-glass** — the whole flow (`BreakGlassGrant`, audited read-only
-  tenant context, TTL). Console dialog + status sheet built as `TODO(api)`.
-- **Scheduled renewal job** — `renewSubscription()` is a manual operator
-  action today; a BullMQ job should process `renewsAt` and re-snapshot on
-  the due date.
+- **Break-glass elevated-read mechanism** — `BreakGlassGrant` gives the
+  full audited request/track/expire/revoke lifecycle (see the feature list
+  above), but an ACTIVE grant doesn't currently change what the platform
+  role can query. Actually letting a platform admin read one tenant's data
+  for the grant's lifetime needs its own connection-pool escalation design
+  (a temporary, scoped credential or RLS bypass, itself logged per-query) —
+  deliberately not built in this pass; the `accessCount` field on the grant
+  is reserved for that later work. This is the one item keeping module 02
+  below 100%.
 - Subscription lifecycle: seat counting vs plan, `PAST_DUE` → auto-suspend.
-- Tighten `platform_audit_log` grants to true append-only (no
-  `UPDATE`/`DELETE` for `hrms_platform`).
+- `Subscription.renewsAt` is only ever set by a renewal (manual or
+  scheduled) — a brand-new tenant has no `renewsAt` until its first renewal,
+  so the scheduled renewal job has nothing to pick up for it until then.
+  Pre-existing behavior, unrelated to this pass's scheduling addition.
 
 ---
 
@@ -381,12 +470,14 @@ future logged, time-boxed break-glass flow, not a standing grant.
 
 **Deep spec:** `docs/modules/03_EMPLOYEE_MASTER.md` ·
 **UI prompt:** `docs/ui-build-prompts/03-employee-master.md`
-**Status:** 🟡 97% — full field set (statutory/bank via app-layer AES-256-GCM
+**Status:** ✅ 100% — full field set (statutory/bank via app-layer AES-256-GCM
 encryption, emergency contacts, comp-adjacent fields), lifecycle state
 machine, bulk-import UI, document hardening (MIME/size server-side, category,
-delete), department edit/delete-with-reassign, and org chart rooted per role
-are all live. Only org-chart search/expand/zoom polish and the
-deliberately-deferred BU→Team hierarchy remain.
+delete), department edit/delete-with-reassign, an org chart rooted per role
+with search/expand/collapse/zoom/click-to-drawer quick view, a real photo
+upload (private object storage, not a hand-typed URL), a proper reveal-reason
+confirm dialog, and Leave's recursive Line-Manager scoping mirror are all
+live. Only the deliberately-deferred BU→Team hierarchy remains.
 **Code:** `apps/api/src/employees`, `apps/api/src/crypto`
 (`FieldEncryptionService`), `apps/web/src/pages/employees`,
 `apps/web/src/pages/org-chart.tsx`, `apps/web/src/pages/departments.tsx`
@@ -411,7 +502,7 @@ must validate and report per-row rather than fail the batch.
 | Employee lifecycle states | FR-EMP-007 | ✅ `EmployeeLifecycleState` (`PRE_JOINING/PROBATION/CONFIRMED/NOTICE_PERIOD/SUSPENDED/SEPARATED`) matches the SRS set; `PATCH /employees/:id/lifecycle` validates transitions, `SEPARATED` disables the linked login |
 | Bulk import via Excel template + error report | FR-EMP-009 | ✅ API + frontend (`apps/web/src/pages/employees/import.tsx`) |
 | Multi-level hierarchy (Company → BU → Dept → Team) | FR-ORG-001 | 🟡 Department (now with `code`/`headEmployeeId`, edit/delete-with-reassign) + self-referential `reportingManagerId`; BU/Team levels **deliberately deferred** — flat hierarchy decided sufficient for V1 |
-| Interactive org chart — reporting lines, expand, search | FR-ORG-002 | 🟡 tree rooted per role (recursive subtree for Employee/Line Manager); expand/search/zoom **not built** — plain nested list today |
+| Interactive org chart — reporting lines, expand, search | FR-ORG-002 | ✅ tree rooted per role (recursive subtree for Employee/Line Manager); search (auto-expands ancestors of a match, highlights hits), per-node + expand-all/collapse-all, zoom (60–160%), and a click-to-drawer quick view (report count + direct reports + link to full profile) |
 | Multiple reporting lines (solid + dotted) | FR-ORG-003 | 🔴 single `reportingManagerId` only |
 | Org chart export PDF/PNG | FR-ORG-004 | 🔴 explicitly deferred |
 | No-code custom field builder | FR-EMP-008 | 🔴 deferred |
@@ -455,6 +546,7 @@ must validate and report per-row rather than fail the batch.
 | `POST` | `/api/employees/:id/reveal` | Company Admin, HR Manager, Auditor |
 | `GET`/`POST`/`PATCH`/`DELETE` | `/api/employees/:id/emergency-contacts[/:contactId]` | read: row-scoped · write: self or Admin/HR |
 | `POST` | `/api/employees/bulk-import` | Company Admin, HR Manager |
+| `POST` | `/api/employees/:id/photo` | self or Admin/HR — JPEG/PNG/WebP, ≤5MB; replaces the previous object |
 | `GET` | `/api/employees/:id/documents` | row-scoped |
 | `POST` | `/api/employees/:id/documents` | Admin/HR (any) or Employee (own only) |
 | `GET` | `/api/documents/:id/download-url` | row-scoped — 5-min presigned URL |
@@ -463,21 +555,26 @@ must validate and report per-row rather than fail the batch.
 
 ### Known gaps / TODO
 
-- Org chart search/expand/zoom + click-to-drawer quick view — the tree is
-  correctly rooted per role but renders as a plain nested list.
-- `photoUrl` is a settable URL, not an image-upload widget.
-- Reveal reason is collected via `window.prompt`, not a target confirm
-  modal (functionally complete either way).
-- The Line-Manager recursive-subtree decision (§4.1 of the deep spec) has
-  not yet been mirrored in modules 04 (Leave) or 05 (Attendance).
+- The Line-Manager recursive-subtree decision (§4.1 of the deep spec) is
+  now mirrored in Leave (module 04) — see the 2026-09-18 sync note at the
+  top of this file for exactly which checks changed and which stayed
+  direct-only on purpose. Attendance (module 05) has no manager-facing
+  views at all yet to mirror into — nothing to fix here; that's module 05's
+  own pre-existing gap (§5 "Known gaps" #5, manager/HR views).
+- BU/Team hierarchy levels remain deliberately deferred (flat hierarchy is
+  V1 scope, not a gap).
 
 **Closed:** lifecycle state machine; the full field set (identity/personal
 extras, employment extras, compensation-adjacent, statutory + bank with
 AES-256-GCM field encryption and a masked-reveal endpoint); emergency
 contacts; document MIME/size hardening + category + delete; bulk-import
-frontend; department edit/delete-with-reassign; org chart rooted per role;
-and the Employee self-edit path (documented as a target before this pass
-but never actually wired — the endpoint was Admin/HR-only).
+frontend; department edit/delete-with-reassign; org chart rooted per role
+plus search/expand/collapse/zoom/quick-view; a real photo-upload widget
+(`photoKey` object-storage field, replacing the hand-typed `photoUrl`
+string); a proper reveal-reason confirm dialog (replacing `window.prompt`);
+Leave's recursive Line-Manager scoping mirror; and the Employee self-edit
+path (documented as a target before an earlier pass but never actually
+wired — the endpoint was Admin/HR-only).
 
 ---
 
@@ -609,7 +706,9 @@ What follows is a scope note, not a gap:
 
 **Deep spec:** `docs/modules/05_ATTENDANCE.md` ·
 **UI prompt:** `docs/ui-build-prompts/05-attendance.md`
-**Status:** 🟡 — employee self-service only
+**Status:** 🟡 60% — employee self-service, now shift/tenant-config-aware and
+plan-gated; a Company Admin/HR Manager Settings tab manages shifts +
+attendance/general config
 **Code:** `apps/api/src/attendance`, `apps/web/src/pages/attendance`
 
 ### Expectation
@@ -631,8 +730,8 @@ overtime per state law. Biometric/GPS capture is **deferred**.
 | Monthly stats (present/absent/late/hours) | — | ✅ `GET /attendance/stats?month=` |
 | Regularisation request (reason, subject to approval, 7-day window) | FR-ATT-009 | 🟡 employee can **create / list / cancel**; **no approver endpoint**, no 7-day enforcement |
 | Manual attendance marking by HR + audit trail | FR-ATT-001 | 🔴 |
-| Shift definitions (Fixed / Rotational / Flexible) | FR-ATT-006 | 🔴 — status logic assumes one implicit shift |
-| Late-arrival / early-departure flags + grace period | FR-ATT-008 | 🟡 `AttendanceStatus` has a late value; grace period not configurable |
+| Shift definitions (Fixed / Rotational / Flexible) | FR-ATT-006 | ✅ `Shift` catalogue (CRUD via `/attendance/shifts`, Settings tab) — `type` (FIXED/FLEXI/ROTATIONAL) is stored and settable; clock-in status logic reads the resolved shift's start time/grace, but doesn't yet branch behavior per `type` (e.g. FLEXI's core-hours window) |
+| Late-arrival / early-departure flags + grace period | FR-ATT-008 | ✅ `AttendanceStatus` has a late value; grace period is per-shift and settable (`Shift.graceMinutes`, Settings tab) — no longer a hardcoded constant |
 | Overtime calculation (state rates) | FR-ATT-007 | 🔴 |
 | Month-end feed into payroll LOP | FR-ATT-010 | 🔴 (blocked on Payroll) |
 | GPS geo-fenced check-in | FR-ATT-002 | 🔴 deferred |
@@ -673,25 +772,33 @@ overtime per state law. Biometric/GPS capture is **deferred**.
 | `POST` | `/api/attendance/regularization` |
 | `GET` | `/api/attendance/regularization` |
 | `POST` | `/api/attendance/regularization/:id/cancel` |
+| `GET` | `/api/attendance/shifts` |
+| `POST` · `PATCH` · `DELETE` | `/api/attendance/shifts[/:id]` | Company Admin, HR Manager (write) |
+| `GET` | `/api/attendance/settings` | Company Admin, HR Manager, Auditor |
+| `PATCH` | `/api/attendance/settings` | Company Admin only |
 
-All routes are `JwtAuthGuard + TenantGuard` only (no `@Roles`) — every
-route today is self-service for the calling employee.
+Self-service routes (`clock-in`/`clock-out`/`break/*`/`today`/`calendar`/
+`stats`/`regularization`) are `JwtAuthGuard + TenantGuard + EntitlementGuard`
+only (no `@Roles`) — every route there is self-service for the calling
+employee. The whole controller is gated behind `@RequiresModule('ATTENDANCE')`
+(module 13's `EntitlementGuard`) — a tenant on a plan without Attendance
+(e.g. `STARTER`) gets a 403, not a broken self-service page. The new
+shifts/settings routes additionally carry `@Roles(...)`.
 
 ### Known gaps / TODO (priority order)
 
 > **Config foundation landed** (migration `20260905000001`): `shifts`,
 > `holidays`, `attendance_settings`, `tenant_settings`, and the `punches`
 > capture table now exist and are seeded with defaults on tenant creation.
-> See `docs/TENANT_CONFIGURATION.md`. The items below are the wiring that
-> consumes them.
+> See `docs/TENANT_CONFIGURATION.md`.
 
-1. **Refactor `attendance.service.ts`** to read the tenant's default
-   `Shift` + `tenant_settings` (timezone, weekly-off days) instead of the
-   hardcoded `SHIFT_START_HOUR` / `GRACE_MINUTES` / `TARGET_HOURS`
-   constants. *(Partially done: `clockIn()` now reads `Holiday` and
-   `TenantSettings.weeklyOffDays` — needed for Leave's comp-off feature,
-   see §4 — and sets `HOLIDAY`/`WEEKLY_OFF` status accordingly. The
-   shift-based start-time/grace-period refactor is still outstanding.)*
+1. ~~**Refactor `attendance.service.ts`**~~ — **done.** `resolveShift()`
+   reads `Employee.shiftId` (falls back to the tenant's `isDefault` shift);
+   `clockIn()`'s late/on-time call and `today()`'s `targetHours` both read
+   the resolved shift instead of `SHIFT_START_HOUR`/`GRACE_MINUTES`/
+   `TARGET_HOURS` constants. Shift CRUD + an attendance/general Settings tab
+   (`apps/web/src/pages/attendance/settings-tab.tsx`, Company Admin/HR
+   Manager only) are live.
 2. **Punch write-path** — web clock-in writes `punches` rows (`source:
    WEB`); `attendance_records.checkInAt/checkOutAt` become first-IN /
    last-OUT derived values.
@@ -707,7 +814,9 @@ route today is self-service for the calling employee.
    `attendance_settings.regularizationWindowDays` +
    `regularizationMonthlyCap`; bulk-approve; **auto-resolve at payroll
    cut-off** per `unactionedBehavior`; write an audit row on every
-   decision.
+   decision. *(The guardrail values themselves are now settable via
+   `PATCH /attendance/settings` — enforcing them at decision time is this
+   item.)*
 5. **Manager / HR views** — team roster for a day, pending regularisation
    queue, manual mark with reason (FR-ATT-001).
 6. Overtime calculation (per-state rates) — needs the `Shift` end time,
@@ -715,9 +824,11 @@ route today is self-service for the calling employee.
 7. **Month-end LOP export contract for Payroll** —
    `getLopDays(employeeId, month)`; define the interface now so Payroll
    can build against it.
-8. Per-tenant Settings screens + first-run setup wizard (frontend).
+8. ~~First-run setup wizard~~ — **done**, see module 13
+   (`apps/web/src/components/setup-wizard`).
 9. `POST /attendance/ingest` for biometric/CSV — per client, gated behind
-   `subscription.features.biometricIntegration`.
+   `subscription.features.biometricIntegration` (`@RequiresFeature`, ready
+   to use).
 
 ---
 
@@ -1030,10 +1141,11 @@ dashboards; later a custom report builder.
 
 ---
 
-## 12. Audit Log 🟡 (30%)
+## 12. Audit Log 🟡 (35%)
 
-**Status:** three append-only trails are **live and written** — the generic
-cross-module interceptor is still the missing piece.
+**Status:** three append-only trails are **live and written**, all now with
+no `UPDATE`/`DELETE` grant — the generic cross-module interceptor is still
+the missing piece.
 - `public.login_audit_entries` — one row per server-observed
   `POST /api/auth/session` outcome (Identity & Access, §1).
 - `public.audit_log` — access-change events (`access.*` actions,
@@ -1065,9 +1177,9 @@ action, target, before/after metadata, IP, timestamp.
 
 `login_audit_entries` and `public.audit_log` have **no `UPDATE`/`DELETE`**
 grant for `hrms_app` (`20260908074457_identity_access_audit` also revoked
-them from the pre-existing `audit_log`). `platform_audit_log` still carries
-full CRUD for `hrms_platform` — tightening it to `INSERT`/`SELECT` only is a
-tracked gap (§2).
+them from the pre-existing `audit_log`). `platform_audit_log` is now the
+same: migration `20260918100000_break_glass_and_audit_grants` revoked
+`UPDATE`/`DELETE` from `hrms_platform`, leaving `SELECT`/`INSERT` only.
 
 ### Must-cover write points
 
@@ -1097,8 +1209,6 @@ means no one can alter it.
 - **Employee field/salary edits** and **attendance decisions** into
   `audit_log`.
 - **Aggregation / query UI** beyond the Identity & Access audit feed.
-- **Retention-purge job** (`LoginAuditEntry` 2-yr requirement, §1).
-- Tighten `platform_audit_log` grants to true append-only.
 
 ---
 
