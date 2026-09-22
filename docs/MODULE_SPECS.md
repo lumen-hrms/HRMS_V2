@@ -21,8 +21,72 @@
 > spec draft that is no longer maintained — ignore them; this file and the
 > code are the source of truth.)
 >
-> **Last synced to code:** 2026-09-18. Landed since the previous sync
-> (2026-09-15) — including a second pass later the same day:
+> **Last synced to code:** 2026-09-22. Landed since the previous sync
+> (2026-09-18):
+>
+> - **Dashboard reaches 100%.** `GET /api/dashboard` now returns a
+>   `todayAttendance` snapshot (own status/check-in/check-out/worked-hours,
+>   sourced from `AttendanceService.today()`) for every role with a linked
+>   employee record — including admins, on their own admin-view response —
+>   gated on the tenant's `ATTENDANCE` plan entitlement (checked inline
+>   against `platform.subscriptions`, mirroring `EntitlementGuard`, since
+>   the route itself has no single `@RequiresModule` — its shape already
+>   varies by role). Rendered on the web dashboard as a shared card above
+>   the role-specific grid. The upcoming-payslip date and admin
+>   payroll/attrition tiles stay blocked on Payroll (module 07, not built)
+>   — not counted against 100%, same treatment `MODULE_SPECS.md` already
+>   gives Attendance's own Payroll-blocked items. New deep spec
+>   `docs/modules/06_DASHBOARD.md` and UI build prompt
+>   `docs/ui-build-prompts/06-dashboard.md`. 4 new unit tests
+>   (`dashboard.controller.spec.ts`); `tsc`/`vite build`/lint clean on both
+>   apps; full API suite (156 tests) green. Not e2e/browser-verified — no
+>   test credentials for a live session in this environment.
+> - **Dashboard gains quick actions (same day, frontend-only follow-up).**
+>   The attendance card now has working Clock In / Take Break / End Break /
+>   Clock Out buttons, and each pending-approval row (Line Manager's own
+>   view — the admin view only ever had a count, not a list, so this isn't
+>   reachable there) gets inline Approve/Reject buttons. Both call
+>   Attendance's and Leave's own existing endpoints directly
+>   (`/attendance/clock-in`/`/clock-out`/`/break/start`/`/break/end`,
+>   `/leave/requests/:id/approve`/`/reject`) — no new backend route, no new
+>   authorization or validation logic, matching the existing no-confirm
+>   row-level precedent in Leave's own Approvals tab. Every action re-runs
+>   `GET /api/dashboard` on completion so the whole screen — not just the
+>   row that changed — reflects the new server state; failures surface via
+>   `useToast()`. Backend unchanged (156 tests still green); `tsc`/
+>   `vite build`/lint clean on the web app.
+>
+> Landed 2026-09-18 (including two later passes the same day):
+>
+> - **Attendance & Time Tracking reaches 100%.** Every item on §5's
+>   Known-gaps list is closed: web clock-in/out now write `Punch` rows
+>   (source `WEB`) as the source-of-truth capture the nightly job reads;
+>   `AttendanceFinalizationProcessor` (new BullMQ `attendance` queue, same
+>   `upsertJobScheduler` daily-cron pattern as the other processors) runs
+>   two jobs — `finalize` (02:00 UTC, per tenant per employee, resolves
+>   *yesterday*: holiday → weekly-off → punches → genuine unexplained
+>   `ABSENT`, skipping any day that already has a real outcome) and
+>   `resolve-cutoff` (03:00 UTC, auto-approves/rejects still-`PENDING`
+>   regularization requests on each tenant's own `payrollCutoffDay`, per
+>   `unactionedBehavior`). Regularization requests now enforce
+>   `regularizationWindowDays`/`regularizationMonthlyCap` at request time
+>   and flag the day `PENDING_REGULARIZATION`; a full approve/reject/
+>   bulk-approve flow exists for Line Manager (recursive subtree, mirroring
+>   Leave's `recursiveReportIds` pattern) and HR/Admin, audited via
+>   `audit_log`. New manager/HR views: `GET /attendance/team/roster` (team
+>   tab) and `POST /attendance/mark` (manual marking, FR-ATT-001) on the
+>   web app's new **Team** and **Approvals** tabs (visible to Line Manager
+>   and HR/Admin; Settings stays Admin/HR-only). `today()`/`stats()` now
+>   report overtime hours (time beyond `Shift.minHoursFullDay` — converting
+>   to statutory per-state overtime pay stays Payroll's job, not built).
+>   `getLopDays(employeeId, month)` + `GET /attendance/lop-days` is the
+>   defined Payroll export contract. GPS/biometric/selfie-QR capture and
+>   `POST /attendance/ingest` remain explicitly deferred (CLAUDE.md), not
+>   counted against 100%. 152 API unit tests pass (40 in
+>   `attendance.service.spec.ts`, 10 new in
+>   `attendance-finalization.processor.spec.ts`); `tsc`/`vite build`/lint
+>   clean on both apps. Not e2e/browser-verified — no test credentials for
+>   a Line Manager/HR session in this environment.
 >
 > - **Tenant Configuration reaches 100%.** The last piece — a skippable,
 >   resumable first-run setup wizard
@@ -229,8 +293,8 @@
 | 2. Platform Admin | ✅ | `███████████████████░` 99% — full operator console UI (tenants list, new-tenant wizard, tenant detail tabs, **Plans catalog**, audit screen); onboarding emails a hosted reset link; **operator-editable `platform.plans`** (per-seat list price / default seats / modules / features / isolation tier) with snapshot-at-assign + re-snapshot-on-renewal; **per-tenant negotiated per-seat rate** (`PATCH .../pricing`; monthly = rate × seats, computed); `PATCH .../plan` + `POST .../renew` live (renewal now also runs on a daily scheduled job off `renewsAt`); `PlatformAuditLog` written for every operator action and readable (`GET .../audit`), now true append-only at the DB grant level; `GET tenants/:id` and `POST .../refresh-headcount` live. Break-glass has a full audited request/track/expire/revoke lifecycle but does not yet grant an operator actual elevated tenant-data access during the window — that escalation mechanism is a deliberate follow-on |
 | 3. Employee Master + Org Structure | ✅ | `████████████████████` 100% — lifecycle state machine, the full field set (statutory/bank via KMS-style AES-256-GCM encryption, emergency contacts, comp-adjacent fields), bulk-import UI, document hardening, department edit/delete-with-reassign, an interactive org chart (search/expand/collapse/zoom/quick-view), a real photo-upload widget, a proper reveal-reason dialog, and Leave's recursive Line-Manager scoping mirror are all live. Only the deliberately-deferred BU→Team hierarchy remains |
 | 4. Leave Management | ✅ | `████████████████████` 100% — backend fully wired & tested; FE live path built and running against the real API by default (`client.ts`'s `USE_MOCK` now defaults to **off**, matching `access/client.ts` — set `VITE_LEAVE_MOCK=true` to force the fixture store); `allowLopRequests`/`minNoticeDays`/`fyStartMonth`/`genderRestriction`/`requiresApproval` all enforced/settable; mid-year-joiner proration; comp-off credit on holiday/weekly-off clock-in; approved leave reconciles into `AttendanceRecord.ON_LEAVE` |
-| 5. Attendance & Time Tracking | 🟡 | `█████████████░░░░░░░` 60% — now reads the tenant's `Shift`/`tenant_settings` config instead of hardcoded constants, and is gated behind the `ATTENDANCE` plan entitlement. Still missing: nightly finalization job, manager-facing views, regularization-approval routes |
-| 6. Dashboard | ✅ | `█████████████████░░░` 85% |
+| 5. Attendance & Time Tracking | ✅ | `████████████████████` 100% — reads the tenant's `Shift`/`tenant_settings` config, gated behind the `ATTENDANCE` plan entitlement; punches write-path, a nightly finalization job (holiday → weekly-off → punches → genuine absence), full regularization approval (window/cap enforcement, approve/reject/bulk-approve, audited, auto-resolved at payroll cut-off), manager/HR team roster + manual marking, overtime hours, and a `getLopDays()` export contract for Payroll are all live. GPS/biometric/selfie-QR capture and `POST /attendance/ingest` stay explicitly deferred (CLAUDE.md) |
+| 6. Dashboard | ✅ | `████████████████████` 100% — role-branched `GET /api/dashboard` (admin aggregates vs. personal view) includes an own-attendance "today" snapshot for every role with a linked employee record, gated on the tenant's `ATTENDANCE` entitlement, plus quick actions (clock in/out/break, approve/reject a pending request) that call Attendance's/Leave's own existing endpoints directly and re-fetch the dashboard afterward — no new mutation surface. Admin payroll-cost/attrition tiles and an upcoming-payslip date stay explicitly blocked on Payroll (module 07, not built) — same "not counted against 100%" treatment as Attendance's own Payroll-blocked items. Deep spec: `docs/modules/06_DASHBOARD.md` |
 | 7. Payroll Engine | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
 | 8. Statutory Compliance | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
 | 9. Documents | 🟡 | `████████████░░░░░░░░` 60% (lives inside Employee Master today) |
@@ -834,7 +898,9 @@ shifts/settings routes additionally carry `@Roles(...)`.
 
 ## 6. Dashboard
 
-**Status:** ✅
+**Status:** ✅ 100%
+**Deep spec:** `docs/modules/06_DASHBOARD.md` · UI build prompt:
+`docs/ui-build-prompts/06-dashboard.md`
 **Code:** `apps/api/src/dashboard`, `apps/web/src/pages/dashboard.tsx`
 
 ### Expectation
@@ -850,27 +916,43 @@ calls — keeps "what does an HR Manager see vs an Employee" in one place.
 | Company Admin / HR Manager | Headcount, department breakdown, pending-approvals count | ✅ |
 | Line Manager | Own leave balances + pending approvals from reports + recent requests | ✅ |
 | Employee | Own leave balances, own pending items, 5 most recent leave requests | ✅ |
-| Everyone | Attendance "today" summary, upcoming payslip date | 🔴 not on the dashboard yet (FR-ESS-001) |
-| Admin | Payroll cost, attrition rate, avg tenure | 🔴 blocked on Payroll (FR-RPT-002/003) |
+| Everyone (incl. admins) | Own attendance "today" snapshot (status, check-in/out, worked hours), gated on the tenant's `ATTENDANCE` entitlement | ✅ |
+| Everyone | Upcoming payslip date | 🔴 blocked on Payroll (module 07, not built) — not counted against 100%, same treatment as other Payroll-blocked items across modules |
+| Admin | Payroll cost, attrition rate, avg tenure | 🔴 blocked on Payroll (module 07, not built) — not counted against 100% |
 
 ### Happy path
 
 1. User logs in → lands on `/`.
 2. `GET /api/dashboard` → server branches on `user.role`:
-   admins get org aggregates; everyone else gets a personal view.
+   admins get org aggregates; everyone else gets a personal view. Both
+   branches also carry `todayAttendance` for the calling user when they
+   have a linked employee record and the tenant's plan includes
+   `ATTENDANCE`.
 3. Cards render; "pending approvals" is non-empty for a Line Manager with
-   reports awaiting L1.
+   reports awaiting L1; the attendance card reflects the caller's live
+   clock-in state (not clocked in / working / on break / day complete).
+4. Quick actions: the attendance card's Clock In / Take Break / End Break /
+   Clock Out buttons and each pending-approval row's Approve/Reject buttons
+   call Attendance's and Leave's own endpoints directly (no new Dashboard
+   route), then re-fetch `GET /api/dashboard` so the whole screen reflects
+   the new state.
 
 ### Functionalities / API
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/api/dashboard` | returns `{ view: 'admin' \| 'employee', ... }` |
+| `GET` | `/api/dashboard` | returns `{ view: 'admin' \| 'employee', ..., todayAttendance }`; `todayAttendance` is `null` when the caller has no linked employee record or the tenant's plan doesn't include `ATTENDANCE` |
+| `POST` | `/api/attendance/clock-in` \| `/clock-out` \| `/break/start` \| `/break/end` | Attendance's own endpoints (module 5), called directly by the dashboard's quick actions — not Dashboard-owned |
+| `POST` | `/api/leave/requests/:id/approve` \| `/reject` | Leave's own endpoints (module 4), called directly by the dashboard's pending-approval row buttons — not Dashboard-owned |
 
 ### Known gaps / TODO
 
-- Add an attendance snapshot + next-payslip date once those modules land.
-- Add admin payroll/attrition tiles when Payroll + Reports exist.
+- Upcoming payslip date and admin payroll/attrition tiles wait on Payroll
+  (module 07) to exist at all — deliberately deferred, not a Dashboard gap.
+- Dashboard's reject button has no reason/comment box (matches the
+  existing row-level precedent in Leave's own Approvals tab — comment is
+  optional server-side either way); a required-reason UX would be a small
+  frontend addition, not a backend change.
 
 ---
 
