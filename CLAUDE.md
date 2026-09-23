@@ -237,14 +237,19 @@ tab for shifts + attendance/general config, plus a skippable/resumable
 first-run setup wizard for a Company Admin's first login). See
 `docs/TENANT_CONFIGURATION.md`.
 
-**Attendance — 🟡 60%, in progress alongside Tenant Configuration.**
-Self-service clock-in/out/breaks/calendar/stats and shift-aware
-late/grace/target-hours logic are live and plan-gated. Still missing: a
-nightly finalization job, manager-facing views, and regularization-approval
-routes (docs/MODULE_SPECS.md §5). Payroll and Compliance exports remain
-**not started** — see the blueprint's 12-week plan for sequencing (payroll
-is the highest-effort, highest-risk module; protect its time budget over
-breadth elsewhere).
+**Attendance — done, 100%.** Self-service clock-in/out/breaks/calendar/
+stats, shift-aware late/grace/target-hours/overtime logic, a nightly
+finalization job (holiday → weekly-off → punches → genuine absence,
+BullMQ), full regularization approval (window/cap enforcement, approve/
+reject/bulk-approve, audited, auto-resolved at the tenant's payroll
+cut-off), and manager/HR team views (roster + manual marking) are all live
+and plan-gated. GPS/biometric/selfie-QR capture and `POST
+/attendance/ingest` stay explicitly deferred (see above), not counted
+against 100%; converting overtime hours to statutory per-state pay is
+Payroll's job. Payroll and Compliance exports remain **not started** — see
+the blueprint's 12-week plan for sequencing (payroll is the
+highest-effort, highest-risk module; protect its time budget over breadth
+elsewhere).
 
 ## Keeping module status in sync — MANDATORY, no reminder needed
 
