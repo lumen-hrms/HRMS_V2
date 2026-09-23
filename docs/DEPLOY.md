@@ -189,16 +189,19 @@ this doc works around the bug, it doesn't fix it.)
   S3-compatible bucket, incl. Supabase Storage's S3 endpoint).
 - **ClamAV (document scanning, module 09).** Every upload stays
   `PENDING_SCAN` — shown as "Scanning…", not downloadable — until clamd has
-  scanned it; scanning fails closed. Point `CLAMAV_HOST` / `CLAMAV_PORT`
-  (default `localhost:3310`) at a clamd. **Open decision:** clamd needs
-  ~1–1.5 GB RAM for its signature DB, more than this 1 GB `t3.micro` has,
-  so it can't share this box. Options: a bigger instance (`t3.small`), a
-  separate small clamd host, or accept that uploads on the preview stay
-  "Scanning…". If you add one, run it on the same Docker network:
-  `docker run -d --name clamav --restart unless-stopped --network hrms clamav/clamav:stable`
-  and set `CLAMAV_HOST=clamav`. Production (ECS) runs clamd as its own
-  service. Once clamd is reachable, the 15-minute sweep scans the backlog
-  on its own.
+  scanned it; scanning fails closed. The CD workflow
+  (`.github/workflows/deploy-api.yml`) runs clamd as a sibling container
+  named `clamav` on the `hrms` network (created once, kept across deploys,
+  signature DB in the `hrms_clamav_data` volume) and starts the API with
+  `CLAMAV_HOST=clamav`. clamd wants ~1–1.5 GB for its signatures, more than
+  this 1 GiB box has, so it's capped at `--memory=700m` and spills into the
+  2 GiB swap — scans are slower than on a bigger box, and if memory runs
+  out the kernel kills clamd (it restarts), not the API. First start
+  downloads signatures for a few minutes; the documents sweep scans any
+  backlog once clamd is listening. If the box struggles (`free -m`,
+  `docker stats`, API restarts), move to a `t3.small` or a separate clamd
+  host and point `CLAMAV_HOST` at it. Production (ECS) runs clamd as its
+  own service.
 
 ---
 

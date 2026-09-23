@@ -1180,9 +1180,9 @@ URL** — the API never returns a raw object key and never lists a bucket.
 
 ### Known gaps / TODO
 
-- None against the Expectation. Open deploy question: clamd needs
-  ~1–1.5 GB RAM, more than the 1 GB preview `t3.micro` has (see
-  `docs/DEPLOY.md`); uploads there stay "Scanning…" until clamd is reachable.
+- None against the Expectation. On the preview `t3.micro`, clamd runs as
+  a memory-capped sibling container started by the CD workflow (swap-backed,
+  slower scans) — see `docs/DEPLOY.md`.
 
 ---
 

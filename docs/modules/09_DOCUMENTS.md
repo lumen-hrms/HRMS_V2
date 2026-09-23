@@ -371,12 +371,11 @@ badges) landed on 2026-09-23. Follow-ons, none blocking:
 
 ## 12. Open questions / decisions needed
 
-- **ClamAV on the testing deploy.** clamd needs ~1–1.5 GB RAM for its
-  signature DB; the preview API box is a 1 GB `t3.micro`. Since scanning
-  fails closed, every upload on that box would stay undownloadable
-  without a reachable clamd. Needs a call: a larger instance, a separate
-  small ClamAV host, or accept it on preview only. Production
-  (ECS Fargate) runs clamd as its own service.
+- **ClamAV on the testing deploy — decided 2026-09-23:** the CD workflow
+  runs clamd as a sibling container on the 1 GiB preview `t3.micro`,
+  memory-capped at 700 MB with swap behind it (`docs/DEPLOY.md`). Revisit
+  (bigger instance or separate clamd host) if the box shows memory
+  pressure. Production (ECS Fargate) runs clamd as its own service.
 - **Retention purge** — deliberately deferred (§1).
 - **Should Line Managers see reports' *profile* documents** (ID proof,
   etc.) or only request attachments? Today they can (inherited from
