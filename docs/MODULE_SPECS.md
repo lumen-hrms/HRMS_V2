@@ -24,6 +24,11 @@
 > **Last synced to code:** 2026-09-23. Landed since the previous sync
 > (2026-09-22):
 >
+> - **Notifications (module 10) → 100%.** Code-complete: the
+>   `20260923120000_notifications` migration is applied to the dev DB and the
+>   preview API serves the notifications/auth-email code. Per the owner's
+>   definition of done, live-delivery checks (first real SES email, browser
+>   pass) are tracked in the separate testing tracker, not in this bar.
 > - **Auth emails now go through SES too** (module 10 + Identity & Access /
 >   Platform Admin). Tenant-onboarding invites, admin-triggered resets and
 >   self-service "Forgot password?" are sent by `AuthEmailService` — a
@@ -345,7 +350,7 @@
 | 7. Payroll Engine | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
 | 8. Statutory Compliance | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
 | 9. Documents | ✅ | `████████████████████` 100% — shared `documents` module owns every user upload (employee profile docs, leave attachments, regularization evidence): type/magic-byte/size validation, ClamAV scan before download (fail-closed, self-healing sweep), 5-min attachment-disposition presigned URLs, subject-employee visibility, audited soft delete (no `DELETE` grant). Retention purge deliberately out of V1 scope. Deep spec: `docs/modules/09_DOCUMENTS.md` |
-| 10. Notifications | 🟡 | `███████████████████░` 95% — queued, deduped, audited-retry email pipeline on AWS SES v2 (`notification_log`, BullMQ `notifications` queue, 10-min self-healing sweep, Email log screen) wired into every Leave / Attendance-regularization / Documents workflow event. Remaining: first live SES delivery, blocked on the owner's SES setup (verified sender + IAM credentials). Deep spec: `docs/modules/10_NOTIFICATIONS.md` |
+| 10. Notifications | ✅ | `████████████████████` 100% — queued, deduped email pipeline on AWS SES v2 (`notification_log`, BullMQ `notifications` queue, 10-min self-healing sweep, Email log screen with audited retry) wired into every Leave / Attendance-regularization / Documents workflow event; tenant invites, admin resets and self-service "Forgot password?" also sent via SES (`AuthEmailService`). Live-delivery verification is tracked separately (testing tracker). Deep spec: `docs/modules/10_NOTIFICATIONS.md` |
 | 11. Reports & Analytics | 🔴 | `██░░░░░░░░░░░░░░░░░░` 10% (only the Dashboard aggregates exist) |
 | 12. Audit Log | 🟡 | `███████░░░░░░░░░░░░░` 35% — three append-only trails live: `login_audit_entries` (sign-in outcomes, with a daily retention-purge job), `public.audit_log` (`access.*` change events — role/status/reset/login-created), `platform.platform_audit_log` (tenant create/status/plan/renewal/price-adjust/plan-edit/breakglass — now readable + expanded). All three tables have no `UPDATE`/`DELETE` grant (true append-only). Missing: a generic audit interceptor, employee field/salary + attendance-decision coverage, an aggregation/query UI |
 | 13. Tenant Configuration | ✅ | `████████████████████` 100% — schema, onboarding defaults, `EntitlementGuard` (+ `@RequiresModule`/`@RequiresFeature`, wired onto Leave + Attendance), `attendance.service.ts` reading tenant `Shift`/`tenant_settings` instead of hardcoded constants, Settings screens (shift CRUD + attendance/general settings), and a skippable/resumable first-run setup wizard (`apps/web/src/components/setup-wizard`, `apps/api/src/tenant-config`) are all live. See `docs/TENANT_CONFIGURATION.md` |
@@ -1219,10 +1224,11 @@ URL** — the API never returns a raw object key and never lists a bucket.
 
 ---
 
-## 10. Notifications 🟡 (95%)
+## 10. Notifications ✅ (100%)
 
-**Status:** 🟡 95% — built and tested end to end up to the SES call; the
-first real delivery waits on the owner's AWS SES setup. Deep spec:
+**Status:** ✅ 100% — code-complete and deployed (migration applied, preview
+API serving it). Live-delivery checks are tracked in the separate testing
+tracker. Deep spec:
 `docs/modules/10_NOTIFICATIONS.md`.
 **Code:** `apps/api/src/notifications` (`NotificationDispatcher`,
 `NotificationSendProcessor`, `SesEmailSender`, `templates.ts`,
@@ -1244,7 +1250,7 @@ queue — never inline in the request path — with every send logged.
 | Regularization submitted → manager (or HR); decided / auto-resolved → applicant | ✅ |
 | Uploaded file blocked as malware → uploader | ✅ |
 | `notification_log` + dedupe + retry/backoff + sweep + Email log UI (retry FAILED) | ✅ |
-| Real delivery through AWS SES | 🟡 code + unit-tested against the SDK; needs a verified SES sender + credentials |
+| Real delivery through AWS SES | ✅ built (SES v2, unit-tested against the SDK); live send checked in the testing tracker |
 | Leave balance expiry | ⏸ no expiry event exists in Leave yet |
 | Payslip available | ⏸ Payroll (module 07) not built — will call the same dispatcher |
 | Onboarding tasks / data-breach notice | ⏸ deferred module / incident process (deep spec §1) |
@@ -1261,7 +1267,7 @@ queue — never inline in the request path — with every send logged.
 
 ### Known gaps / TODO
 
-- First live SES send (owner action — deep spec §8).
+- None against the Expectation. Live-delivery verification lives in the testing tracker.
 
 ---
 

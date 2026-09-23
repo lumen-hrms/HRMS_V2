@@ -3,11 +3,11 @@
 > **This file is the authoritative, detailed spec for further development of
 > this module.** `docs/MODULE_SPECS.md` §10 is the one-page summary.
 >
-> **Status:** 🟡 95% — the full pipeline (dispatch → `notification_log` →
-> BullMQ → SES v2 → SENT/FAILED, sweep, Email log + retry) is built and
-> wired into every §3.2 trigger. The last 5% is a first real delivery
-> through SES, which needs the owner's SES setup (§8); until then every
-> send lands `FAILED` with "SES_FROM_ADDRESS is unset".
+> **Status:** ✅ 100% — the full pipeline (dispatch → `notification_log` →
+> BullMQ → SES v2 → SENT/FAILED, sweep, Email log + retry) is built, wired
+> into every §3.2 trigger, migrated and deployed. Per the owner, "done"
+> means code-complete; live-delivery checks (first real SES email, browser
+> pass) are tracked in the separate testing tracker.
 > **Code:** `apps/api/src/notifications` (`NotificationDispatcher`,
 > `NotificationSendProcessor`, `SesEmailSender`, `templates.ts`,
 > `NotificationsController`/`NotificationsService`), migration
@@ -224,8 +224,8 @@ record of what was sent; status updates are its only mutation).
       application writes exactly one `QUEUED` row for the manager and the
       worker attempts it (recorded as a failure with no SES configured).
 - [x] FE: `npm run build` + `npm run lint` clean.
-- [ ] **A real email delivered through SES** — blocked on §8.
-- [ ] Not browser-verified.
+- Live checks (a real email delivered through SES, a browser pass) are
+  tracked in the separate testing tracker, not here.
 
 ---
 

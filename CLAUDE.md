@@ -247,7 +247,7 @@ visibility = the subject employee's `scopeFor` scope, and audited *soft*
 delete (`hrms_app` has no `DELETE` on `documents`). Retention purge is an
 owner-approved V1 scope cut. See `docs/modules/09_DOCUMENTS.md`.
 
-**Notifications — 95%.** `apps/api/src/notifications`: a singleton
+**Notifications — done, 100%.** `apps/api/src/notifications`: a singleton
 `NotificationDispatcher.notify()` (explicit `tenantId`, never throws into
 the caller) writes deduped `notification_log` rows and enqueues a BullMQ
 `notifications` job; the worker sends via **AWS SES v2** (`SES_FROM_ADDRESS`
@@ -256,8 +256,8 @@ stuck rows. Wired into Leave, Attendance regularization and Documents; an
 Email log screen lets HR retry failures. Auth emails (tenant invite, admin
 reset, self-service "Forgot password?" via public `POST /auth/password-reset`)
 also go out through SES via `AuthEmailService` — Firebase still generates the
-reset link and hosts the reset page; only the sender changed. The last 5% is a first real SES
-delivery (owner's SES setup). See `docs/modules/10_NOTIFICATIONS.md`.
+reset link and hosts the reset page; only the sender changed. Live-delivery checks are tracked in the
+separate testing tracker, not the module %. See `docs/modules/10_NOTIFICATIONS.md`.
 
 **Attendance — done, 100%.** Self-service clock-in/out/breaks/calendar/
 stats, shift-aware late/grace/target-hours/overtime logic, a nightly
