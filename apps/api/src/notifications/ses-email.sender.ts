@@ -11,6 +11,18 @@ export interface OutgoingEmail extends RenderedEmail {
 }
 
 /**
+ * Accepts `SES_FROM_ADDRESS` as either `no-reply@x` or `Name <no-reply@x>`
+ * and keeps just the address — the display name is always set per email
+ * ("<Tenant> via Lumen HRMS"), so a second one would break the header.
+ */
+export function bareAddress(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const angled = /<([^<>\s]+@[^<>\s]+)>/.exec(value);
+  const address = (angled ? angled[1] : value).trim();
+  return address || undefined;
+}
+
+/**
  * RFC 5322 display name: quoted, with quotes/newlines stripped; non-ASCII
  * (a tenant named "Café …") goes out as an RFC 2047 encoded-word, which is
  * what SES expects in the From header.
@@ -39,7 +51,7 @@ export class SesEmailSender {
   constructor(config: ConfigService<AppConfig, true>) {
     const ses = config.get('ses', { infer: true });
     this.client = new SESv2Client({ region: ses.region });
-    this.fromAddress = ses.fromAddress;
+    this.fromAddress = bareAddress(ses.fromAddress);
     this.configurationSet = ses.configurationSet;
   }
 
