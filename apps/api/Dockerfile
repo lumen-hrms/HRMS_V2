@@ -22,9 +22,13 @@ WORKDIR /app/apps/api
 RUN npm ci --no-audit --no-fund
 
 # App source + Prisma client + Nest build, then drop dev dependencies.
+# The type-checking build peaks at ~650 MB, but on the 1 GiB preview box
+# Node's default heap cap is ~450 MB (it sizes from physical RAM), so the
+# build OOMs even though the box has 2 GiB of swap. Raise the cap for this
+# step only; the runtime stage keeps Node's default.
 COPY apps/api/ ./
 RUN npx prisma generate \
-  && npm run build \
+  && NODE_OPTIONS=--max-old-space-size=1536 npm run build \
   && npm prune --omit=dev
 
 # ---------------------------------------------------------------------------
