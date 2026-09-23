@@ -48,7 +48,8 @@ export function isApiError(err: unknown): err is ApiError {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
-  headers.set('Content-Type', 'application/json');
+  // FormData sets its own multipart Content-Type (with the boundary).
+  if (!(options.body instanceof FormData)) headers.set('Content-Type', 'application/json');
   if (currentTenantSubdomain) headers.set('X-Tenant-Subdomain', currentTenantSubdomain);
 
   const idToken = await auth.currentUser?.getIdToken();
@@ -73,4 +74,10 @@ export const api = {
     request<T>(path, { method: 'PATCH', body: body ? JSON.stringify(body) : undefined }),
   delete: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'DELETE', body: body ? JSON.stringify(body) : undefined }),
+  /** Multipart upload of one file under the `file` field (every upload route uses that name). */
+  upload: <T>(path: string, file: File) => {
+    const body = new FormData();
+    body.append('file', file);
+    return request<T>(path, { method: 'POST', body });
+  },
 };

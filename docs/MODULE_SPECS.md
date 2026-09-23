@@ -21,8 +21,28 @@
 > spec draft that is no longer maintained — ignore them; this file and the
 > code are the source of truth.)
 >
-> **Last synced to code:** 2026-09-22. Landed since the previous sync
-> (2026-09-18):
+> **Last synced to code:** 2026-09-23. Landed since the previous sync
+> (2026-09-22):
+>
+> - **Documents (module 09) reaches 100%.** A shared `apps/api/src/documents`
+>   module now owns every user upload: MIME allow-list + magic-byte sniffing
+>   + 10 MB cap before storage, owner-typed rows (`EMPLOYEE_PROFILE` /
+>   `LEAVE_REQUEST` / `REGULARIZATION`), a ClamAV scan (BullMQ `documents`
+>   queue, clamd `zINSTREAM`, no npm dep) that must pass before any
+>   presigned URL is issued, a 15-minute sweep that re-enqueues stale/failed
+>   scans, `Content-Disposition: attachment` downloads, one visibility rule
+>   (subject employee's `scopeFor` scope), soft delete (`hrms_app` lost
+>   `DELETE` on `documents`), and `documents.*` events in `audit_log`.
+>   Leave's `attachment_*` columns migrated into `documents`
+>   (`20260923090000_documents_module`); approvers can now actually download
+>   the proof, the apply form uploads it, and regularization requests take
+>   evidence (`POST /attendance/regularization/:id/evidence`). New deep spec
+>   `docs/modules/09_DOCUMENTS.md`. Retention purge is a deliberate V1 scope
+>   cut (soft delete only), not a gap. API: 214 unit tests + 44 e2e (new
+>   `test/documents.e2e-spec.ts`) green; real clamd verified to flag EICAR;
+>   web `tsc -b`/`vite build`/lint clean. Not browser-verified.
+>
+> Previous sync — 2026-09-22 (landed since 2026-09-18):
 >
 > - **Dashboard reaches 100%.** `GET /api/dashboard` now returns a
 >   `todayAttendance` snapshot (own status/check-in/check-out/worked-hours,
@@ -297,7 +317,7 @@
 | 6. Dashboard | ✅ | `████████████████████` 100% — role-branched `GET /api/dashboard` (admin aggregates vs. personal view) includes an own-attendance "today" snapshot for every role with a linked employee record, gated on the tenant's `ATTENDANCE` entitlement, plus quick actions (clock in/out/break, approve/reject a pending request) that call Attendance's/Leave's own existing endpoints directly and re-fetch the dashboard afterward — no new mutation surface. Admin payroll-cost/attrition tiles and an upcoming-payslip date stay explicitly blocked on Payroll (module 07, not built) — same "not counted against 100%" treatment as Attendance's own Payroll-blocked items. Deep spec: `docs/modules/06_DASHBOARD.md` |
 | 7. Payroll Engine | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
 | 8. Statutory Compliance | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
-| 9. Documents | 🟡 | `████████████░░░░░░░░` 60% (lives inside Employee Master today) |
+| 9. Documents | ✅ | `████████████████████` 100% — shared `documents` module owns every user upload (employee profile docs, leave attachments, regularization evidence): type/magic-byte/size validation, ClamAV scan before download (fail-closed, self-healing sweep), 5-min attachment-disposition presigned URLs, subject-employee visibility, audited soft delete (no `DELETE` grant). Retention purge deliberately out of V1 scope. Deep spec: `docs/modules/09_DOCUMENTS.md` |
 | 10. Notifications | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
 | 11. Reports & Analytics | 🔴 | `██░░░░░░░░░░░░░░░░░░` 10% (only the Dashboard aggregates exist) |
 | 12. Audit Log | 🟡 | `███████░░░░░░░░░░░░░` 35% — three append-only trails live: `login_audit_entries` (sign-in outcomes, with a daily retention-purge job), `public.audit_log` (`access.*` change events — role/status/reset/login-created), `platform.platform_audit_log` (tenant create/status/plan/renewal/price-adjust/plan-edit/breakglass — now readable + expanded). All three tables have no `UPDATE`/`DELETE` grant (true append-only). Missing: a generic audit interceptor, employee field/salary + attendance-decision coverage, an aggregation/query UI |
@@ -682,7 +702,7 @@ attendance and flag LOP when the balance is short.
 | Leave type definitions (CL/SL/EL/…); quota + carry-forward cap + accrual frequency | FR-LVE-001 | ✅ `LeaveType` has `annualQuota`, `carryForwardCap`, `accrualFrequency` (ANNUAL/MONTHLY/QUARTERLY), `code`, `colorToken`, `minNoticeDays` (enforced), `active`, `genderRestriction` (enforced in `apply()`, fails open on unrecognized `Employee.gender` — see below), `paid` (informational only), `requiresApproval` (settable via DTO), `isCompOff` (marks the tenant's comp-off type). No `encashment` field exists — that concept isn't modelled anywhere (it's unrelated Full & Final Settlement prose elsewhere in this doc) |
 | Per-employee per-year balances; init for a year | FR-LVE-004 | ✅ `initializeYearlyBalances()` upserts ANNUAL types; MONTHLY/QUARTERLY types auto-accrue via `LeaveAccrualProcessor` (daily BullMQ job, idempotent via `LeaveLedgerEntry`), now prorating a new joiner's first period by `Employee.dateOfJoining`; balance-year bucketing follows `TenantSettings.fyStartMonth` via `resolveLeaveYear()` |
 | Company holiday calendar (national + state optional) | FR-LVE-003 | ✅ `Holiday` table + full CRUD (`/api/leave/holidays`); `apply()` counts working days (holidays + `TenantSettings.weeklyOffDays` excluded) |
-| Apply for leave (dates, type, reason, attachment) | FR-LVE-005 | ✅ dates/type/reason/attachment all wired (`POST /api/leave/requests/:id/attachment`, reuses `StorageService`) |
+| Apply for leave (dates, type, reason, attachment) | FR-LVE-005 | ✅ dates/type/reason/attachment all wired (`POST /api/leave/requests/:id/attachment`, stored + scanned via module 09 Documents; downloadable from the request sheet) |
 | Multi-level approval (1 or 2, tenant-configurable) + escalation timers | FR-LVE-006 | ✅ `TenantSettings.leaveApprovalLevels` (1 or 2) now actually read by `apply()` — previously hardcoded to 2. `LeaveEscalationProcessor` auto-escalates an undecided L1 to L2 after `leaveEscalationDays`, and flags an undecided L2 for manual HR follow-up (no auto-approve). *(The old SRS's "up to 4 levels" is stale — the schema/FE contract cap V1 at 2; see `CLAUDE.md`.)* |
 | Team calendar shown before submitting | FR-LVE-007 | ✅ `GET /leave/calendar` exists; the Apply tab renders it inline (`tabs/apply.tsx`) alongside the dedicated Team Calendar tab |
 | Approved leave syncs to attendance; flags LOP | FR-LVE-008 | ✅ `isLop` computed on apply; `LeaveService` writes `AttendanceRecord.status = 'ON_LEAVE'` for the request's working days on final approval (reversed on cancel) via direct Prisma access, not a nightly job — see "Known gaps" |
@@ -1119,44 +1139,50 @@ employee-facing investment-declaration workflow that feeds TDS.
 
 ## 9. Documents
 
-**Status:** 🟡 — implemented **inside** Employee Master; no standalone
-module.
-**Code:** `apps/api/src/storage` (`StorageService`), document endpoints in
-`apps/api/src/employees`.
+**Status:** ✅ 100% — a shared module owns every user-uploaded file.
+Deep spec: `docs/modules/09_DOCUMENTS.md`.
+**Code:** `apps/api/src/documents` (`DocumentsService`,
+`DocumentsController`, `DocumentScanProcessor`, `ClamAvScanner`),
+`apps/api/src/storage` (`StorageService`), `apps/web/src/lib/documents.ts`
++ `apps/web/src/components/documents.tsx`.
 
 ### Expectation
 
 Any file the platform stores goes to S3-compatible object storage under a
 **tenant- and entity-prefixed key**, is recorded with metadata in
-`public.documents`, and is only ever handed back to a client as a
-**time-boxed presigned URL** — the API never returns a raw object key and
-never lists a bucket.
+`public.documents`, is **malware-scanned before it can be downloaded**,
+and is only ever handed back to a client as a **time-boxed presigned
+URL** — the API never returns a raw object key and never lists a bucket.
 
 ### Feature list
 
 | Feature | Status |
 |---|---|
-| Upload (S3/MinIO), key `tenants/<tid>/employees/<eid>/<uuid>-<name>` | ✅ |
-| Metadata row in `public.documents` (label, size, content type, uploader) | ✅ |
-| Download via 5-minute presigned URL | ✅ |
-| MIME allow-list (PDF/JPG/PNG) + 10MB cap (FR-EMP-005) | 🟡 confirm/enforce at controller |
-| Generic attachment host for other modules (leave proof, regularisation, investment proof) | 🔴 — generalise `documents` beyond employees |
-| Virus/malware scan on upload | 🔴 |
-| Retention / deletion policy | 🔴 |
+| Upload (S3/MinIO), key `tenants/<tid>/employees/<eid>/<profile\|leave/<id>\|regularization/<id>>/<uuid>-<name>` | ✅ |
+| Metadata row in `public.documents` (owner type/id, label, category, size, type, uploader) | ✅ |
+| MIME allow-list (PDF/JPG/PNG) + magic-byte check + 10MB cap, before any byte is stored | ✅ |
+| ClamAV scan (BullMQ `documents` queue); download refused until `CLEAN`; infected object deleted | ✅ |
+| Self-healing: 15-min sweep re-enqueues stale `PENDING_SCAN` / `SCAN_FAILED` | ✅ |
+| Download via 5-minute presigned URL, `Content-Disposition: attachment`, audited | ✅ |
+| Generic attachment host — employee profile, leave request, regularization | ✅ (Compliance's investment proofs will add an owner type) |
+| Soft delete + `documents.*` audit events; `hrms_app` has no `DELETE` grant | ✅ |
+| Retention purge | Deliberately out of V1 scope (soft delete only) — `docs/modules/09_DOCUMENTS.md` §1 |
 
 ### Happy path
 
-Covered under §3 ("HR adds an employee" → step 4). Download: client calls
-`GET /api/documents/:id/download-url` → gets a URL valid 5 minutes →
-fetches the file directly from storage.
+1. Employee uploads a PDF (profile tab, leave apply form, or regularization
+   dialog) → validated → stored → row `PENDING_SCAN` → scan job enqueued.
+2. Worker streams it to clamd → `CLEAN` (or `INFECTED`: object deleted,
+   audited).
+3. Anyone who can see that employee calls
+   `GET /api/documents/:id/download-url` → 5-minute URL (409 while
+   scanning, 410 if infected).
 
 ### Known gaps / TODO
 
-- Promote to a small shared module so Leave (attachment), Attendance
-  (regularisation evidence) and Compliance (proofs) reuse it instead of
-  re-implementing upload.
-- Enforce MIME + size; add a scan step (BullMQ job) before marking a
-  document usable.
+- None against the Expectation. On the preview `t3.micro`, clamd runs as
+  a memory-capped sibling container started by the CD workflow (swap-backed,
+  slower scans) — see `docs/DEPLOY.md`.
 
 ---
 
@@ -1277,6 +1303,7 @@ same: migration `20260918100000_break_glass_and_audit_grants` revoked
 | Leave approve / reject / cancel / escalate | ✅ via `LeaveApproval` (separate from `audit_log`) |
 | Employee create / update / status / **salary** change | 🟡 login-creation only; field & compensation edits **not** logged |
 | Attendance regularisation decision; manual mark | 🔴 |
+| Document upload / delete / download-URL issue / malware detection (`documents.*`) | ✅ |
 | Payroll run state transitions; compliance file generation | 🔴 (modules not built) |
 
 ### Happy path

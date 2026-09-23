@@ -265,6 +265,23 @@ enum DocumentCategory {
   @@schema("public")
 }
 
+enum DocumentOwnerType {
+  EMPLOYEE_PROFILE
+  LEAVE_REQUEST
+  REGULARIZATION
+
+  @@schema("public")
+}
+
+enum DocumentScanStatus {
+  PENDING_SCAN
+  CLEAN
+  INFECTED
+  SCAN_FAILED
+
+  @@schema("public")
+}
+
 enum EmployeeLifecycleState {
   PRE_JOINING
   PROBATION
@@ -518,21 +535,40 @@ model Employee {
   @@schema("public")
 }
 
+// Module 09 — every user-uploaded file (docs/modules/09_DOCUMENTS.md).
+// `employeeId` is the *subject* employee and drives visibility (RULE-4);
+// `ownerType`/`ownerId` say which record it's attached to (ownerId is NULL
+// for EMPLOYEE_PROFILE). Never downloadable until `scanStatus = CLEAN`;
+// delete is soft (`deletedAt`) — hrms_app has no DELETE grant here.
 model Document {
   id         String   @id @default(uuid()) @db.Uuid
   tenantId   String   @map("tenant_id") @db.Uuid
   employeeId String   @map("employee_id") @db.Uuid
   employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
+  ownerType DocumentOwnerType @default(EMPLOYEE_PROFILE) @map("owner_type")
+  ownerId   String?           @map("owner_id") @db.Uuid
+
   label      String
   category   DocumentCategory @default(OTHER)
-  storageKey String   @map("storage_key")
-  mimeType   String   @map("mime_type")
-  sizeBytes  Int      @map("size_bytes")
-  uploadedByName String? @map("uploaded_by_name")
-  uploadedAt DateTime @default(now()) @map("uploaded_at")
+  storageKey String           @map("storage_key")
+  mimeType   String           @map("mime_type")
+  sizeBytes  Int              @map("size_bytes")
+
+  scanStatus    DocumentScanStatus @default(PENDING_SCAN) @map("scan_status")
+  scannedAt     DateTime?          @map("scanned_at")
+  scanSignature String?            @map("scan_signature")
+
+  uploadedById   String?  @map("uploaded_by_id") @db.Uuid
+  uploadedByName String?  @map("uploaded_by_name")
+  uploadedAt     DateTime @default(now()) @map("uploaded_at")
+
+  deletedAt   DateTime? @map("deleted_at")
+  deletedById String?   @map("deleted_by_id") @db.Uuid
 
   @@index([tenantId])
+  @@index([tenantId, employeeId])
+  @@index([tenantId, ownerType, ownerId])
   @@map("documents")
   @@schema("public")
 }
@@ -662,12 +698,8 @@ model LeaveRequest {
   l2ApproverId String?   @map("l2_approver_id") @db.Uuid
   l2DecidedAt  DateTime? @map("l2_decided_at")
 
-  // Single supporting document (e.g. a medical certificate). Nullable — most
-  // requests carry none. Stored the same way Employee documents are.
-  attachmentKey       String? @map("attachment_key")
-  attachmentName      String? @map("attachment_name")
-  attachmentMimeType  String? @map("attachment_mime_type")
-  attachmentSizeBytes Int?    @map("attachment_size_bytes")
+  // Supporting document (e.g. a medical certificate) lives in `documents`
+  // with ownerType = LEAVE_REQUEST, ownerId = this id (module 09).
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

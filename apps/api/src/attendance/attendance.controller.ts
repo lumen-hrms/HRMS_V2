@@ -7,8 +7,11 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../common/guards/tenant.guard';
 import { EntitlementGuard } from '../common/guards/entitlement.guard';
@@ -84,6 +87,16 @@ export class AttendanceController {
   @Get('regularization/pending')
   pendingRegularizations(@CurrentUser() user: AuthenticatedUser) {
     return this.service.pendingRegularizations(user);
+  }
+
+  @Post('regularization/:id/evidence')
+  @UseInterceptors(FileInterceptor('file'))
+  attachRegularizationEvidence(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.attachEvidence(id, file, user);
   }
 
   @Post('regularization/:id/cancel')

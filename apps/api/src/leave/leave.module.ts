@@ -7,9 +7,11 @@ import { LeaveService } from './leave.service';
 import { LeaveEscalationProcessor } from './leave-escalation.processor';
 import { LeaveAccrualProcessor } from './leave-accrual.processor';
 import { LEAVE_QUEUE } from './leave.constants';
+import { DocumentsModule } from '../documents/documents.module';
 
 @Module({
   imports: [
+    DocumentsModule,
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService<AppConfig, true>) => ({

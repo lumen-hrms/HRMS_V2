@@ -187,6 +187,21 @@ this doc works around the bug, it doesn't fix it.)
   rest of the API is fine. To enable, add `S3_ENDPOINT` / `S3_REGION` /
   `S3_ACCESS_KEY` / `S3_SECRET_KEY` / `S3_BUCKET` to `.env` (any
   S3-compatible bucket, incl. Supabase Storage's S3 endpoint).
+- **ClamAV (document scanning, module 09).** Every upload stays
+  `PENDING_SCAN` — shown as "Scanning…", not downloadable — until clamd has
+  scanned it; scanning fails closed. The CD workflow
+  (`.github/workflows/deploy-api.yml`) runs clamd as a sibling container
+  named `clamav` on the `hrms` network (created once, kept across deploys,
+  signature DB in the `hrms_clamav_data` volume) and starts the API with
+  `CLAMAV_HOST=clamav`. clamd wants ~1–1.5 GB for its signatures, more than
+  this 1 GiB box has, so it's capped at `--memory=700m` and spills into the
+  2 GiB swap — scans are slower than on a bigger box, and if memory runs
+  out the kernel kills clamd (it restarts), not the API. First start
+  downloads signatures for a few minutes; the documents sweep scans any
+  backlog once clamd is listening. If the box struggles (`free -m`,
+  `docker stats`, API restarts), move to a `t3.small` or a separate clamd
+  host and point `CLAMAV_HOST` at it. Production (ECS) runs clamd as its
+  own service.
 
 ---
 

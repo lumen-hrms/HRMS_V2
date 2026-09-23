@@ -52,7 +52,27 @@ services:
       timeout: 5s
       retries: 10
 
+  # Malware scanner for every uploaded document (module 09). Uploads stay
+  # undownloadable ("Scanning…") until clamd has checked them, so this must
+  # be up for documents to become usable. First start downloads the
+  # signature DB (~1-2 min); needs ~1.5 GB RAM.
+  clamav:
+    image: clamav/clamav:stable
+    container_name: hrms_clamav
+    restart: unless-stopped
+    ports:
+      - "3310:3310"
+    volumes:
+      - hrms_clamav_data:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+
 volumes:
   hrms_pg_data:
   hrms_minio_data:
   hrms_redis_data:
+  hrms_clamav_data:

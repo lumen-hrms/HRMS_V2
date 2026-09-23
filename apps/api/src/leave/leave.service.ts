@@ -3,7 +3,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { Prisma, LeaveLedgerSource } from '@prisma/client';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service';
-import { StorageService } from '../storage/storage.service';
+import { DocumentsService, type DocumentDto } from '../documents/documents.service';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import type {
   ApplyLeaveDto,
@@ -56,7 +56,7 @@ function num(value: Prisma.Decimal | number | null | undefined): number {
 export class LeaveService {
   constructor(
     private readonly tenantPrisma: TenantPrismaService,
-    private readonly storage: StorageService,
+    private readonly documents: DocumentsService,
     @InjectQueue(LEAVE_QUEUE) private readonly leaveQueue: Queue,
   ) {}
 
@@ -246,7 +246,10 @@ export class LeaveService {
 
   // ---- Response mappers (Decimal -> number, relations -> frontend contract) ----
 
-  private toRequestDto(row: Prisma.LeaveRequestGetPayload<{ include: typeof REQUEST_INCLUDE }>) {
+  private toRequestDto(
+    row: Prisma.LeaveRequestGetPayload<{ include: typeof REQUEST_INCLUDE }>,
+    attachment: DocumentDto | null,
+  ) {
     return {
       id: row.id,
       employeeId: row.employeeId,
@@ -269,10 +272,31 @@ export class LeaveService {
       halfDay: row.halfDay,
       reason: row.reason,
       isLop: row.isLop,
-      attachmentName: row.attachmentName,
+      // `attachmentName` predates module 09 and stays for the existing FE
+      // contract; `attachment` carries the id + scan state for downloads.
+      attachmentName: attachment?.label ?? null,
+      attachment,
       createdAt: row.createdAt,
       approvals: row.approvals.map((a) => this.toApprovalStep(a)),
     };
+  }
+
+  /** Folds each request's live attachment (module 09 `documents`) into its DTO. */
+  private async toRequestDtos(
+    rows: Prisma.LeaveRequestGetPayload<{ include: typeof REQUEST_INCLUDE }>[],
+  ) {
+    const attachments = await this.documents.attachmentsFor(
+      'LEAVE_REQUEST',
+      rows.map((r) => r.id),
+    );
+    return rows.map((r) => this.toRequestDto(r, attachments.get(r.id) ?? null));
+  }
+
+  private async toRequestDtoOne(
+    row: Prisma.LeaveRequestGetPayload<{ include: typeof REQUEST_INCLUDE }>,
+  ) {
+    const [dto] = await this.toRequestDtos([row]);
+    return dto;
   }
 
   private toApprovalStep(row: {
@@ -619,31 +643,32 @@ export class LeaveService {
       status === 'PENDING_L1' ? 1 : 2,
       settings.leaveEscalationDays,
     );
-    return this.toRequestDto(request);
+    return this.toRequestDtoOne(request);
   }
 
-  async attach(id: string, file: Express.Multer.File, user: AuthenticatedUser) {
-    const req = await this.tenantPrisma.client.leaveRequest.findUniqueOrThrow({ where: { id } });
+  /** One live supporting document per request, stored via module 09 (replacing soft-deletes the old one). */
+  async attach(id: string, file: Express.Multer.File | undefined, user: AuthenticatedUser) {
+    const req = await this.tenantPrisma.client.leaveRequest.findUniqueOrThrow({
+      where: { id },
+      include: REQUEST_INCLUDE,
+    });
     if (req.employeeId !== user.employeeId && !ADMIN_ROLES.includes(user.role)) {
       throw new ForbiddenException('Only the applicant or an HR admin can attach a document');
     }
-    const key = this.storage.buildKey(
-      this.tenantPrisma.tenantId,
-      req.employeeId,
-      file.originalname,
-    );
-    await this.storage.upload(key, file.buffer, file.mimetype);
-    const updated = await this.tenantPrisma.client.leaveRequest.update({
-      where: { id },
-      data: {
-        attachmentKey: key,
-        attachmentName: file.originalname,
-        attachmentMimeType: file.mimetype,
-        attachmentSizeBytes: file.size,
+    if (req.status === 'CANCELLED' || req.status === 'REJECTED') {
+      throw new BadRequestException(`Cannot attach a document to a ${req.status} request`);
+    }
+    const attachment = await this.documents.upload(
+      {
+        employeeId: req.employeeId,
+        ownerType: 'LEAVE_REQUEST',
+        ownerId: id,
+        file,
+        label: file?.originalname,
       },
-      include: REQUEST_INCLUDE,
-    });
-    return this.toRequestDto(updated);
+      user,
+    );
+    return this.toRequestDto(req, attachment);
   }
 
   async cancel(id: string, user: AuthenticatedUser) {
@@ -679,7 +704,7 @@ export class LeaveService {
       data: { status: 'CANCELLED' },
       include: REQUEST_INCLUDE,
     });
-    return this.toRequestDto(updated);
+    return this.toRequestDtoOne(updated);
   }
 
   async approve(id: string, user: AuthenticatedUser, dto?: DecideLeaveDto) {
@@ -707,7 +732,7 @@ export class LeaveService {
       ]);
       const settings = await this.getTenantSettings();
       await this.scheduleEscalation(id, 2, settings.leaveEscalationDays);
-      return this.toRequestDto(updated);
+      return this.toRequestDtoOne(updated);
     }
 
     if (req.status === 'PENDING_L2') {
@@ -750,7 +775,7 @@ export class LeaveService {
         }),
         this.recordApproval(id, 2, user.employeeId ?? null, 'APPROVED', dto?.comment ?? null),
       ]);
-      return this.toRequestDto(updated);
+      return this.toRequestDtoOne(updated);
     }
 
     throw new BadRequestException(`Request is not pending approval (status: ${req.status})`);
@@ -774,7 +799,7 @@ export class LeaveService {
       }),
       this.recordApproval(id, level, user.employeeId ?? null, 'REJECTED', dto?.comment ?? null),
     ]);
-    return this.toRequestDto(updated);
+    return this.toRequestDtoOne(updated);
   }
 
   async listForEmployee(employeeId: string, user: AuthenticatedUser) {
@@ -784,7 +809,7 @@ export class LeaveService {
       include: REQUEST_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
-    return rows.map((r) => this.toRequestDto(r));
+    return this.toRequestDtos(rows);
   }
 
   /** Filtered org-wide register — All Requests (HR/Admin) / Auditor read-only. */
@@ -807,7 +832,7 @@ export class LeaveService {
       include: REQUEST_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
-    return rows.map((r) => this.toRequestDto(r));
+    return this.toRequestDtos(rows);
   }
 
   async getRequest(id: string, user: AuthenticatedUser) {
@@ -816,7 +841,7 @@ export class LeaveService {
       include: REQUEST_INCLUDE,
     });
     await this.assertCanViewEmployee(req.employeeId, user);
-    return this.toRequestDto(req);
+    return this.toRequestDtoOne(req);
   }
 
   /** Requests awaiting this user's decision (L1 for their direct reports, L2 for HR/Admin). */
@@ -834,7 +859,7 @@ export class LeaveService {
       include: REQUEST_INCLUDE,
       orderBy: { createdAt: 'asc' },
     });
-    return rows.map((r) => this.toRequestDto(r));
+    return this.toRequestDtos(rows);
   }
 
   /** Team calendar: approved/pending leave for a manager's full reporting subtree (whole company for HR/Admin). */

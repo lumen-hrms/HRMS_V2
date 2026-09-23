@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service';
 import { LeaveService } from '../leave/leave.service';
+import { DocumentsService } from '../documents/documents.service';
 import { recursiveReportIds as recursiveReportIdsPure } from '../common/reporting-hierarchy';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import type {
@@ -31,7 +32,17 @@ export class AttendanceService {
   constructor(
     private readonly tenantPrisma: TenantPrismaService,
     private readonly leave: LeaveService,
+    private readonly documents: DocumentsService,
   ) {}
+
+  /** Folds each regularization's live evidence file (module 09) into the row. */
+  private async withEvidence<T extends { id: string }>(rows: T[]) {
+    const evidence = await this.documents.attachmentsFor(
+      'REGULARIZATION',
+      rows.map((r) => r.id),
+    );
+    return rows.map((r) => ({ ...r, evidence: evidence.get(r.id) ?? null }));
+  }
 
   private requireEmployee(user: AuthenticatedUser): string {
     if (!user.employeeId) {
@@ -423,10 +434,35 @@ export class AttendanceService {
 
   async listRegularizations(user: AuthenticatedUser) {
     const employeeId = this.requireEmployee(user);
-    return this.tenantPrisma.client.regularizationRequest.findMany({
+    const rows = await this.tenantPrisma.client.regularizationRequest.findMany({
       where: { employeeId },
       orderBy: { createdAt: 'desc' },
     });
+    return this.withEvidence(rows);
+  }
+
+  /** One supporting file per *pending* request, applicant only (module 09 §8). */
+  async attachEvidence(id: string, file: Express.Multer.File | undefined, user: AuthenticatedUser) {
+    const req = await this.tenantPrisma.client.regularizationRequest.findUniqueOrThrow({
+      where: { id },
+    });
+    if (req.employeeId !== user.employeeId) {
+      throw new ForbiddenException('Only the requester can attach evidence to this request');
+    }
+    if (req.status !== 'PENDING') {
+      throw new BadRequestException(`Request is not pending (status: ${req.status})`);
+    }
+    const evidence = await this.documents.upload(
+      {
+        employeeId: req.employeeId,
+        ownerType: 'REGULARIZATION',
+        ownerId: id,
+        file,
+        label: file?.originalname,
+      },
+      user,
+    );
+    return { ...req, evidence };
   }
 
   /** Pending regularization queue for a Line Manager (their recursive
@@ -441,7 +477,7 @@ export class AttendanceService {
         : [];
     if (scopeIds !== null && scopeIds.length === 0) return [];
 
-    return this.tenantPrisma.client.regularizationRequest.findMany({
+    const rows = await this.tenantPrisma.client.regularizationRequest.findMany({
       where: {
         status: 'PENDING',
         ...(scopeIds === null ? {} : { employeeId: { in: scopeIds } }),
@@ -451,6 +487,7 @@ export class AttendanceService {
       },
       orderBy: { createdAt: 'asc' },
     });
+    return this.withEvidence(rows);
   }
 
   async cancelRegularization(id: string, user: AuthenticatedUser) {

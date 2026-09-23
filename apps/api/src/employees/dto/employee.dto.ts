@@ -316,11 +316,6 @@ export class DeleteDepartmentDto {
   reassignToDepartmentId?: string;
 }
 
-export class SetDocumentCategoryDto {
-  @IsIn(DOCUMENT_CATEGORIES)
-  category!: (typeof DOCUMENT_CATEGORIES)[number];
-}
-
 export class BulkImportRowResult {
   @Type(() => Number)
   row!: number;

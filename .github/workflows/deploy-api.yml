@@ -26,9 +26,30 @@ jobs:
             cd ~/HRMS_V2
             git checkout dev
             git pull origin dev
+            # clamd holds most of this 1 GiB box's RAM; free it for the build
+            # (the swap exists for exactly this step). Uploads just wait in
+            # PENDING_SCAN meanwhile — scanning fails closed.
+            docker stop clamav >/dev/null 2>&1 || true
             DOCKER_BUILDKIT=0 docker build -f apps/api/Dockerfile -t hrms-api .
+
+            # ClamAV (module 09 document scanning) as a sibling container.
+            # Created once and left running across deploys — recreating it
+            # would re-download the ~300 MB signature DB each time (it lives
+            # in the named volume). Memory is capped so that on this 1 GiB
+            # box, if anything gets OOM-killed it's clamd, not the API;
+            # past the cap it spills into the box's 2 GiB swap. Not waited
+            # on: scanning fails closed and the documents sweep catches up
+            # once clamd is listening (first start takes a few minutes).
+            if ! docker ps -a --format '{{.Names}}' | grep -qx clamav; then
+              docker run -d --name clamav --restart unless-stopped --network hrms \
+                --memory=700m --memory-swap=1800m \
+                -v hrms_clamav_data:/var/lib/clamav clamav/clamav:stable
+            fi
+            docker start clamav >/dev/null
+
             docker rm -f hrms-api || true
             docker run -d --name hrms-api --restart unless-stopped \
-              --env-file apps/api/.env -p 80:3000 --network hrms hrms-api
+              --env-file apps/api/.env -e CLAMAV_HOST=clamav -e CLAMAV_PORT=3310 \
+              -p 80:3000 --network hrms hrms-api
             sleep 5
             curl -f http://localhost/api/health

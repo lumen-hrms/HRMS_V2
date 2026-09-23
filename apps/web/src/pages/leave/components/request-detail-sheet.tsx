@@ -4,6 +4,7 @@ import { Sheet } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Field } from '@/components/ui/field';
+import { DocumentLink } from '@/components/documents';
 import { StatusTimeline } from './status-timeline';
 import { LeaveStatusBadge, LeaveTypeChip, LopBadge, dayLabel, fmtRange } from '@/pages/leave/shared';
 import type { LeaveRequest } from '@/lib/leave/types';
@@ -108,17 +109,22 @@ export function RequestDetailSheet({
           <Row label="Leave type" value={request.leaveType.name} />
           <Row label="Duration" value={`${fmtRange(request.startDate, request.endDate)} · ${dayLabel(request.days)}${request.halfDay ? ' (half day)' : ''}`} span />
           <Row label="Reason" value={request.reason || '—'} span />
-          {request.attachmentName && (
-            <Row
-              label="Attachment"
-              span
-              value={
-                <span className="inline-flex items-center gap-1.5 text-primary">
-                  <Paperclip className="h-3.5 w-3.5" />
-                  {request.attachmentName}
-                </span>
-              }
-            />
+          {request.attachment ? (
+            <Row label="Attachment" span value={<DocumentLink doc={request.attachment} />} />
+          ) : (
+            request.attachmentName && (
+              // Mock-store fixtures carry only a name, no document id.
+              <Row
+                label="Attachment"
+                span
+                value={
+                  <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                    <Paperclip className="h-3.5 w-3.5" />
+                    {request.attachmentName}
+                  </span>
+                }
+              />
+            )
           )}
         </dl>
 
