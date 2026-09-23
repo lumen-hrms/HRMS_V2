@@ -13,6 +13,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/context/auth-context';
+import { ScanStatusBadge } from '@/components/documents';
+import { UPLOAD_ACCEPT, uploadProblem, useOpenDocument, type ScanStatus } from '@/lib/documents';
 
 const DOCUMENT_CATEGORY_LABEL: Record<string, string> = {
   OFFER_LETTER: 'Offer letter',
@@ -114,6 +116,7 @@ interface Doc {
   id: string;
   label: string;
   category: string;
+  scanStatus: ScanStatus;
   mimeType: string;
   sizeBytes: number;
   uploadedAt: string;
@@ -146,6 +149,7 @@ export function EmployeeDetailPage() {
   const [contactDialog, setContactDialog] = React.useState<EmergencyContact | 'new' | null>(null);
   const [tab, setTab] = React.useState('profile');
   const { toast } = useToast();
+  const openDocument = useOpenDocument();
   const canManage = !!user && HR_ADMIN.includes(user.role);
 
   const load = React.useCallback(() => {
@@ -160,22 +164,17 @@ export function EmployeeDetailPage() {
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file || !id) return;
+    const problem = uploadProblem(file);
+    if (problem) {
+      setError(problem);
+      e.target.value = '';
+      return;
+    }
     setUploading(true);
     setError(null);
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const headers: Record<string, string> = {};
-      const token = await getAccessToken();
-      const subdomain = getTenantSubdomain();
-      if (token) headers.Authorization = `Bearer ${token}`;
-      if (subdomain) headers['X-Tenant-Subdomain'] = subdomain;
-      const res = await fetch(`/api/employees/${id}/documents?label=${encodeURIComponent(file.name)}`, {
-        method: 'POST',
-        headers,
-        body: formData,
-      });
-      if (!res.ok) throw new Error((await res.json()).message ?? 'Upload failed');
+      await api.upload(`/employees/${id}/documents?label=${encodeURIComponent(file.name)}`, file);
+      toast({ title: 'Uploaded', description: 'The file is being scanned and will be downloadable shortly.' });
       load();
     } catch (err) {
       setError(isApiError(err) ? err.message : (err as Error).message);
@@ -207,11 +206,6 @@ export function EmployeeDetailPage() {
       setUploading(false);
       e.target.value = '';
     }
-  }
-
-  async function handleDownload(docId: string) {
-    const { url } = await api.get<{ url: string }>(`/documents/${docId}/download-url`);
-    window.open(url, '_blank');
   }
 
   async function handleDeleteDocument(docId: string) {
@@ -452,7 +446,13 @@ export function EmployeeDetailPage() {
             <CardHeader className="flex-row items-center justify-between">
               <CardTitle>Documents</CardTitle>
               <label>
-                <input type="file" className="hidden" onChange={handleUpload} disabled={uploading} />
+                <input
+                  type="file"
+                  accept={UPLOAD_ACCEPT}
+                  className="hidden"
+                  onChange={handleUpload}
+                  disabled={uploading}
+                />
                 <span className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-accent">
                   <Upload className="h-3.5 w-3.5" /> {uploading ? 'Uploading…' : 'Upload'}
                 </span>
@@ -468,6 +468,7 @@ export function EmployeeDetailPage() {
                 >
                   <div className="flex flex-1 items-center gap-2 min-w-0">
                     <span className="truncate">{d.label}</span>
+                    <ScanStatusBadge status={d.scanStatus} />
                     {canManage ? (
                       <Select
                         className="h-7 w-36 text-xs"
@@ -485,7 +486,12 @@ export function EmployeeDetailPage() {
                     )}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    <Button size="sm" variant="ghost" onClick={() => handleDownload(d.id)}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={d.scanStatus !== 'CLEAN'}
+                      onClick={() => openDocument(d.id)}
+                    >
                       <Download className="h-3.5 w-3.5" /> Download
                     </Button>
                     {canManage && (

@@ -93,8 +93,10 @@ case "$ACTION" in
     check_docker
     ensure_env
     check_firebase_config
-    # Only MinIO locally now — the database is the shared Supabase one.
-    docker compose up -d minio
+    # Only MinIO + ClamAV locally now — the database is the shared Supabase
+    # one. ClamAV scans every uploaded document (module 09); until it's up,
+    # uploads show "Scanning…" and can't be downloaded.
+    docker compose up -d minio clamav
     npm run install:all
     npm run prisma:generate
     # Informational only — never blocks `up`.

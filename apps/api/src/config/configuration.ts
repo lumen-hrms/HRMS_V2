@@ -29,6 +29,17 @@ export interface AppConfig {
   redis: {
     url: string;
   };
+  /**
+   * clamd (ClamAV daemon) that every uploaded document is streamed to
+   * before it becomes downloadable (docs/modules/09_DOCUMENTS.md §4.4).
+   * docker-compose runs one on :3310 locally. Scanning fails closed: if
+   * this is unreachable, uploads stay undownloadable until it's back.
+   */
+  clamav: {
+    host: string;
+    port: number;
+    timeoutMs: number;
+  };
   encryption: {
     /**
      * The application-layer "KMS data key" for PII field encryption (PAN,
@@ -66,6 +77,11 @@ export default (): AppConfig => ({
   },
   redis: {
     url: process.env.REDIS_URL ?? 'redis://localhost:6379',
+  },
+  clamav: {
+    host: process.env.CLAMAV_HOST ?? 'localhost',
+    port: parseInt(process.env.CLAMAV_PORT ?? '3310', 10),
+    timeoutMs: parseInt(process.env.CLAMAV_TIMEOUT_MS ?? '60000', 10),
   },
   encryption: {
     fieldKeyBase64: process.env.FIELD_ENCRYPTION_KEY,

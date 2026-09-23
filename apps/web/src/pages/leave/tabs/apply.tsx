@@ -7,6 +7,7 @@ import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Field } from '@/components/ui/field';
 import { useToast } from '@/components/ui/toast';
+import { UPLOAD_ACCEPT, uploadProblem } from '@/lib/documents';
 import { LeaveMonthCalendar } from '@/pages/leave/components/leave-month-calendar';
 import { dayLabel } from '@/pages/leave/shared';
 import { leaveApi } from '@/lib/leave/client';
@@ -31,6 +32,8 @@ export function ApplyTab({ onApplied }: { onApplied: () => void }) {
     halfDay: false,
     reason: '',
   });
+  const [file, setFile] = React.useState<File | null>(null);
+  const fileInput = React.useRef<HTMLInputElement>(null);
   const [preview, setPreview] = React.useState<LeaveRequestPreview | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -91,6 +94,11 @@ export function ApplyTab({ onApplied }: { onApplied: () => void }) {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!ctx) return;
+    const problem = file && uploadProblem(file);
+    if (problem) {
+      setError(problem);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -111,7 +119,20 @@ export function ApplyTab({ onApplied }: { onApplied: () => void }) {
           : `${dayLabel(created.days)} · routed to ${created.status === 'PENDING_L1' ? 'your manager' : 'HR'}.`,
         tone: created.isLop ? 'info' : 'success',
       });
+      if (file) {
+        // The request already exists at this point — an upload failure
+        // must not read as "submit failed", so it gets its own toast.
+        await leaveApi.attachToRequest(created.id, file).catch((err) =>
+          toast({
+            title: 'Request submitted, but the attachment failed',
+            description: `${err instanceof Error ? err.message : 'Upload failed'} — attach it again from My Requests.`,
+            tone: 'error',
+          }),
+        );
+      }
       setForm({ leaveTypeId: '', startDate: '', endDate: '', halfDay: false, reason: '' });
+      setFile(null);
+      if (fileInput.current) fileInput.current.value = '';
       setPreview(null);
       onApplied();
     } catch (err) {
@@ -189,6 +210,15 @@ export function ApplyTab({ onApplied }: { onApplied: () => void }) {
               value={form.reason}
               onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))}
               placeholder="Optional, but helps your approver."
+            />
+          </Field>
+
+          <Field label="Supporting document" hint="Optional · PDF, JPG or PNG, up to 10 MB.">
+            <Input
+              ref={fileInput}
+              type="file"
+              accept={UPLOAD_ACCEPT}
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
             />
           </Field>
 

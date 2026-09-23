@@ -309,6 +309,17 @@ export const leaveApi = {
     return api.post<LeaveRequest>('/leave/requests', input);
   },
 
+  /** `POST /api/leave/requests/:id/attachment` · applicant or HR/Admin · live (module 09 — replaces any earlier attachment) */
+  attachToRequest(id: string, file: File): Promise<LeaveRequest> {
+    if (USE_MOCK) {
+      const r = store.requests.find((x) => x.id === id)!;
+      r.attachmentName = file.name;
+      r.attachment = { id: uid('doc'), label: file.name, scanStatus: 'CLEAN' };
+      return delay(r);
+    }
+    return api.upload<LeaveRequest>(`/leave/requests/${id}/attachment`, file);
+  },
+
   /** `POST /api/leave/requests/:id/cancel` · request owner · live */
   cancelRequest(id: string): Promise<void> {
     if (USE_MOCK) {

@@ -12,29 +12,41 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { DocumentCategory } from '@prisma/client';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../common/guards/tenant.guard';
 import { CurrentUser, AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import { EmployeesService } from './employees.service';
+import { DocumentsService } from '../documents/documents.service';
 import {
   CreateDepartmentDto,
   CreateEmployeeDto,
   DeleteDepartmentDto,
   RevealFieldDto,
-  SetDocumentCategoryDto,
   TransitionLifecycleDto,
   UpdateDepartmentDto,
   UpdateEmployeeDto,
   UpdateSensitiveFieldsDto,
   UpsertEmergencyContactDto,
+  DOCUMENT_CATEGORIES,
 } from './dto/employee.dto';
+
+/** `?category=` is a free query string — anything outside the enum is ignored (→ OTHER). */
+function toDocumentCategory(value: string | undefined): DocumentCategory | undefined {
+  return (DOCUMENT_CATEGORIES as readonly string[]).includes(value ?? '')
+    ? (value as DocumentCategory)
+    : undefined;
+}
 
 @UseGuards(JwtAuthGuard, TenantGuard, RolesGuard)
 @Controller('employees')
 export class EmployeesController {
-  constructor(private readonly service: EmployeesService) {}
+  constructor(
+    private readonly service: EmployeesService,
+    private readonly documents: DocumentsService,
+  ) {}
 
   @Get()
   list(@CurrentUser() user: AuthenticatedUser) {
@@ -139,7 +151,7 @@ export class EmployeesController {
 
   @Get(':id/documents')
   listDocuments(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.service.listDocuments(id, user);
+    return this.documents.listProfileDocuments(id, user);
   }
 
   @Post(':id/photo')
@@ -161,30 +173,13 @@ export class EmployeesController {
     @Query('category') category: string | undefined,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.service.uploadDocument(id, file, label ?? file.originalname, category, user);
-  }
-}
-
-@UseGuards(JwtAuthGuard, TenantGuard, RolesGuard)
-@Controller('documents')
-export class DocumentsController {
-  constructor(private readonly service: EmployeesService) {}
-
-  @Get(':id/download-url')
-  getDownloadUrl(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.service.getDocumentDownloadUrl(id, user);
-  }
-
-  @Patch(':id/category')
-  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
-  setCategory(@Param('id') id: string, @Body() dto: SetDocumentCategoryDto) {
-    return this.service.setDocumentCategory(id, dto);
-  }
-
-  @Delete(':id')
-  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
-  delete(@Param('id') id: string) {
-    return this.service.deleteDocument(id);
+    return this.documents.uploadProfileDocument(
+      id,
+      file,
+      label,
+      toDocumentCategory(category),
+      user,
+    );
   }
 }
 

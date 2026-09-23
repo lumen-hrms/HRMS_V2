@@ -51,9 +51,15 @@ export class StorageService implements OnModuleInit {
     }
   }
 
-  buildKey(tenantId: string, employeeId: string, filename: string): string {
+  /**
+   * `segment` sub-folders by owner (module 09 §4.2): `profile`,
+   * `leave/<requestId>`, `regularization/<requestId>`. Omitted for the
+   * employee photo, which predates the segmented layout.
+   */
+  buildKey(tenantId: string, employeeId: string, filename: string, segment?: string): string {
     const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-    return `tenants/${tenantId}/employees/${employeeId}/${randomUUID()}-${safeName}`;
+    const prefix = `tenants/${tenantId}/employees/${employeeId}/${segment ? `${segment}/` : ''}`;
+    return `${prefix}${randomUUID()}-${safeName}`;
   }
 
   async upload(key: string, body: Buffer, mimeType: string): Promise<void> {
@@ -62,9 +68,31 @@ export class StorageService implements OnModuleInit {
     );
   }
 
-  async getPresignedDownloadUrl(key: string, expiresInSeconds = 300): Promise<string> {
-    const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
+  /**
+   * `downloadAs` forces `Content-Disposition: attachment` on the response,
+   * so a browser saves an uploaded file instead of rendering it inline on
+   * the storage origin (module 09 §3.5).
+   */
+  async getPresignedDownloadUrl(
+    key: string,
+    expiresInSeconds = 300,
+    downloadAs?: string,
+  ): Promise<string> {
+    const command = new GetObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      ResponseContentDisposition: downloadAs
+        ? `attachment; filename*=UTF-8''${encodeURIComponent(downloadAs)}`
+        : undefined,
+    });
     return getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
+  }
+
+  /** Whole object into memory — only used for ≤10 MB user uploads (the scan worker). */
+  async download(key: string): Promise<Buffer> {
+    const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    if (!res.Body) throw new Error(`Empty body for object ${key}`);
+    return Buffer.from(await res.Body.transformToByteArray());
   }
 
   async delete(key: string): Promise<void> {

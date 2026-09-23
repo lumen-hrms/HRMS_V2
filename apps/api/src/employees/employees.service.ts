@@ -25,7 +25,6 @@ import type {
   CreateEmployeeDto,
   DeleteDepartmentDto,
   RevealFieldDto,
-  SetDocumentCategoryDto,
   TransitionLifecycleDto,
   UpdateDepartmentDto,
   UpdateEmployeeDto,
@@ -33,8 +32,6 @@ import type {
   UpsertEmergencyContactDto,
 } from './dto/employee.dto';
 
-const ALLOWED_DOCUMENT_MIME_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
-const MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB, module 03 §3/FR-EMP-005
 const ALLOWED_PHOTO_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_PHOTO_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 
@@ -760,86 +757,6 @@ export class EmployeesService {
       return self ? [self] : [];
     }
     return roots;
-  }
-
-  // ---- Documents ----
-
-  /**
-   * Upload is scoped by role (module 03 §8): Admin/HR onto any employee,
-   * an Employee only onto themselves, Line Manager/Auditor not at all —
-   * that's a role×self check, not a row-visibility one, so it can't reuse
-   * `scopeFor`/`get()` (which would let a Line Manager "see" a report and
-   * incorrectly pass a self-only check).
-   */
-  async uploadDocument(
-    employeeId: string,
-    file: Express.Multer.File,
-    label: string,
-    category: string | undefined,
-    actor: AuthenticatedUser,
-  ) {
-    const canUpload =
-      actor.role === 'COMPANY_ADMIN' ||
-      actor.role === 'HR_MANAGER' ||
-      (actor.role === 'EMPLOYEE' && actor.employeeId === employeeId);
-    if (!canUpload) {
-      throw new ForbiddenException('You cannot upload documents for this employee');
-    }
-
-    if (!ALLOWED_DOCUMENT_MIME_TYPES.includes(file.mimetype)) {
-      throw new BadRequestException(
-        `Unsupported file type "${file.mimetype}" — allowed: PDF, JPG, PNG.`,
-      );
-    }
-    if (file.size > MAX_DOCUMENT_SIZE_BYTES) {
-      throw new BadRequestException('File exceeds the 10 MB limit.');
-    }
-
-    const tenantId = this.tenantPrisma.tenantId;
-    const key = this.storage.buildKey(tenantId, employeeId, file.originalname);
-    await this.storage.upload(key, file.buffer, file.mimetype);
-    return this.tenantPrisma.client.document.create({
-      data: {
-        tenantId,
-        employeeId,
-        label,
-        category: (category as any) ?? 'OTHER',
-        storageKey: key,
-        mimeType: file.mimetype,
-        sizeBytes: file.size,
-        uploadedByName: actor.email ? humanizeEmail(actor.email) : undefined,
-      },
-    });
-  }
-
-  async listDocuments(employeeId: string, user: AuthenticatedUser) {
-    await this.get(employeeId, user); // 404 / scope check — row-visibility, so scopeFor is right here
-    return this.tenantPrisma.client.document.findMany({ where: { employeeId } });
-  }
-
-  async getDocumentDownloadUrl(documentId: string, user: AuthenticatedUser) {
-    const doc = await this.tenantPrisma.client.document.findUnique({ where: { id: documentId } });
-    if (!doc) throw new NotFoundException('Document not found');
-    await this.get(doc.employeeId, user); // 404s if this document's owner is outside the caller's scope
-    const url = await this.storage.getPresignedDownloadUrl(doc.storageKey);
-    return { url, expiresInSeconds: 300 };
-  }
-
-  async setDocumentCategory(documentId: string, dto: SetDocumentCategoryDto) {
-    const doc = await this.tenantPrisma.client.document.findUnique({ where: { id: documentId } });
-    if (!doc) throw new NotFoundException('Document not found');
-    return this.tenantPrisma.client.document.update({
-      where: { id: documentId },
-      data: { category: dto.category as any },
-    });
-  }
-
-  async deleteDocument(documentId: string) {
-    const doc = await this.tenantPrisma.client.document.findUnique({ where: { id: documentId } });
-    if (!doc) throw new NotFoundException('Document not found');
-    await this.storage.delete(doc.storageKey);
-    await this.tenantPrisma.client.document.delete({ where: { id: documentId } });
-    return { deleted: true };
   }
 
   // ---- Bulk import ----

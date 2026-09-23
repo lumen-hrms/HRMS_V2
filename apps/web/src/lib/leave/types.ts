@@ -11,6 +11,8 @@
  * this file re-exports them.
  */
 
+import type { DocumentRef } from '@/lib/documents';
+
 export type LeaveRequestStatus =
   | 'PENDING_L1'
   | 'PENDING_L2'
@@ -86,6 +88,8 @@ export interface LeaveRequest {
   reason: string | null;
   isLop: boolean;
   attachmentName: string | null;
+  /** Supporting document (module 09) — downloadable only once `scanStatus` is CLEAN. */
+  attachment?: DocumentRef | null;
   createdAt: string;
   approvals: LeaveApprovalStep[];
 }

@@ -7,6 +7,8 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { SkeletonRows } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useToast } from '@/components/ui/toast';
+import { DocumentLink } from '@/components/documents';
+import type { DocumentRef } from '@/lib/documents';
 
 const REASON_LABELS: Record<string, string> = {
   MISSED_PUNCH_IN: 'Missed Punch In',
@@ -25,6 +27,7 @@ interface PendingRegularization {
   requestedCheckInAt: string | null;
   requestedCheckOutAt: string | null;
   note: string | null;
+  evidence: DocumentRef | null;
   createdAt: string;
   employee: { id: string; firstName: string; lastName: string; department: { name: string } | null };
 }
@@ -177,7 +180,14 @@ export function AttendanceApprovalsTab() {
                   <TD className="tabular-nums">
                     {fmtTime(r.requestedCheckInAt)} – {fmtTime(r.requestedCheckOutAt)}
                   </TD>
-                  <TD className="max-w-xs truncate text-xs text-muted-foreground">{r.note ?? '—'}</TD>
+                  <TD className="max-w-xs text-xs text-muted-foreground">
+                    <div className="truncate">{r.note ?? '—'}</div>
+                    {r.evidence && (
+                      <div className="mt-1">
+                        <DocumentLink doc={r.evidence} />
+                      </div>
+                    )}
+                  </TD>
                   <TD>
                     <div className="flex justify-end gap-2">
                       <Button

@@ -7,6 +7,8 @@ import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { useToast } from '@/components/ui/toast';
+import { UPLOAD_ACCEPT, uploadProblem } from '@/lib/documents';
 import { useAuth } from '@/context/auth-context';
 import { cn } from '@/lib/utils';
 import { AttendanceSettingsTab } from './settings-tab';
@@ -596,23 +598,44 @@ function RegularizationDialog({
     checkOut: '',
     note: '',
   });
+  const [evidence, setEvidence] = React.useState<File | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const { toast } = useToast();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const problem = evidence && uploadProblem(evidence);
+    if (problem) {
+      setError(problem);
+      return;
+    }
     setError(null);
     setBusy(true);
     try {
-      await api.post('/attendance/regularization', {
+      const created = await api.post<{ id: string }>('/attendance/regularization', {
         targetDate: form.targetDate,
         reasonType: form.reasonType,
         requestedCheckInAt: form.checkIn ? `${form.targetDate}T${form.checkIn}:00` : undefined,
         requestedCheckOutAt: form.checkOut ? `${form.targetDate}T${form.checkOut}:00` : undefined,
         note: form.note || undefined,
       });
+      if (evidence) {
+        // The request already exists — don't let an upload failure look like
+        // a failed submit (re-submitting would create a duplicate request).
+        await api
+          .upload(`/attendance/regularization/${created.id}/evidence`, evidence)
+          .catch((err) =>
+            toast({
+              title: 'Request submitted, but the evidence upload failed',
+              description: isApiError(err) ? err.message : undefined,
+              tone: 'error',
+            }),
+          );
+      }
       onOpenChange(false);
       setForm({ targetDate: '', reasonType: 'MISSED_PUNCH_OUT', checkIn: '', checkOut: '', note: '' });
+      setEvidence(null);
       onSubmitted();
     } catch (err) {
       setError(isApiError(err) ? err.message : 'Failed to submit request');
@@ -678,6 +701,15 @@ function RegularizationDialog({
               value={form.note}
               onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
             />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Supporting evidence (optional)</Label>
+            <Input
+              type="file"
+              accept={UPLOAD_ACCEPT}
+              onChange={(e) => setEvidence(e.target.files?.[0] ?? null)}
+            />
+            <span className="text-xs text-muted-foreground">PDF, JPG or PNG, up to 10 MB.</span>
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="mt-2 flex justify-end gap-2">

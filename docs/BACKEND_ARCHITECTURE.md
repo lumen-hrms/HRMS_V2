@@ -162,11 +162,17 @@ Mirrors the tenant auth flow (own bcrypt/lockout/MFA logic against `platform_adm
 - `GET /platform-admin/tenants` — list with subscription info, for the operator console.
 - `PATCH /platform-admin/tenants/:id/status` — `ACTIVE` / `SUSPENDED` / `TRIAL`. `SUSPENDED` is enforced at the tenant-resolution layer (§2.1), so suspending a tenant immediately locks out every user of that tenant, not just new logins.
 
-### `employees/` — `EmployeesService`, plus `EmployeesController` / `DocumentsController` / `DepartmentsController`
+### `employees/` — `EmployeesService`, plus `EmployeesController` / `DepartmentsController`
 - CRUD on `Employee` and `Department`, with the `scopeFor()` row-scoping described in §4.
 - `orgChart()` — fetches all employees for the tenant, builds a manager→reports tree in memory (not a recursive SQL CTE — fine at hundreds of employees, revisit if a tenant gets large).
-- Document upload: `uploadDocument()` writes the file to S3/MinIO under `tenants/<tenantId>/employees/<employeeId>/<uuid>-<filename>` (via `StorageService`) and records metadata in `public.documents`; downloads only ever hand back a 5-minute presigned URL (`getDocumentDownloadUrl`), never a direct object reference.
+- Document routes (`GET`/`POST /employees/:id/documents`) delegate to `DocumentsService` (below).
 - `bulkImport()` — parses an uploaded `.xlsx` (via `exceljs`), requires `employeeCode`/`firstName`/`lastName` columns, inserts row-by-row and returns a per-row success/error report rather than failing the whole batch on one bad row.
+
+### `documents/` — `DocumentsService`, `DocumentsController`, `DocumentScanProcessor`, `ClamAvScanner` (module 09)
+- `upload()` is the one pipeline for every user-uploaded file (employee profile, leave attachment, regularization evidence): MIME allow-list + magic-byte check + 10 MB cap **before** storage, object key `tenants/<tenantId>/employees/<employeeId>/<profile|leave/<id>|regularization/<id>>/<uuid>-<filename>`, row `PENDING_SCAN`, scan job enqueued. Owner modules (`LeaveService.attach`, `AttendanceService.attachEvidence`) do their own "may this user attach here" check first; Documents never imports them.
+- `DocumentScanProcessor` (BullMQ `documents` queue) streams the object to clamd (`zINSTREAM` over TCP, no npm dep) under `withTenantContext`; `INFECTED` deletes the object; a 15-minute `sweep` re-enqueues stale/failed scans across tenants.
+- `getDownloadUrl()` issues a 5-minute presigned URL with `Content-Disposition: attachment` only for a visible, non-deleted, `CLEAN` document (409 scanning / 410 infected), audit row written first. Visibility mirrors `scopeFor` (self / recursive subtree / tenant) via the shared `recursiveReportIds`.
+- Delete is soft (`deletedAt`); `hrms_app` has no `DELETE` grant on `documents`.
 
 ### `leave/` — `LeaveService`, `LeaveController`
 - Leave types (`LeaveType`) carry `annualQuota` and `carryForwardCap`; `initializeYearlyBalances()` upserts a `LeaveBalance` row per employee per year.
