@@ -1,5 +1,5 @@
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
-import { formatFrom, SesEmailSender } from './ses-email.sender';
+import { bareAddress, formatFrom, SesEmailSender } from './ses-email.sender';
 
 function senderWith(ses: Record<string, unknown>) {
   const config = { get: () => ({ region: 'ap-south-1', ...ses }) };
@@ -69,5 +69,29 @@ describe('formatFrom', () => {
 
   it('falls back to the bare address for an empty name', () => {
     expect(formatFrom('  ', 'a@b.test')).toBe('a@b.test');
+  });
+});
+
+describe('bareAddress', () => {
+  it.each([
+    ['no-reply@lumenhrms.work', 'no-reply@lumenhrms.work'],
+    ['  no-reply@lumenhrms.work \n', 'no-reply@lumenhrms.work'],
+    ['Lumen HRMS <no-reply@lumenhrms.work>', 'no-reply@lumenhrms.work'],
+    ['"Lumen" <no-reply@lumenhrms.work>', 'no-reply@lumenhrms.work'],
+    ['', undefined],
+    [undefined, undefined],
+  ])('%j → %j', (input, expected) => {
+    expect(bareAddress(input)).toBe(expected);
+  });
+
+  it('a "Name <addr>" setting still produces a single, valid From header', async () => {
+    const send = jest
+      .spyOn(SESv2Client.prototype, 'send')
+      .mockResolvedValue({ MessageId: 'm' } as never);
+    await senderWith({ fromAddress: 'Lumen HRMS <no-reply@lumenhrms.work>' }).send(EMAIL);
+    expect((send.mock.calls[0][0] as SendEmailCommand).input.FromEmailAddress).toBe(
+      '"Acme Hospital via Lumen HRMS" <no-reply@lumenhrms.work>',
+    );
+    send.mockRestore();
   });
 });
