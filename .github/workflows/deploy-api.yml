@@ -32,24 +32,39 @@ jobs:
             docker stop clamav >/dev/null 2>&1 || true
             DOCKER_BUILDKIT=0 docker build -f apps/api/Dockerfile -t hrms-api .
 
-            # ClamAV (module 09 document scanning) as a sibling container.
-            # Created once and left running across deploys — recreating it
-            # would re-download the ~300 MB signature DB each time (it lives
-            # in the named volume). Memory is capped so that on this 1 GiB
-            # box, if anything gets OOM-killed it's clamd, not the API;
-            # past the cap it spills into the box's 2 GiB swap. Not waited
-            # on: scanning fails closed and the documents sweep catches up
-            # once clamd is listening (first start takes a few minutes).
+            docker rm -f hrms-api || true
+            docker run -d --name hrms-api --restart unless-stopped \
+              --env-file apps/api/.env -e CLAMAV_HOST=clamav -e CLAMAV_PORT=3310 \
+              -p 80:3000 --network hrms hrms-api
+
+            # Boot time on this burstable, swap-backed box varies (seconds to
+            # a minute+), so poll instead of a fixed sleep. Dump the API's own
+            # logs + memory on failure so the Actions log shows *why*.
+            healthy=
+            for i in $(seq 1 30); do
+              if curl -fsS http://localhost/api/health; then healthy=1; break; fi
+              sleep 5
+            done
+            if [ -z "$healthy" ]; then
+              echo "API not healthy after ~150s"
+              docker ps -a --filter name=hrms-api
+              docker logs --tail 100 hrms-api
+              free -m
+              exit 1
+            fi
+
+            # ClamAV (module 09 document scanning) as a sibling container —
+            # started only AFTER the API is healthy: its first start
+            # downloads + loads signatures, which saturates this 1 GiB box
+            # and would otherwise slow the API's boot past the health check.
+            # Created once and left running across deploys (signature DB
+            # lives in the named volume). Memory-capped so an OOM kills
+            # clamd, not the API; past the cap it spills into the 2 GiB
+            # swap. Not waited on: scanning fails closed and the documents
+            # sweep catches up once clamd is listening.
             if ! docker ps -a --format '{{.Names}}' | grep -qx clamav; then
               docker run -d --name clamav --restart unless-stopped --network hrms \
                 --memory=700m --memory-swap=1800m \
                 -v hrms_clamav_data:/var/lib/clamav clamav/clamav:stable
             fi
             docker start clamav >/dev/null
-
-            docker rm -f hrms-api || true
-            docker run -d --name hrms-api --restart unless-stopped \
-              --env-file apps/api/.env -e CLAMAV_HOST=clamav -e CLAMAV_PORT=3310 \
-              -p 80:3000 --network hrms hrms-api
-            sleep 5
-            curl -f http://localhost/api/health
