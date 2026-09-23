@@ -7,6 +7,7 @@ import { NotificationSendProcessor } from './notification-send.processor';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
 import { SesEmailSender } from './ses-email.sender';
+import { AuthEmailService } from './auth-email.service';
 
 /**
  * Module 10. Feature modules import this for `NotificationDispatcher`;
@@ -28,7 +29,8 @@ import { SesEmailSender } from './ses-email.sender';
     NotificationSendProcessor,
     NotificationsService,
     SesEmailSender,
+    AuthEmailService,
   ],
-  exports: [NotificationDispatcher],
+  exports: [NotificationDispatcher, AuthEmailService],
 })
 export class NotificationsModule {}

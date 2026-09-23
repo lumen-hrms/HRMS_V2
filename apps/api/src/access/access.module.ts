@@ -6,9 +6,11 @@ import { AccessController } from './access.controller';
 import { AccessService } from './access.service';
 import { LoginAuditRetentionProcessor } from './login-audit-retention.processor';
 import { ACCESS_QUEUE } from './access.constants';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
+    NotificationsModule,
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService<AppConfig, true>) => ({

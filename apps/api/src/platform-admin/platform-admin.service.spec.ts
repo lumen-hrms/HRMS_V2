@@ -4,9 +4,6 @@ import { PlatformAdminService } from './platform-admin.service';
 // `seedCompanyAdmin` fires a real hosted-reset-email HTTP call otherwise —
 // these tests are about Firebase Admin (createUser/setCustomUserClaims)
 // failure handling, not the reset-email send, so keep it a no-op here.
-jest.mock('../firebase/send-reset-email', () => ({
-  sendFirebasePasswordResetEmail: jest.fn().mockResolvedValue(undefined),
-}));
 
 /** Minimal fake of the `hrms_platform`-role Prisma surface the audit read
  * path touches — `PlatformAuditLog` only. */
@@ -25,6 +22,7 @@ function buildService(rows: any[]) {
     platformPrisma as any,
     {} as any,
     config as any,
+    {} as any,
     {} as any,
     {} as any,
   );
@@ -201,14 +199,16 @@ function buildCreateTenantHarness() {
     createUser: jest.fn().mockResolvedValue({ uid: 'fb-uid-1' }),
     setCustomUserClaims: jest.fn().mockResolvedValue(undefined),
   };
+  const authEmails = { sendPasswordReset: jest.fn().mockResolvedValue('ses') };
   const service = new PlatformAdminService(
     platformPrisma as any,
     tenantPrismaRaw as any,
     config as any,
     plans as any,
     firebaseAuth as any,
+    authEmails as any,
   );
-  return { service, platformPrisma, tenantPrismaRaw, scoped, firebaseAuth };
+  return { service, platformPrisma, tenantPrismaRaw, scoped, firebaseAuth, authEmails };
 }
 
 describe('PlatformAdminService.createTenant — Firebase Admin failure handling', () => {
@@ -249,12 +249,42 @@ describe('PlatformAdminService.createTenant — Firebase Admin failure handling'
     await expect(service.createTenant(dto)).rejects.toMatchObject({ status: 400 });
   });
 
-  it('creates the tenant admin and returns adminResetEmailSent on the happy path', async () => {
-    const { service } = buildCreateTenantHarness();
+  it('creates the tenant admin and emails them a branded INVITE (SES via AuthEmailService)', async () => {
+    const { service, authEmails } = buildCreateTenantHarness();
 
     const result = await service.createTenant(dto);
 
     expect(result.adminResetEmailSent).toBe(true);
     expect(result.id).toBe('tenant-1');
+    expect(authEmails.sendPasswordReset).toHaveBeenCalledWith({
+      email: dto.adminEmail,
+      kind: 'INVITE',
+      tenantId: 'tenant-1',
+    });
+  });
+
+  it('still creates the tenant when the invite email fails, and says so', async () => {
+    const { service, authEmails, platformPrisma } = buildCreateTenantHarness();
+    authEmails.sendPasswordReset.mockRejectedValue(new Error('SES throttled'));
+
+    const result = await service.createTenant(dto);
+
+    expect(result.adminResetEmailSent).toBe(false);
+    expect(result.id).toBe('tenant-1');
+    expect(platformPrisma.tenant.delete).not.toHaveBeenCalled();
+  });
+
+  it('resendAdminReset re-sends the INVITE to the first Company Admin', async () => {
+    const { service, authEmails, scoped } = buildCreateTenantHarness();
+    scoped.user.findFirst.mockResolvedValue({ email: 'owner@acme.test' });
+
+    await expect(service.resendAdminReset('tenant-1')).resolves.toEqual({
+      email: 'owner@acme.test',
+    });
+    expect(authEmails.sendPasswordReset).toHaveBeenCalledWith({
+      email: 'owner@acme.test',
+      kind: 'INVITE',
+      tenantId: 'tenant-1',
+    });
   });
 });

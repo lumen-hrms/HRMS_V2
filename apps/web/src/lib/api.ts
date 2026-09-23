@@ -81,3 +81,22 @@ export const api = {
     return request<T>(path, { method: 'POST', body });
   },
 };
+
+/**
+ * Self-service "Forgot password?" for a tenant user — the server emails a
+ * branded reset link from the workspace's domain (module 10 auth emails).
+ * Pre-auth, so the tenant comes from the subdomain the user typed, not the
+ * stored one. Always resolves the same way whether or not the account
+ * exists; only a 429 (rate limit) or a bad subdomain surface as errors.
+ */
+export async function requestPasswordReset(subdomain: string, email: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/auth/password-reset`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Tenant-Subdomain': subdomain },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new ApiError(res.status, text ? JSON.parse(text) : null);
+  }
+}

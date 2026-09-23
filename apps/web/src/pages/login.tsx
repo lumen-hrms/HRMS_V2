@@ -50,7 +50,11 @@ export function LoginPage() {
       ]}
     >
       {screen === 'reset' ? (
-        <AuthResetPanel auth={auth} onBack={() => setScreen('signin')} />
+        <AuthResetPanel
+          auth={auth}
+          tenantSubdomain={subdomain.value.trim()}
+          onBack={() => setScreen('signin')}
+        />
       ) : (
         <div>
           <h1 className="m-0 text-[26px] font-bold" style={{ color: 'var(--lumen-text)' }}>

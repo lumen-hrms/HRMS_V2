@@ -55,6 +55,11 @@ export class SesEmailSender {
     this.configurationSet = ses.configurationSet;
   }
 
+  /** False when SES_FROM_ADDRESS is unset — callers with a fallback path check this. */
+  get isConfigured(): boolean {
+    return !!this.fromAddress;
+  }
+
   /** Returns SES's MessageId once SES has accepted the message. */
   async send(email: OutgoingEmail): Promise<string> {
     if (!this.fromAddress) {

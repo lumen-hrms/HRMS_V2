@@ -3,9 +3,6 @@ import { PlatformAdminService } from './platform-admin.service';
 import * as withTenantContextModule from '../prisma/with-tenant-context';
 
 jest.mock('../prisma/with-tenant-context');
-jest.mock('../firebase/send-reset-email', () => ({
-  sendFirebasePasswordResetEmail: jest.fn().mockResolvedValue(undefined),
-}));
 
 const TENANT = {
   id: 'tenant-1',
@@ -50,6 +47,7 @@ function buildService(overrides: Record<string, any> = {}) {
     { get: jest.fn() } as any,
     {} as any,
     {} as any,
+    { sendPasswordReset: jest.fn().mockResolvedValue('ses') } as any,
   );
   return { service, platformPrisma, fakeTenantClient, auditCreate };
 }

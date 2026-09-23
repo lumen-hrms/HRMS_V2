@@ -24,6 +24,15 @@
 > **Last synced to code:** 2026-09-23. Landed since the previous sync
 > (2026-09-22):
 >
+> - **Auth emails now go through SES too** (module 10 + Identity & Access /
+>   Platform Admin). Tenant-onboarding invites, admin-triggered resets and
+>   self-service "Forgot password?" are sent by `AuthEmailService` — a
+>   Firebase Admin-generated reset link in a branded email from the
+>   workspace's domain — instead of Firebase's generic email. New public
+>   `POST /api/auth/password-reset` (non-enumerating, rate-limited) replaces
+>   the browser calling Firebase directly. Falls back to Firebase's email
+>   when SES isn't configured. Also: a public landing page at `/` for
+>   signed-out visitors (signed-in users still get the dashboard there).
 > - **Notifications (module 10) → 95%.** New `apps/api/src/notifications`:
 >   `NotificationDispatcher.notify()` (singleton, explicit `tenantId`, never
 >   throws into the caller) resolves recipients (users / employees / roles →

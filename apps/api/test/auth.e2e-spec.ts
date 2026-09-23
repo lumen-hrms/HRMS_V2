@@ -77,4 +77,26 @@ describe('Auth: session exchange (e2e)', () => {
 
     expect(res.status).toBe(401);
   });
+
+  describe('POST /api/auth/password-reset (self-service, pre-auth)', () => {
+    const reset = (email: unknown, subdomain = tenant.subdomain) =>
+      request(server())
+        .post('/api/auth/password-reset')
+        .set('X-Tenant-Subdomain', subdomain)
+        .send({ email });
+
+    it('answers 202 without a token — and identically for an unknown email (no enumeration)', async () => {
+      const unknown = await reset('nobody-here@example.test');
+      expect(unknown.status).toBe(202);
+      expect(unknown.body).toEqual({ status: 'ok' });
+    });
+
+    it('rejects a malformed email (400)', async () => {
+      expect((await reset('not-an-email')).status).toBe(400);
+    });
+
+    it('404s for a workspace that does not exist', async () => {
+      expect((await reset('a@example.test', 'no-such-tenant-e2e')).status).toBe(404);
+    });
+  });
 });

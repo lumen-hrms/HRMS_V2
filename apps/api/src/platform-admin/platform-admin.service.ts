@@ -13,7 +13,7 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import type * as admin from 'firebase-admin';
 import { FIREBASE_AUTH } from '../firebase/firebase-admin.provider';
-import { sendFirebasePasswordResetEmail } from '../firebase/send-reset-email';
+import { AuthEmailService } from '../notifications/auth-email.service';
 import { PlatformPrismaClientProvider } from '../prisma/platform-prisma-client.provider';
 import { TenantPrismaClientProvider } from '../prisma/tenant-prisma-client.provider';
 import { withTenantContext } from '../prisma/with-tenant-context';
@@ -133,6 +133,7 @@ export class PlatformAdminService {
     private readonly config: ConfigService<AppConfig, true>,
     private readonly plans: PlansService,
     @Inject(FIREBASE_AUTH) private readonly firebaseAuth: admin.auth.Auth,
+    private readonly authEmails: AuthEmailService,
   ) {}
 
   // ---- Auth ----
@@ -341,10 +342,7 @@ export class PlatformAdminService {
     });
     if (!admin) throw new BadRequestException('This tenant has no Company Admin to reset');
 
-    await sendFirebasePasswordResetEmail(
-      this.config.get('firebase.webApiKey', { infer: true }),
-      admin.email,
-    );
+    await this.authEmails.sendPasswordReset({ email: admin.email, kind: 'INVITE', tenantId });
     return { email: admin.email };
   }
 
@@ -585,10 +583,7 @@ export class PlatformAdminService {
     // trace used to be this log line.
     let resetEmailSent = true;
     try {
-      await sendFirebasePasswordResetEmail(
-        this.config.get('firebase.webApiKey', { infer: true }),
-        email,
-      );
+      await this.authEmails.sendPasswordReset({ email, kind: 'INVITE', tenantId });
     } catch (err) {
       resetEmailSent = false;
       this.logger.error(

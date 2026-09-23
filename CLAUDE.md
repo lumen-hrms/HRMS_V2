@@ -253,7 +253,10 @@ the caller) writes deduped `notification_log` rows and enqueues a BullMQ
 `notifications` job; the worker sends via **AWS SES v2** (`SES_FROM_ADDRESS`
 + SDK default-chain credentials), retries to `FAILED`, and a sweep heals
 stuck rows. Wired into Leave, Attendance regularization and Documents; an
-Email log screen lets HR retry failures. The last 5% is a first real SES
+Email log screen lets HR retry failures. Auth emails (tenant invite, admin
+reset, self-service "Forgot password?" via public `POST /auth/password-reset`)
+also go out through SES via `AuthEmailService` — Firebase still generates the
+reset link and hosts the reset page; only the sender changed. The last 5% is a first real SES
 delivery (owner's SES setup). See `docs/modules/10_NOTIFICATIONS.md`.
 
 **Attendance — done, 100%.** Self-service clock-in/out/breaks/calendar/

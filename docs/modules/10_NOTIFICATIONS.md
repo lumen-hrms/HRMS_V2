@@ -107,6 +107,25 @@ manual retry.
 | Regularization approved / rejected / auto-resolved | `REGULARIZATION_DECIDED` | applicant |
 | Uploaded file blocked as malware | `DOCUMENT_BLOCKED` | uploader |
 
+### 3.2a Auth emails (password reset / workspace invite)
+
+Sent **synchronously** by `AuthEmailService` (not queued, not written to
+`notification_log` — the reset link is a live credential). Firebase still
+owns the password: the Admin SDK generates the one-time reset link
+(`generatePasswordResetLink`, continue URL `APP_BASE_URL/login`) and
+Firebase's hosted page handles it; we only send the email, branded
+"`<Workspace>` via Lumen HRMS" through SES.
+
+| Event | Kind | Caller |
+|---|---|---|
+| New tenant onboarded / "Resend invite" | `INVITE` | `PlatformAdminService` |
+| Admin resets a user's password | `ADMIN_RESET` | `AccessService` |
+| "Forgot password?" / My Account → Change password | `SELF_SERVICE` | `POST /api/auth/password-reset` (public, tenant from subdomain; always `202`, never reveals whether the account exists; 3/email + 10/IP per 15 min, in-memory) |
+
+SES not configured → falls back to Firebase's own reset email (so a
+laptop without SES keys still works). Platform Admin operators keep
+Firebase's reset email — they aren't tenant users.
+
 ### 3.3 Email log
 - `GET /api/notifications/log` — newest first, filter by status; Company
   Admin, HR Manager, Auditor.
