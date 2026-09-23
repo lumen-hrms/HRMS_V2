@@ -35,7 +35,7 @@ criteria, open questions.
 | `modules/03_EMPLOYEE_MASTER.md` | Employee Master + Org Structure |
 | `modules/04_LEAVE_MANAGEMENT.md` | Leave Management |
 | `modules/05_ATTENDANCE.md` | Attendance & Time Tracking |
-| `modules/06_DASHBOARD.md` | Role-aware Dashboard *(pending)* |
+| `modules/06_DASHBOARD.md` | Role-aware Dashboard |
 | `modules/07_PAYROLL_ENGINE.md` | Payroll Engine *(pending)* |
 | `modules/08_STATUTORY_COMPLIANCE.md` | Statutory Compliance *(pending)* |
 | `modules/09_DOCUMENTS.md` | Documents *(pending)* |
@@ -65,8 +65,9 @@ render in visual sync.
 | `ui-build-prompts/03-employee-master.md` | Directory, employee detail, add/bulk-import, departments, org chart | Employee · Line Manager · HR Manager · Company Admin · Auditor |
 | `ui-build-prompts/04-leave-management.md` | Overview, apply, approvals, team calendar/balances, leave types, ledger, holidays, settings | Employee · Line Manager · HR Manager · Company Admin · Auditor |
 | `ui-build-prompts/05-attendance.md` | Today (clock in/out, breaks), calendar, stats, regularisation, team roster, approvals, settings (shifts/guardrails) — team/approvals/settings screens are `TODO(api)` build targets | Employee · Line Manager · HR Manager · Company Admin · Auditor |
+| `ui-build-prompts/06-dashboard.md` | Home screen: role-branched stat grid + a shared own-attendance "today" card — fully live, no `TODO(api)` screens | Employee · Line Manager · HR Manager · Company Admin · Auditor |
 
-*(Prompts for modules 06–13 are added as those modules are specced.)*
+*(Prompts for modules 07–13 are added as those modules are specced.)*
 
 ## Adding docs
 
