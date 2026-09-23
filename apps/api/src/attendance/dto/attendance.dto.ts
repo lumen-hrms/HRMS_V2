@@ -1,5 +1,6 @@
 import {
   ArrayMaxSize,
+  ArrayMinSize,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -9,6 +10,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   Max,
   Min,
@@ -191,4 +193,46 @@ export class CreateRegularizationDto {
   @IsOptional()
   @IsString()
   note?: string;
+}
+
+/** `POST regularization/:id/approve|reject` */
+export class DecideRegularizationDto {
+  @IsOptional()
+  @IsString()
+  comment?: string;
+}
+
+/** `POST regularization/bulk-approve` */
+export class BulkDecideRegularizationDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsUUID('4', { each: true })
+  ids!: string[];
+}
+
+const MARK_STATUSES = ['PRESENT', 'LATE', 'ABSENT', 'HOLIDAY', 'WEEKLY_OFF', 'ON_LEAVE'] as const;
+
+/** `POST /attendance/mark` — manual marking by HR (FR-ATT-001), always
+ *  reasoned + audited. */
+export class MarkAttendanceDto {
+  @IsUUID()
+  employeeId!: string;
+
+  @IsDateString()
+  date!: string;
+
+  @IsIn(MARK_STATUSES)
+  status!: (typeof MARK_STATUSES)[number];
+
+  @IsOptional()
+  @IsString()
+  checkInAt?: string;
+
+  @IsOptional()
+  @IsString()
+  checkOutAt?: string;
+
+  @IsString()
+  @MinLength(5)
+  reason!: string;
 }

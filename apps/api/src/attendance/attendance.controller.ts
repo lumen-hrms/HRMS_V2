@@ -18,8 +18,11 @@ import { RequiresModule } from '../common/decorators/requires-module.decorator';
 import { CurrentUser, AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import { AttendanceService } from './attendance.service';
 import {
+  BulkDecideRegularizationDto,
   CreateRegularizationDto,
   CreateShiftDto,
+  DecideRegularizationDto,
+  MarkAttendanceDto,
   UpdateAttendanceSettingsDto,
   UpdateShiftDto,
 } from './dto/attendance.dto';
@@ -78,9 +81,63 @@ export class AttendanceController {
     return this.service.listRegularizations(user);
   }
 
+  @Get('regularization/pending')
+  pendingRegularizations(@CurrentUser() user: AuthenticatedUser) {
+    return this.service.pendingRegularizations(user);
+  }
+
   @Post('regularization/:id/cancel')
   cancelRegularization(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.service.cancelRegularization(id, user);
+  }
+
+  @Post('regularization/:id/approve')
+  @Roles('LINE_MANAGER', 'HR_MANAGER', 'COMPANY_ADMIN')
+  approveRegularization(
+    @Param('id') id: string,
+    @Body() dto: DecideRegularizationDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.approveRegularization(id, user, dto?.comment);
+  }
+
+  @Post('regularization/:id/reject')
+  @Roles('LINE_MANAGER', 'HR_MANAGER', 'COMPANY_ADMIN')
+  rejectRegularization(
+    @Param('id') id: string,
+    @Body() dto: DecideRegularizationDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.rejectRegularization(id, user, dto?.comment);
+  }
+
+  @Post('regularization/bulk-approve')
+  @Roles('LINE_MANAGER', 'HR_MANAGER', 'COMPANY_ADMIN')
+  bulkApproveRegularizations(
+    @Body() dto: BulkDecideRegularizationDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.bulkApproveRegularizations(dto.ids, user);
+  }
+
+  // ---- Manager / HR views ----
+
+  @Get('team/roster')
+  teamRoster(@Query('date') date: string | undefined, @CurrentUser() user: AuthenticatedUser) {
+    return this.service.teamRoster(user, date);
+  }
+
+  @Post('mark')
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  markAttendance(@Body() dto: MarkAttendanceDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.service.markAttendance(dto, user);
+  }
+
+  @Get('lop-days')
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  async lopDays(@Query('employeeId') employeeId: string, @Query('month') month: string) {
+    const days = await this.service.getLopDays(employeeId, month);
+    return { employeeId, month, lopDays: days };
   }
 
   // ---- Tenant configuration: shifts + settings ----
