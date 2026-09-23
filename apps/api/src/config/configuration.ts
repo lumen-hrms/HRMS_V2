@@ -40,6 +40,20 @@ export interface AppConfig {
     port: number;
     timeoutMs: number;
   };
+  /**
+   * Module 10 notifications — AWS SES v2 (docs/modules/10_NOTIFICATIONS.md
+   * §4.3). Credentials come from the AWS SDK default chain
+   * (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, or an attached IAM role).
+   * Without `fromAddress`, sends fail and land as FAILED in the email log —
+   * nothing is silently dropped.
+   */
+  ses: {
+    region: string;
+    fromAddress?: string;
+    configurationSet?: string;
+  };
+  /** Public URL of the web app, used for links inside emails. */
+  appBaseUrl: string;
   encryption: {
     /**
      * The application-layer "KMS data key" for PII field encryption (PAN,
@@ -83,6 +97,12 @@ export default (): AppConfig => ({
     port: parseInt(process.env.CLAMAV_PORT ?? '3310', 10),
     timeoutMs: parseInt(process.env.CLAMAV_TIMEOUT_MS ?? '60000', 10),
   },
+  ses: {
+    region: process.env.SES_REGION ?? 'ap-south-1',
+    fromAddress: process.env.SES_FROM_ADDRESS || undefined,
+    configurationSet: process.env.SES_CONFIGURATION_SET || undefined,
+  },
+  appBaseUrl: (process.env.APP_BASE_URL ?? 'http://localhost:5173').replace(/\/+$/, ''),
   encryption: {
     fieldKeyBase64: process.env.FIELD_ENCRYPTION_KEY,
   },

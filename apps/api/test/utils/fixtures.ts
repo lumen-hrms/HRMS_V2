@@ -294,5 +294,6 @@ export async function cleanupTenantFixture(tenantId: string) {
   await superuserPrisma.attendanceSettings.deleteMany({ where: { tenantId } });
   await superuserPrisma.tenantSettings.deleteMany({ where: { tenantId } });
   await superuserPrisma.auditLog.deleteMany({ where: { tenantId } });
+  await superuserPrisma.notificationLog.deleteMany({ where: { tenantId } });
   await superuserPrisma.tenant.delete({ where: { id: tenantId } }).catch(() => undefined);
 }

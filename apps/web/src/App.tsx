@@ -16,6 +16,7 @@ import { LeavePage } from '@/pages/leave';
 import { AttendancePage } from '@/pages/attendance';
 import { AccessPage } from '@/pages/access';
 import { AccountPage } from '@/pages/access/account';
+import { NotificationsPage } from '@/pages/notifications';
 import { PlatformAdminConsole } from '@/pages/platform-admin/console';
 
 export default function App() {
@@ -48,6 +49,7 @@ export default function App() {
                     <Route path="leave" element={<LeavePage />} />
                     <Route path="attendance" element={<AttendancePage />} />
                     <Route path="access" element={<AccessPage />} />
+                    <Route path="notifications" element={<NotificationsPage />} />
                     <Route path="account" element={<AccountPage />} />
                   </Route>
                 </Routes>

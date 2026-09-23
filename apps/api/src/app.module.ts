@@ -15,6 +15,7 @@ import { LeaveModule } from './leave/leave.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { TenantConfigModule } from './tenant-config/tenant-config.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { TenantConfigModule } from './tenant-config/tenant-config.module';
     AttendanceModule,
     DashboardModule,
     TenantConfigModule,
+    NotificationsModule,
   ],
   controllers: [HealthController],
 })

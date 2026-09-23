@@ -4,6 +4,7 @@ import { Job, Queue } from 'bullmq';
 import { PlatformPrismaClientProvider } from '../prisma/platform-prisma-client.provider';
 import { TenantPrismaClientProvider } from '../prisma/tenant-prisma-client.provider';
 import { withTenantContext } from '../prisma/with-tenant-context';
+import { NotificationDispatcher } from '../notifications/notification-dispatcher.service';
 import { ATTENDANCE_QUEUE } from './attendance.constants';
 import { baseStatusFor, isLateCheckIn } from './attendance.util';
 
@@ -30,6 +31,7 @@ export class AttendanceFinalizationProcessor extends WorkerHost implements OnMod
     @InjectQueue(ATTENDANCE_QUEUE) private readonly queue: Queue,
     private readonly platformPrisma: PlatformPrismaClientProvider,
     private readonly tenantPrismaRaw: TenantPrismaClientProvider,
+    private readonly notifications: NotificationDispatcher,
   ) {
     super();
   }
@@ -224,6 +226,19 @@ export class AttendanceFinalizationProcessor extends WorkerHost implements OnMod
           },
         })
         .catch(() => undefined);
+
+      await this.notifications.notify({
+        tenantId,
+        template: 'REGULARIZATION_DECIDED',
+        context: {
+          requestId: req.id,
+          targetDate: req.targetDate.toISOString().slice(0, 10),
+          outcome: resolution,
+          auto: true,
+        },
+        dedupeKey: `regularization:${req.id}:decided`,
+        to: { employeeIds: [req.employeeId] },
+      });
     }
   }
 }

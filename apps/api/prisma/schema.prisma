@@ -282,6 +282,26 @@ enum DocumentScanStatus {
   @@schema("public")
 }
 
+enum NotificationTemplate {
+  LEAVE_PENDING_APPROVAL
+  LEAVE_DECIDED
+  LEAVE_ESCALATED
+  LEAVE_CANCELLED
+  REGULARIZATION_PENDING_APPROVAL
+  REGULARIZATION_DECIDED
+  DOCUMENT_BLOCKED
+
+  @@schema("public")
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  FAILED
+
+  @@schema("public")
+}
+
 enum EmployeeLifecycleState {
   PRE_JOINING
   PROBATION
@@ -1032,5 +1052,31 @@ model Punch {
   @@index([tenantId])
   @@index([tenantId, employeeId, at])
   @@map("punches")
+  @@schema("public")
+}
+
+// Module 10 — one row per (event, recipient) email (docs/modules/10_NOTIFICATIONS.md).
+// Written QUEUED by NotificationDispatcher, moved to SENT/FAILED by the send
+// worker. `dedupeKey` + recipient is unique so a re-run event can't email
+// the same person twice. hrms_app has no DELETE grant here.
+model NotificationLog {
+  id                String               @id @default(uuid()) @db.Uuid
+  tenantId          String               @map("tenant_id") @db.Uuid
+  template          NotificationTemplate
+  recipientUserId   String               @map("recipient_user_id") @db.Uuid
+  recipientEmail    String               @map("recipient_email")
+  context           Json
+  dedupeKey         String               @map("dedupe_key")
+  status            NotificationStatus   @default(QUEUED)
+  attempts          Int                  @default(0)
+  lastError         String?              @map("last_error")
+  providerMessageId String?              @map("provider_message_id")
+  createdAt         DateTime             @default(now()) @map("created_at")
+  sentAt            DateTime?            @map("sent_at")
+  updatedAt         DateTime             @updatedAt @map("updated_at")
+
+  @@unique([tenantId, dedupeKey, recipientUserId])
+  @@index([tenantId, status, createdAt])
+  @@map("notification_log")
   @@schema("public")
 }

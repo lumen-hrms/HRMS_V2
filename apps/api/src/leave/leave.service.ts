@@ -18,6 +18,8 @@ import type {
 import { LEAVE_QUEUE } from './leave.constants';
 import { resolveLeaveYear } from './leave-year.util';
 import { recursiveReportIds } from '../common/reporting-hierarchy';
+import { HR_ROLES, NotificationDispatcher } from '../notifications/notification-dispatcher.service';
+import { leaveNotificationContext } from './leave-notifications';
 
 const ADMIN_ROLES = ['COMPANY_ADMIN', 'HR_MANAGER'];
 
@@ -58,6 +60,7 @@ export class LeaveService {
     private readonly tenantPrisma: TenantPrismaService,
     private readonly documents: DocumentsService,
     @InjectQueue(LEAVE_QUEUE) private readonly leaveQueue: Queue,
+    private readonly notifications: NotificationDispatcher,
   ) {}
 
   /**
@@ -643,6 +646,15 @@ export class LeaveService {
       status === 'PENDING_L1' ? 1 : 2,
       settings.leaveEscalationDays,
     );
+    const level = status === 'PENDING_L1' ? 1 : 2;
+    await this.notifications.notify({
+      tenantId: this.tenantPrisma.tenantId,
+      template: 'LEAVE_PENDING_APPROVAL',
+      context: { ...leaveNotificationContext(request), level },
+      dedupeKey: `leave:${request.id}:pending:L${level}`,
+      to: level === 1 ? { employeeIds: [employee.reportingManagerId] } : { roles: HR_ROLES },
+      actorUserId: user.sub,
+    });
     return this.toRequestDtoOne(request);
   }
 
@@ -704,6 +716,21 @@ export class LeaveService {
       data: { status: 'CANCELLED' },
       include: REQUEST_INCLUDE,
     });
+    // Tell whoever it was sitting with: the manager at L1, HR at L2 or once
+    // approved (their balance/attendance view just changed).
+    if (req.status === 'PENDING_L1' || req.status === 'PENDING_L2' || req.status === 'APPROVED') {
+      await this.notifications.notify({
+        tenantId: this.tenantPrisma.tenantId,
+        template: 'LEAVE_CANCELLED',
+        context: { ...leaveNotificationContext(updated), wasApproved: req.status === 'APPROVED' },
+        dedupeKey: `leave:${id}:cancelled`,
+        to:
+          req.status === 'PENDING_L1'
+            ? { employeeIds: [updated.employee.reportingManagerId] }
+            : { roles: HR_ROLES },
+        actorUserId: user.sub,
+      });
+    }
     return this.toRequestDtoOne(updated);
   }
 
@@ -732,6 +759,23 @@ export class LeaveService {
       ]);
       const settings = await this.getTenantSettings();
       await this.scheduleEscalation(id, 2, settings.leaveEscalationDays);
+      const ctx = leaveNotificationContext(updated);
+      await this.notifications.notify({
+        tenantId: this.tenantPrisma.tenantId,
+        template: 'LEAVE_DECIDED',
+        context: { ...ctx, outcome: 'L1_APPROVED', comment: dto?.comment ?? null },
+        dedupeKey: `leave:${id}:decided:L1_APPROVED`,
+        to: { employeeIds: [req.employeeId] },
+        actorUserId: user.sub,
+      });
+      await this.notifications.notify({
+        tenantId: this.tenantPrisma.tenantId,
+        template: 'LEAVE_PENDING_APPROVAL',
+        context: { ...ctx, level: 2 },
+        dedupeKey: `leave:${id}:pending:L2`,
+        to: { roles: HR_ROLES },
+        actorUserId: user.sub,
+      });
       return this.toRequestDtoOne(updated);
     }
 
@@ -775,6 +819,18 @@ export class LeaveService {
         }),
         this.recordApproval(id, 2, user.employeeId ?? null, 'APPROVED', dto?.comment ?? null),
       ]);
+      await this.notifications.notify({
+        tenantId: this.tenantPrisma.tenantId,
+        template: 'LEAVE_DECIDED',
+        context: {
+          ...leaveNotificationContext(updated),
+          outcome: 'APPROVED',
+          comment: dto?.comment ?? null,
+        },
+        dedupeKey: `leave:${id}:decided:APPROVED`,
+        to: { employeeIds: [req.employeeId] },
+        actorUserId: user.sub,
+      });
       return this.toRequestDtoOne(updated);
     }
 
@@ -799,6 +855,18 @@ export class LeaveService {
       }),
       this.recordApproval(id, level, user.employeeId ?? null, 'REJECTED', dto?.comment ?? null),
     ]);
+    await this.notifications.notify({
+      tenantId: this.tenantPrisma.tenantId,
+      template: 'LEAVE_DECIDED',
+      context: {
+        ...leaveNotificationContext(updated),
+        outcome: 'REJECTED',
+        comment: dto?.comment ?? null,
+      },
+      dedupeKey: `leave:${id}:decided:REJECTED`,
+      to: { employeeIds: [req.employeeId] },
+      actorUserId: user.sub,
+    });
     return this.toRequestDtoOne(updated);
   }
 

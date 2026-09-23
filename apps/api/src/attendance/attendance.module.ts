@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import type { AppConfig } from '../config/configuration';
 import { LeaveModule } from '../leave/leave.module';
 import { DocumentsModule } from '../documents/documents.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { AttendanceController } from './attendance.controller';
 import { AttendanceService } from './attendance.service';
 import { AttendanceFinalizationProcessor } from './attendance-finalization.processor';
@@ -13,6 +14,7 @@ import { ATTENDANCE_QUEUE } from './attendance.constants';
   imports: [
     LeaveModule,
     DocumentsModule,
+    NotificationsModule,
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService<AppConfig, true>) => ({

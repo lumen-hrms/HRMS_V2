@@ -39,21 +39,23 @@ function build() {
     delete: jest.fn().mockResolvedValue(undefined),
   };
   const scanner = { scan: jest.fn().mockResolvedValue({ clean: true }) };
+  const notifications = { notify: jest.fn().mockResolvedValue(undefined) };
   const processor = new DocumentScanProcessor(
     queue as any,
     platform as any,
     raw as any,
     storage as any,
     scanner as any,
+    notifications as any,
   );
-  return { processor, client, raw, queue, storage, scanner };
+  return { processor, client, raw, queue, storage, scanner, notifications };
 }
 
 describe('DocumentScanProcessor.scanDocument', () => {
   const job = { tenantId: 'tenant-1', documentId: 'doc-1' };
 
-  it('marks a clean file CLEAN under the job tenant context', async () => {
-    const { processor, client, raw, storage } = build();
+  it('marks a clean file CLEAN under the job tenant context (no email)', async () => {
+    const { processor, client, raw, storage, notifications } = build();
     await processor.scanDocument(job, false);
     expect(raw.forTenant).toHaveBeenCalledWith('tenant-1');
     expect(client.document.update).toHaveBeenCalledWith({
@@ -61,10 +63,11 @@ describe('DocumentScanProcessor.scanDocument', () => {
       data: { scanStatus: 'CLEAN', scannedAt: expect.any(Date), scanSignature: null },
     });
     expect(storage.delete).not.toHaveBeenCalled();
+    expect(notifications.notify).not.toHaveBeenCalled();
   });
 
-  it('deletes the object, marks INFECTED and audits on a detection (RULE-3)', async () => {
-    const { processor, client, storage, scanner } = build();
+  it('deletes the object, marks INFECTED, audits and emails the uploader (RULE-3)', async () => {
+    const { processor, client, storage, scanner, notifications } = build();
     scanner.scan.mockResolvedValue({ clean: false, signature: 'Eicar-Signature' });
     await processor.scanDocument(job, false);
     expect(storage.delete).toHaveBeenCalledWith(docRow().storageKey);
@@ -75,6 +78,13 @@ describe('DocumentScanProcessor.scanDocument', () => {
         scannedAt: expect.any(Date),
         scanSignature: 'Eicar-Signature',
       },
+    });
+    expect(notifications.notify).toHaveBeenCalledWith({
+      tenantId: 'tenant-1',
+      template: 'DOCUMENT_BLOCKED',
+      context: { documentLabel: 'proof.pdf' },
+      dedupeKey: 'document:doc-1:blocked',
+      to: { userIds: ['user-1'] },
     });
     expect(client.auditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({

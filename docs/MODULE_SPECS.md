@@ -24,6 +24,24 @@
 > **Last synced to code:** 2026-09-23. Landed since the previous sync
 > (2026-09-22):
 >
+> - **Notifications (module 10) → 95%.** New `apps/api/src/notifications`:
+>   `NotificationDispatcher.notify()` (singleton, explicit `tenantId`, never
+>   throws into the caller) resolves recipients (users / employees / roles →
+>   active users with an email, actor excluded), writes one `QUEUED`
+>   `notification_log` row per recipient (unique dedupe key — no double
+>   emails), and enqueues a BullMQ `notifications` job; the worker renders an
+>   HTML-escaped template and sends via **AWS SES v2**, marking `SENT` with
+>   the SES message id or retrying (5×, exponential) to `FAILED`; a 10-minute
+>   sweep re-enqueues stuck rows. Wired into Leave (apply, L1/L2 approve,
+>   reject, cancel, both escalation steps), Attendance (regularization
+>   submit, approve/reject, payroll-cut-off auto-resolve) and Documents
+>   (malware-blocked upload). New Email log screen (`/notifications`, Company
+>   Admin / HR Manager retry, Auditor read-only). Migration
+>   `20260923120000_notifications` (`hrms_app` has no `DELETE` on the log).
+>   The remaining 5% is a first real delivery through SES, which needs the
+>   owner's SES setup (verified sender + credentials) — until then every send
+>   is recorded as `FAILED` with "SES_FROM_ADDRESS is unset", never dropped.
+>   New deep spec `docs/modules/10_NOTIFICATIONS.md`.
 > - **Documents (module 09) reaches 100%.** A shared `apps/api/src/documents`
 >   module now owns every user upload: MIME allow-list + magic-byte sniffing
 >   + 10 MB cap before storage, owner-typed rows (`EMPLOYEE_PROFILE` /
@@ -318,7 +336,7 @@
 | 7. Payroll Engine | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
 | 8. Statutory Compliance | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
 | 9. Documents | ✅ | `████████████████████` 100% — shared `documents` module owns every user upload (employee profile docs, leave attachments, regularization evidence): type/magic-byte/size validation, ClamAV scan before download (fail-closed, self-healing sweep), 5-min attachment-disposition presigned URLs, subject-employee visibility, audited soft delete (no `DELETE` grant). Retention purge deliberately out of V1 scope. Deep spec: `docs/modules/09_DOCUMENTS.md` |
-| 10. Notifications | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
+| 10. Notifications | 🟡 | `███████████████████░` 95% — queued, deduped, audited-retry email pipeline on AWS SES v2 (`notification_log`, BullMQ `notifications` queue, 10-min self-healing sweep, Email log screen) wired into every Leave / Attendance-regularization / Documents workflow event. Remaining: first live SES delivery, blocked on the owner's SES setup (verified sender + IAM credentials). Deep spec: `docs/modules/10_NOTIFICATIONS.md` |
 | 11. Reports & Analytics | 🔴 | `██░░░░░░░░░░░░░░░░░░` 10% (only the Dashboard aggregates exist) |
 | 12. Audit Log | 🟡 | `███████░░░░░░░░░░░░░` 35% — three append-only trails live: `login_audit_entries` (sign-in outcomes, with a daily retention-purge job), `public.audit_log` (`access.*` change events — role/status/reset/login-created), `platform.platform_audit_log` (tenant create/status/plan/renewal/price-adjust/plan-edit/breakglass — now readable + expanded). All three tables have no `UPDATE`/`DELETE` grant (true append-only). Missing: a generic audit interceptor, employee field/salary + attendance-decision coverage, an aggregation/query UI |
 | 13. Tenant Configuration | ✅ | `████████████████████` 100% — schema, onboarding defaults, `EntitlementGuard` (+ `@RequiresModule`/`@RequiresFeature`, wired onto Leave + Attendance), `attendance.service.ts` reading tenant `Shift`/`tenant_settings` instead of hardcoded constants, Settings screens (shift CRUD + attendance/general settings), and a skippable/resumable first-run setup wizard (`apps/web/src/components/setup-wizard`, `apps/api/src/tenant-config`) are all live. See `docs/TENANT_CONFIGURATION.md` |
@@ -707,7 +725,7 @@ attendance and flag LOP when the balance is short.
 | Team calendar shown before submitting | FR-LVE-007 | ✅ `GET /leave/calendar` exists; the Apply tab renders it inline (`tabs/apply.tsx`) alongside the dedicated Team Calendar tab |
 | Approved leave syncs to attendance; flags LOP | FR-LVE-008 | ✅ `isLop` computed on apply; `LeaveService` writes `AttendanceRecord.status = 'ON_LEAVE'` for the request's working days on final approval (reversed on cancel) via direct Prisma access, not a nightly job — see "Known gaps" |
 | Comp-off credit for holiday/weekend work | FR-LVE-009 | ✅ `AttendanceService.clockIn()` detects a `Holiday`/`TenantSettings.weeklyOffDays` match and calls `LeaveService.creditCompOff()`, which credits +1 day to the tenant's `isCompOff` `LeaveType` (idempotent per employee/day, opt-in per tenant) |
-| Notifications (apply/approve/reject/expiry) | FR-LVE-010 | 🔴 (see §10) |
+| Notifications (apply/approve/reject/cancel/escalation) | FR-LVE-010 | ✅ via module 10 (email); balance-expiry has no trigger yet — no year-end expiry event exists in Leave |
 | Cancel — reverses an approved non-LOP deduction | — | ✅ `cancel()`, now also logs a `LeaveLedgerEntry` |
 | Decision/escalation history, HR balance adjustments, ledger | — | ✅ new `LeaveApproval` (append-only decision/escalation log) and `LeaveLedgerEntry` (balance-movement audit trail) tables |
 
@@ -1186,40 +1204,49 @@ URL** — the API never returns a raw object key and never lists a bucket.
 
 ---
 
-## 10. Notifications 🔴
+## 10. Notifications 🟡 (95%)
 
-**Status:** not started. **Target code location:**
-`apps/api/src/notifications` (+ a BullMQ queue).
+**Status:** 🟡 95% — built and tested end to end up to the SES call; the
+first real delivery waits on the owner's AWS SES setup. Deep spec:
+`docs/modules/10_NOTIFICATIONS.md`.
+**Code:** `apps/api/src/notifications` (`NotificationDispatcher`,
+`NotificationSendProcessor`, `SesEmailSender`, `templates.ts`,
+`NotificationsController`/`Service`), `apps/web/src/pages/notifications.tsx`.
 
 ### Expectation
 
 Asynchronous email (and later push) on workflow events, sent off a
-queue — never inline in the request path.
+queue — never inline in the request path — with every send logged.
 
 ### Feature list
 
-| Trigger | SRS | Channel |
-|---|---|---|
-| Leave applied / approved / rejected / balance expiry | FR-LVE-010 | email (+ push later) |
-| Leave status changes | FR-ESS-002 | push |
-| Regularisation submitted / decided | FR-ATT-009 (implied) | email |
-| Payslip available | FR-ESS-001 (implied) | email |
-| Onboarding / overdue tasks | FR-ONB-005 | email — deferred module |
-| Data-breach notice to DPO + affected employees within 72h | NFR-PRIV-005 | email |
+| Trigger | Status |
+|---|---|
+| Leave applied → manager (L1) or HR (L2 / no manager) | ✅ |
+| Leave L1-approved → applicant + HR; final approve / reject → applicant | ✅ |
+| Leave auto-escalated (L1→L2, and L2 overdue) → HR | ✅ |
+| Leave cancelled → whoever held it (manager / HR) | ✅ |
+| Regularization submitted → manager (or HR); decided / auto-resolved → applicant | ✅ |
+| Uploaded file blocked as malware → uploader | ✅ |
+| `notification_log` + dedupe + retry/backoff + sweep + Email log UI (retry FAILED) | ✅ |
+| Real delivery through AWS SES | 🟡 code + unit-tested against the SDK; needs a verified SES sender + credentials |
+| Leave balance expiry | ⏸ no expiry event exists in Leave yet |
+| Payslip available | ⏸ Payroll (module 07) not built — will call the same dispatcher |
+| Onboarding tasks / data-breach notice | ⏸ deferred module / incident process (deep spec §1) |
+| Push / in-app, per-user preferences | ⏸ V1 scope cut (deep spec §1) |
 
 ### Happy path
 
-1. A domain event occurs (e.g. leave approved).
-2. The service enqueues a `notification.send` job (recipient, template,
-   context) on Redis/BullMQ.
-3. A worker renders the template and sends via the email provider;
-   failures retry with backoff; each send is logged.
+1. Employee applies for leave → `LeaveService.apply()` commits the request.
+2. `NotificationDispatcher.notify()` writes a `QUEUED` row for the manager
+   and enqueues a `send` job (the request returns immediately).
+3. The worker renders the template and calls SES → row `SENT` with the SES
+   message id. On error it retries with backoff, then `FAILED`; HR can
+   retry it from **Email log**.
 
-### Build notes
+### Known gaps / TODO
 
-- Templates + a `notification_log` table from day one.
-- Respect per-user preferences later; start with "always send" for the
-  short list above.
+- First live SES send (owner action — deep spec §8).
 
 ---
 

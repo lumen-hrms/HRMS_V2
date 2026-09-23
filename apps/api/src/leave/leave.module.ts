@@ -8,10 +8,12 @@ import { LeaveEscalationProcessor } from './leave-escalation.processor';
 import { LeaveAccrualProcessor } from './leave-accrual.processor';
 import { LEAVE_QUEUE } from './leave.constants';
 import { DocumentsModule } from '../documents/documents.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     DocumentsModule,
+    NotificationsModule,
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService<AppConfig, true>) => ({

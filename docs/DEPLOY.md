@@ -183,10 +183,36 @@ so a missing Redis degrades gracefully instead of hanging the whole API —
 this doc works around the bug, it doesn't fix it.)
 
 ### Optional extras
-- **S3 / document uploads.** `StorageService` fails soft without it — the
-  rest of the API is fine. To enable, add `S3_ENDPOINT` / `S3_REGION` /
-  `S3_ACCESS_KEY` / `S3_SECRET_KEY` / `S3_BUCKET` to `.env` (any
-  S3-compatible bucket, incl. Supabase Storage's S3 endpoint).
+- **S3 / document uploads.** Without it every upload 500s (the API falls
+  back to `localhost:9000`, i.e. a laptop's MinIO, which doesn't exist in
+  the container); the rest of the API is fine. Set it via **GitHub repo
+  secrets** — `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`
+  (+ optional `S3_BUCKET`, default `hrms-documents`) — which the CD
+  workflow forwards to the container on the next deploy, no SSH needed.
+  Any S3-compatible bucket works; the simplest is **Supabase Storage**
+  (Storage → create a *private* `hrms-documents` bucket; Storage → S3
+  Connection → enable + create an access key; endpoint
+  `https://<project-ref>.supabase.co/storage/v1/s3`, region = the
+  project's region). Path-style addressing is already the default
+  (`S3_FORCE_PATH_STYLE=true`). Tip: put the same values in each
+  developer's `apps/api/.env` so local uploads land in the same shared
+  bucket instead of per-laptop MinIO (the dev DB is shared, so per-laptop
+  files are unreachable from anywhere else).
+- **Email (notifications, module 10 — AWS SES v2).** Without it every
+  workflow email is recorded as `FAILED` ("SES_FROM_ADDRESS is unset") in
+  the app's **Email log** — nothing else breaks. To turn it on:
+  1. SES console, region `ap-south-1`: verify a sender identity (a domain,
+     or a single address for testing). While the account is in the SES
+     *sandbox*, mail only reaches verified recipient addresses too — request
+     production access before real users rely on it.
+  2. IAM: a user with only `ses:SendEmail` (and `ses:SendRawEmail`); create
+     an access key.
+  3. GitHub repo secrets: `SES_FROM_ADDRESS`, `SES_REGION` (optional,
+     default `ap-south-1`), `SES_AWS_ACCESS_KEY_ID`,
+     `SES_AWS_SECRET_ACCESS_KEY`, and `APP_BASE_URL` (the Vercel URL, used
+     for links in emails). The CD workflow forwards them to the container.
+  4. Redeploy, then use **Email log → Retry** on anything that failed while
+     it was unconfigured.
 - **ClamAV (document scanning, module 09).** Every upload stays
   `PENDING_SCAN` — shown as "Scanning…", not downloadable — until clamd has
   scanned it; scanning fails closed. The CD workflow

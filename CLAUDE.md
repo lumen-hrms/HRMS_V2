@@ -247,6 +247,15 @@ visibility = the subject employee's `scopeFor` scope, and audited *soft*
 delete (`hrms_app` has no `DELETE` on `documents`). Retention purge is an
 owner-approved V1 scope cut. See `docs/modules/09_DOCUMENTS.md`.
 
+**Notifications — 95%.** `apps/api/src/notifications`: a singleton
+`NotificationDispatcher.notify()` (explicit `tenantId`, never throws into
+the caller) writes deduped `notification_log` rows and enqueues a BullMQ
+`notifications` job; the worker sends via **AWS SES v2** (`SES_FROM_ADDRESS`
++ SDK default-chain credentials), retries to `FAILED`, and a sweep heals
+stuck rows. Wired into Leave, Attendance regularization and Documents; an
+Email log screen lets HR retry failures. The last 5% is a first real SES
+delivery (owner's SES setup). See `docs/modules/10_NOTIFICATIONS.md`.
+
 **Attendance — done, 100%.** Self-service clock-in/out/breaks/calendar/
 stats, shift-aware late/grace/target-hours/overtime logic, a nightly
 finalization job (holiday → weekly-off → punches → genuine absence,
