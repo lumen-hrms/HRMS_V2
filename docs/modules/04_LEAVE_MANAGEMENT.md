@@ -46,8 +46,8 @@ escalation; team calendar; LOP flagging and Attendance sync; comp-off
 credit; cancel with balance reversal; decision/escalation history; HR
 balance adjustments; a balance-movement ledger.
 
-**Out of scope / deferred:** notifications on apply/approve/reject/expiry
-(module 10, not built); a nightly attendance finalization job consuming
+**Out of scope / deferred:** a balance-expiry email (no expiry event
+exists — see §9); a nightly attendance finalization job consuming
 `ON_LEAVE` rows as authoritative input (module 05's own much larger gap,
 unaffected by anything here); leave encashment (no field models it — that's
 unrelated Full & Final Settlement prose that lives in Payroll's scope, not
@@ -419,8 +419,10 @@ What follows is scope notes, not gaps:
 - `genderRestriction` fails open on non-normalized `Employee.gender` (§6
   RULE-2) — a data-quality gap, not a bug, and deliberately not
   fail-closed.
-- No notifications on apply/approve/reject/expiry — module 10 (Notifications)
-  isn't built yet; this module's job stops at writing state + the ledger.
+- Emails on apply / approve / reject / cancel / escalation are sent via
+  module 10 (Notifications); **balance expiry** still has no email because
+  there's no expiry event — `carryForwardCap` is stored but no year-end job
+  applies it.
 
 ---
 
@@ -443,8 +445,9 @@ queue — first use of BullMQ in this repo).
 - Module 07 Payroll (future) — approved-leave days feed LOP computation
   alongside Attendance's own LOP contract (not built yet; the two data
   sources need reconciling when Payroll starts).
-- Module 10 Notifications (future) — apply/approve/reject/expiry triggers,
-  not built yet.
+- Module 10 Notifications — `LeaveService` / `LeaveEscalationProcessor`
+  call `NotificationDispatcher.notify()` on apply, L1/L2 approve, reject,
+  cancel and both escalation steps (dedupe keys `leave:<id>:…`).
 - Module 11 Reports — leave-derived registers (not built).
 - Module 12 Audit — Leave keeps its **own** append-only trails
   (`LeaveApproval`, `LeaveLedgerEntry`) rather than writing the generic

@@ -7,6 +7,7 @@ import {
 import { TenantPrismaService } from '../prisma/tenant-prisma.service';
 import { LeaveService } from '../leave/leave.service';
 import { DocumentsService } from '../documents/documents.service';
+import { HR_ROLES, NotificationDispatcher } from '../notifications/notification-dispatcher.service';
 import { recursiveReportIds as recursiveReportIdsPure } from '../common/reporting-hierarchy';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import type {
@@ -33,7 +34,30 @@ export class AttendanceService {
     private readonly tenantPrisma: TenantPrismaService,
     private readonly leave: LeaveService,
     private readonly documents: DocumentsService,
+    private readonly notifications: NotificationDispatcher,
   ) {}
+
+  /** Applicant email on any regularization decision (manual here; auto-resolve lives in the finalization processor). */
+  private async notifyRegularizationDecided(
+    req: { id: string; employeeId: string; targetDate: Date },
+    outcome: 'APPROVED' | 'REJECTED',
+    user: AuthenticatedUser,
+    comment?: string,
+  ) {
+    await this.notifications.notify({
+      tenantId: this.tenantPrisma.tenantId,
+      template: 'REGULARIZATION_DECIDED',
+      context: {
+        requestId: req.id,
+        targetDate: req.targetDate.toISOString().slice(0, 10),
+        outcome,
+        comment: comment ?? null,
+      },
+      dedupeKey: `regularization:${req.id}:decided`,
+      to: { employeeIds: [req.employeeId] },
+      actorUserId: user.sub,
+    });
+  }
 
   /** Folds each regularization's live evidence file (module 09) into the row. */
   private async withEvidence<T extends { id: string }>(rows: T[]) {
@@ -429,6 +453,31 @@ export class AttendanceService {
       });
     }
 
+    // The direct manager decides; with no manager it falls to HR (both can
+    // act on it — `assertCanDecideRegularization`).
+    const applicant = await this.tenantPrisma.client.employee.findUnique({
+      where: { id: employeeId },
+      select: { firstName: true, lastName: true, reportingManagerId: true },
+    });
+    if (applicant) {
+      await this.notifications.notify({
+        tenantId,
+        template: 'REGULARIZATION_PENDING_APPROVAL',
+        context: {
+          requestId: request.id,
+          applicantName: `${applicant.firstName} ${applicant.lastName}`,
+          targetDate: request.targetDate.toISOString().slice(0, 10),
+          reasonType: request.reasonType,
+          note: request.note,
+        },
+        dedupeKey: `regularization:${request.id}:pending`,
+        to: applicant.reportingManagerId
+          ? { employeeIds: [applicant.reportingManagerId] }
+          : { roles: HR_ROLES },
+        actorUserId: user.sub,
+      });
+    }
+
     return request;
   }
 
@@ -559,6 +608,7 @@ export class AttendanceService {
       requestId: id,
       comment,
     });
+    await this.notifyRegularizationDecided(req, 'APPROVED', user, comment);
 
     return updated;
   }
@@ -596,6 +646,7 @@ export class AttendanceService {
       requestId: id,
       comment,
     });
+    await this.notifyRegularizationDecided(req, 'REJECTED', user, comment);
 
     return updated;
   }

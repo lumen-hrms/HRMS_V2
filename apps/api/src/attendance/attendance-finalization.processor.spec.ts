@@ -42,12 +42,14 @@ function buildProcessor(tenantIds: string[], clientOverrides: Record<string, any
     tenant: { findMany: jest.fn().mockResolvedValue(tenantIds.map((id) => ({ id }))) },
   };
   const queue = { upsertJobScheduler: jest.fn() };
+  const notifications = { notify: jest.fn().mockResolvedValue(undefined) };
   const processor = new AttendanceFinalizationProcessor(
     queue as any,
     platformPrisma as any,
     {} as any,
+    notifications as any,
   );
-  return { processor, client, platformPrisma, queue };
+  return { processor, client, platformPrisma, queue, notifications };
 }
 
 describe('AttendanceFinalizationProcessor', () => {
@@ -186,7 +188,7 @@ describe('AttendanceFinalizationProcessor', () => {
     });
 
     it('auto-approves unactioned requests on the cut-off day when configured AUTO_APPROVE', async () => {
-      const { processor, client } = buildProcessor(['t1'], {
+      const { processor, client, notifications } = buildProcessor(['t1'], {
         tenantSettings: {
           findUniqueOrThrow: jest
             .fn()
@@ -201,6 +203,7 @@ describe('AttendanceFinalizationProcessor', () => {
               id: 'reg-1',
               employeeId: 'emp-1',
               attendanceRecordId: 'rec-1',
+              targetDate: new Date('2026-03-20T00:00:00Z'),
               requestedCheckInAt: null,
               requestedCheckOutAt: null,
             },
@@ -224,6 +227,18 @@ describe('AttendanceFinalizationProcessor', () => {
         }),
       );
       expect(client.auditLog.create).toHaveBeenCalled();
+      expect(notifications.notify).toHaveBeenCalledWith({
+        tenantId: 't1',
+        template: 'REGULARIZATION_DECIDED',
+        context: {
+          requestId: 'reg-1',
+          targetDate: '2026-03-20',
+          outcome: 'APPROVED',
+          auto: true,
+        },
+        dedupeKey: 'regularization:reg-1:decided',
+        to: { employeeIds: ['emp-1'] },
+      });
     });
 
     it('auto-rejects unactioned requests when configured AUTO_REJECT', async () => {
@@ -237,9 +252,14 @@ describe('AttendanceFinalizationProcessor', () => {
           findUniqueOrThrow: jest.fn().mockResolvedValue({ unactionedBehavior: 'AUTO_REJECT' }),
         },
         regularizationRequest: {
-          findMany: jest
-            .fn()
-            .mockResolvedValue([{ id: 'reg-1', employeeId: 'emp-1', attendanceRecordId: 'rec-1' }]),
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 'reg-1',
+              employeeId: 'emp-1',
+              attendanceRecordId: 'rec-1',
+              targetDate: new Date('2026-03-20T00:00:00Z'),
+            },
+          ]),
           update: jest.fn().mockResolvedValue(undefined),
         },
       });

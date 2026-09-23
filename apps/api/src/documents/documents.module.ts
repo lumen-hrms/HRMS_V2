@@ -7,9 +7,11 @@ import { DocumentsService } from './documents.service';
 import { DocumentScanProcessor } from './document-scan.processor';
 import { ClamAvScanner } from './clamav.scanner';
 import { DOCUMENTS_QUEUE } from './documents.constants';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
+    NotificationsModule,
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService<AppConfig, true>) => ({

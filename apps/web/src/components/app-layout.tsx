@@ -7,6 +7,7 @@ import {
   Building2,
   Clock,
   ShieldCheck,
+  Mail,
   UserCog,
   LogOut,
   Moon,
@@ -50,6 +51,12 @@ const NAV: { to: string; label: string; icon: typeof LayoutDashboard; end?: bool
     to: '/access',
     label: 'Identity & Access',
     icon: ShieldCheck,
+    roles: ['COMPANY_ADMIN', 'HR_MANAGER', 'AUDITOR'],
+  },
+  {
+    to: '/notifications',
+    label: 'Email log',
+    icon: Mail,
     roles: ['COMPANY_ADMIN', 'HR_MANAGER', 'AUDITOR'],
   },
 ];

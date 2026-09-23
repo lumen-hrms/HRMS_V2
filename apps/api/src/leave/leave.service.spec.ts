@@ -4,6 +4,14 @@ import type { AuthenticatedUser } from '../common/decorators/current-user.decora
 
 /** Nested relations `toRequestDto` always reads off a LeaveRequest row —
  *  every fake `leaveRequest.create`/`update` below must return these. */
+/** Scalars a real `update` returns even when `data` doesn't touch them. */
+const FAKE_REQUEST_SCALARS = {
+  startDate: new Date('2026-01-05'),
+  endDate: new Date('2026-01-07'),
+  days: 3,
+  reason: null,
+};
+
 const FAKE_REQUEST_RELS = {
   employee: { id: 'emp-1', firstName: 'Test', lastName: 'User', department: null },
   leaveType: { id: 'lt-1', name: 'Test Type', code: 'TT', colorToken: '#000000' },
@@ -32,7 +40,12 @@ function buildFakeTenantPrisma(overrides: Record<string, any> = {}) {
     },
     leaveRequest: {
       create: jest.fn((args: any) => ({ id: 'req-1', ...args.data, ...FAKE_REQUEST_RELS })),
-      update: jest.fn((args: any) => ({ id: args.where.id, ...args.data, ...FAKE_REQUEST_RELS })),
+      update: jest.fn((args: any) => ({
+        id: args.where.id,
+        ...FAKE_REQUEST_SCALARS,
+        ...args.data,
+        ...FAKE_REQUEST_RELS,
+      })),
       findUniqueOrThrow: jest.fn(),
       groupBy: jest.fn().mockResolvedValue([]),
     },
@@ -69,6 +82,10 @@ function buildFakeDocuments(overrides: Record<string, any> = {}) {
   } as any;
 }
 
+function buildFakeNotifications(): any {
+  return { notify: jest.fn().mockResolvedValue(undefined) };
+}
+
 function buildFakeQueue() {
   return { add: jest.fn() } as any;
 }
@@ -97,7 +114,12 @@ describe('LeaveService', () => {
           findUnique: jest.fn().mockResolvedValue({ accrued: 2, used: 0 }), // only 2 days available
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
 
       const result = await service.apply(
         { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-07' }, // 3 inclusive days
@@ -118,7 +140,12 @@ describe('LeaveService', () => {
           findUnique: jest.fn().mockResolvedValue({ accrued: 18, used: 2 }),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
 
       const result = await service.apply(
         { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-05' }, // 1 day
@@ -132,7 +159,12 @@ describe('LeaveService', () => {
 
     it('rejects an end date before the start date', async () => {
       const tenantPrisma = buildFakeTenantPrisma();
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
       await expect(
         service.apply(
           { leaveTypeId: 'lt-1', startDate: '2026-01-10', endDate: '2026-01-05' },
@@ -143,7 +175,12 @@ describe('LeaveService', () => {
 
     it('rejects when the caller has no linked employee record', async () => {
       const tenantPrisma = buildFakeTenantPrisma();
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
       await expect(
         service.apply(
           { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-05' },
@@ -172,7 +209,12 @@ describe('LeaveService', () => {
           }),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
 
       await expect(
         service.apply(
@@ -201,7 +243,12 @@ describe('LeaveService', () => {
             .mockResolvedValue({ id: 'lt-1', name: 'Earned Leave', minNoticeDays: 30 }),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
 
       await expect(
         service.apply(
@@ -234,7 +281,12 @@ describe('LeaveService', () => {
           }),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
 
       await expect(
         service.apply(
@@ -266,7 +318,12 @@ describe('LeaveService', () => {
           }),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
 
       const result = await service.apply(
         { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-05' },
@@ -293,12 +350,18 @@ describe('LeaveService', () => {
           }),
           update: jest.fn((args: any) => ({
             id: args.where.id,
+            ...FAKE_REQUEST_SCALARS,
             ...args.data,
             ...FAKE_REQUEST_RELS,
           })),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
 
       // A random employee (not the manager) must be rejected.
       await expect(
@@ -329,12 +392,18 @@ describe('LeaveService', () => {
           }),
           update: jest.fn((args: any) => ({
             id: args.where.id,
+            ...FAKE_REQUEST_SCALARS,
             ...args.data,
             ...FAKE_REQUEST_RELS,
           })),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
 
       // A Line Manager cannot give L2 approval.
       await expect(
@@ -371,12 +440,18 @@ describe('LeaveService', () => {
           }),
           update: jest.fn((args: any) => ({
             id: args.where.id,
+            ...FAKE_REQUEST_SCALARS,
             ...args.data,
             ...FAKE_REQUEST_RELS,
           })),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
 
       await service.approve('req-1', user({ role: 'COMPANY_ADMIN' }));
       expect(tenantPrisma.client.leaveBalance.upsert).not.toHaveBeenCalled();
@@ -404,12 +479,18 @@ describe('LeaveService', () => {
           }),
           update: jest.fn((args: any) => ({
             id: args.where.id,
+            ...FAKE_REQUEST_SCALARS,
             ...args.data,
             ...FAKE_REQUEST_RELS,
           })),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
 
       const result = await service.cancel('req-1', user());
       expect(result.status).toBe('CANCELLED');
@@ -431,7 +512,12 @@ describe('LeaveService', () => {
           findUniqueOrThrow: jest.fn(),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
 
       await service.creditCompOff('emp-1', new Date('2026-01-10'), 'Republic Day');
       expect(tenantPrisma.client.leaveBalance.upsert).not.toHaveBeenCalled();
@@ -454,7 +540,12 @@ describe('LeaveService', () => {
             .mockResolvedValueOnce({ id: 'ledger-1' }), // second call: already credited
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
 
       await service.creditCompOff('emp-1', new Date('2026-01-10'), 'Republic Day');
       expect(tenantPrisma.client.leaveBalance.upsert).toHaveBeenCalledTimes(1);
@@ -478,7 +569,12 @@ describe('LeaveService', () => {
             .mockResolvedValue([{ id: 'target-emp', reportingManagerId: 'someone-else' }]),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
 
       await expect(
         service.getBalances(
@@ -498,7 +594,12 @@ describe('LeaveService', () => {
         },
         leaveBalance: { findMany: jest.fn().mockResolvedValue([]) },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
 
       await expect(
         service.getBalances(
@@ -519,7 +620,12 @@ describe('LeaveService', () => {
         },
         leaveBalance: { findMany: jest.fn().mockResolvedValue([]) },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
 
       await expect(
         service.getBalances(
@@ -557,7 +663,12 @@ describe('LeaveService', () => {
         leaveRequest: { groupBy: jest.fn().mockResolvedValue([]) },
         leaveLedgerEntry: { groupBy: jest.fn().mockResolvedValue([]) },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
 
       const result = await service.teamBalances(
         user({ role: 'LINE_MANAGER', employeeId: 'mgr-1' }),
@@ -576,7 +687,12 @@ describe('LeaveService', () => {
         employee: { findMany },
         leaveRequest: { findMany: jest.fn().mockResolvedValue([]) },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
 
       await service.teamCalendar(
         user({ role: 'LINE_MANAGER', employeeId: 'mgr-1' }),
@@ -617,7 +733,12 @@ describe('LeaveService', () => {
           findMany: jest.fn().mockResolvedValue([{ date: new Date('2026-01-07') }]),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
 
       const result = await service.apply(
         { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-10' },
@@ -649,7 +770,12 @@ describe('LeaveService', () => {
           }),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
 
       const result = await service.apply(
         { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-05' },
@@ -680,7 +806,12 @@ describe('LeaveService', () => {
         },
       });
       const queue = buildFakeQueue();
-      const service = new LeaveService(tenantPrisma as any, buildFakeDocuments(), queue);
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        queue,
+        buildFakeNotifications(),
+      );
 
       const result = await service.apply(
         { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-05' },
@@ -717,6 +848,7 @@ describe('LeaveService', () => {
         withRequest({ id: 'req-1', employeeId: 'emp-1', status: 'PENDING_L1' }) as any,
         documents,
         buildFakeQueue(),
+        buildFakeNotifications(),
       );
 
       const dto = await service.attach('req-1', pdf, user());
@@ -741,6 +873,7 @@ describe('LeaveService', () => {
         withRequest({ id: 'req-1', employeeId: 'emp-1', status: 'APPROVED' }) as any,
         documents,
         buildFakeQueue(),
+        buildFakeNotifications(),
       );
       await service.attach('req-1', pdf, user({ role: 'HR_MANAGER', employeeId: 'emp-hr' }));
       expect(documents.upload).toHaveBeenCalled();
@@ -752,6 +885,7 @@ describe('LeaveService', () => {
         withRequest({ id: 'req-1', employeeId: 'emp-2', status: 'PENDING_L1' }) as any,
         documents,
         buildFakeQueue(),
+        buildFakeNotifications(),
       );
       await expect(
         service.attach('req-1', pdf, user({ role: 'LINE_MANAGER' })),
@@ -765,11 +899,171 @@ describe('LeaveService', () => {
         withRequest({ id: 'req-1', employeeId: 'emp-1', status }) as any,
         documents,
         buildFakeQueue(),
+        buildFakeNotifications(),
       );
       await expect(service.attach('req-1', pdf, user())).rejects.toBeInstanceOf(
         BadRequestException,
       );
       expect(documents.upload).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('email notifications (module 10)', () => {
+    function serviceFor(request: Record<string, any>, employee?: Record<string, any>) {
+      const notifications = buildFakeNotifications();
+      const rels = {
+        ...FAKE_REQUEST_RELS,
+        employee: { ...FAKE_REQUEST_RELS.employee, reportingManagerId: 'mgr-1' },
+      };
+      const tenantPrisma = buildFakeTenantPrisma({
+        employee: {
+          findMany: jest.fn().mockResolvedValue([]),
+          findUniqueOrThrow: jest
+            .fn()
+            .mockResolvedValue(employee ?? { id: 'emp-1', reportingManagerId: 'mgr-1' }),
+        },
+        leaveBalance: {
+          findUnique: jest.fn().mockResolvedValue({ accrued: 18, used: 0 }),
+          findMany: jest.fn(),
+          upsert: jest.fn().mockResolvedValue({ accrued: 18, used: 0 }),
+        },
+        leaveRequest: {
+          create: jest.fn((args: any) => ({ id: 'req-1', ...args.data, ...rels })),
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            id: 'req-1',
+            employeeId: 'emp-1',
+            leaveTypeId: 'lt-1',
+            days: 2,
+            isLop: false,
+            startDate: new Date('2026-01-05'),
+            endDate: new Date('2026-01-06'),
+            employee: { reportingManagerId: 'mgr-1' },
+            ...request,
+          }),
+          update: jest.fn((args: any) => ({
+            id: args.where.id,
+            ...FAKE_REQUEST_SCALARS,
+            ...args.data,
+            ...rels,
+          })),
+        },
+      });
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        notifications,
+      );
+      return { service, notifications };
+    }
+
+    const apply = { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-06' };
+
+    it('apply → emails the reporting manager at L1, excluding the applicant', async () => {
+      const { service, notifications } = serviceFor({});
+      await service.apply(apply, user());
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tenant-1',
+          template: 'LEAVE_PENDING_APPROVAL',
+          dedupeKey: 'leave:req-1:pending:L1',
+          to: { employeeIds: ['mgr-1'] },
+          actorUserId: 'user-1',
+          context: expect.objectContaining({
+            level: 1,
+            applicantName: 'Test User',
+            leaveTypeName: 'Test Type',
+          }),
+        }),
+      );
+    });
+
+    it('apply with no manager → emails HR (Company Admin + HR Manager) at L2', async () => {
+      const { service, notifications } = serviceFor({}, { id: 'emp-1', reportingManagerId: null });
+      await service.apply(apply, user());
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          template: 'LEAVE_PENDING_APPROVAL',
+          dedupeKey: 'leave:req-1:pending:L2',
+          to: { roles: ['COMPANY_ADMIN', 'HR_MANAGER'] },
+          context: expect.objectContaining({ level: 2 }),
+        }),
+      );
+    });
+
+    it('L1 approval → tells the applicant and hands off to HR', async () => {
+      const { service, notifications } = serviceFor({ status: 'PENDING_L1' });
+      await service.approve('req-1', user({ employeeId: 'mgr-1', role: 'LINE_MANAGER' }), {
+        comment: 'ok',
+      });
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          template: 'LEAVE_DECIDED',
+          dedupeKey: 'leave:req-1:decided:L1_APPROVED',
+          to: { employeeIds: ['emp-1'] },
+          context: expect.objectContaining({ outcome: 'L1_APPROVED', comment: 'ok' }),
+        }),
+      );
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          template: 'LEAVE_PENDING_APPROVAL',
+          dedupeKey: 'leave:req-1:pending:L2',
+          to: { roles: ['COMPANY_ADMIN', 'HR_MANAGER'] },
+        }),
+      );
+    });
+
+    it('final approval → tells the applicant', async () => {
+      const { service, notifications } = serviceFor({ status: 'PENDING_L2' });
+      await service.approve('req-1', user({ role: 'HR_MANAGER', employeeId: 'emp-hr' }));
+      expect(notifications.notify).toHaveBeenCalledTimes(1);
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          template: 'LEAVE_DECIDED',
+          dedupeKey: 'leave:req-1:decided:APPROVED',
+          to: { employeeIds: ['emp-1'] },
+          context: expect.objectContaining({ outcome: 'APPROVED' }),
+        }),
+      );
+    });
+
+    it('rejection → tells the applicant, with the comment', async () => {
+      const { service, notifications } = serviceFor({ status: 'PENDING_L1' });
+      await service.reject('req-1', user({ employeeId: 'mgr-1', role: 'LINE_MANAGER' }), {
+        comment: 'Busy week',
+      });
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          template: 'LEAVE_DECIDED',
+          dedupeKey: 'leave:req-1:decided:REJECTED',
+          context: expect.objectContaining({ outcome: 'REJECTED', comment: 'Busy week' }),
+        }),
+      );
+    });
+
+    it('a failed authorization sends nothing', async () => {
+      const { service, notifications } = serviceFor({ status: 'PENDING_L2' });
+      await expect(
+        service.approve('req-1', user({ employeeId: 'mgr-1', role: 'LINE_MANAGER' })),
+      ).rejects.toThrow(ForbiddenException);
+      expect(notifications.notify).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['PENDING_L1', { employeeIds: ['mgr-1'] }, false],
+      ['PENDING_L2', { roles: ['COMPANY_ADMIN', 'HR_MANAGER'] }, false],
+      ['APPROVED', { roles: ['COMPANY_ADMIN', 'HR_MANAGER'] }, true],
+    ])('cancelling a %s request tells whoever held it', async (status, to, wasApproved) => {
+      const { service, notifications } = serviceFor({ status });
+      await service.cancel('req-1', user());
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          template: 'LEAVE_CANCELLED',
+          dedupeKey: 'leave:req-1:cancelled',
+          to,
+          context: expect.objectContaining({ wasApproved }),
+        }),
+      );
     });
   });
 });

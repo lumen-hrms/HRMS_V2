@@ -6,6 +6,7 @@ import { TenantPrismaClientProvider } from '../prisma/tenant-prisma-client.provi
 import { withTenantContext } from '../prisma/with-tenant-context';
 import { StorageService } from '../storage/storage.service';
 import { ClamAvScanner } from './clamav.scanner';
+import { NotificationDispatcher } from '../notifications/notification-dispatcher.service';
 import { DOCUMENTS_QUEUE } from './documents.constants';
 import { SCAN_JOB_OPTIONS, scanJobId } from './documents.service';
 
@@ -42,6 +43,7 @@ export class DocumentScanProcessor extends WorkerHost implements OnModuleInit {
     private readonly tenantPrismaRaw: TenantPrismaClientProvider,
     private readonly storage: StorageService,
     private readonly scanner: ClamAvScanner,
+    private readonly notifications: NotificationDispatcher,
   ) {
     super();
   }
@@ -118,6 +120,13 @@ export class DocumentScanProcessor extends WorkerHost implements OnModuleInit {
       },
     });
     this.logger.warn(`Document ${documentId} (tenant ${tenantId}) INFECTED: ${result.signature}`);
+    await this.notifications.notify({
+      tenantId,
+      template: 'DOCUMENT_BLOCKED',
+      context: { documentLabel: doc.label },
+      dedupeKey: `document:${doc.id}:blocked`,
+      to: { userIds: [doc.uploadedById] },
+    });
   }
 
   async sweep(now: Date) {

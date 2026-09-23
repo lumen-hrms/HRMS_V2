@@ -174,6 +174,10 @@ Mirrors the tenant auth flow (own bcrypt/lockout/MFA logic against `platform_adm
 - `getDownloadUrl()` issues a 5-minute presigned URL with `Content-Disposition: attachment` only for a visible, non-deleted, `CLEAN` document (409 scanning / 410 infected), audit row written first. Visibility mirrors `scopeFor` (self / recursive subtree / tenant) via the shared `recursiveReportIds`.
 - Delete is soft (`deletedAt`); `hrms_app` has no `DELETE` grant on `documents`.
 
+### `notifications/` — `NotificationDispatcher`, `NotificationSendProcessor`, `SesEmailSender`, `NotificationsController` (module 10)
+- `NotificationDispatcher.notify({ tenantId, template, context, dedupeKey, to, actorUserId })` is a singleton (not request-scoped) so services *and* BullMQ processors call it identically; it queries through `withTenantContext` on `hrms_app`. Recipients (`userIds` / `employeeIds` / `roles`) resolve to active users with an email, minus the actor; one `notification_log` row per recipient via `createMany({ skipDuplicates })` on the `(tenant_id, dedupe_key, recipient_user_id)` unique index, then a `send` job each. It swallows its own errors — a mail problem never fails the caller's request.
+- `NotificationSendProcessor` renders `templates.ts` (HTML-escaped) and sends through `SesEmailSender` (`@aws-sdk/client-sesv2`); `SENT` + SES message id, or retry → `FAILED`. A 10-minute `sweep` re-enqueues stale `QUEUED` rows. `GET /notifications/log` + `POST /notifications/log/:id/retry` back the Email log screen. `hrms_app` has no `DELETE` on the log.
+
 ### `leave/` — `LeaveService`, `LeaveController`
 - Leave types (`LeaveType`) carry `annualQuota` and `carryForwardCap`; `initializeYearlyBalances()` upserts a `LeaveBalance` row per employee per year.
 - `apply()` computes an inclusive calendar-day count (documented as a deliberate MVP simplification — no working-day/holiday calendar yet), checks `accrued - used` against the requested days, and flags `isLop` (loss-of-pay) if the balance is insufficient — but still creates the request rather than blocking it, so an LOP leave request still needs an approval decision.
