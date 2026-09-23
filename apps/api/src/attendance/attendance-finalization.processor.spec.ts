@@ -53,10 +53,13 @@ function buildProcessor(tenantIds: string[], clientOverrides: Record<string, any
 }
 
 describe('AttendanceFinalizationProcessor', () => {
-  it('registers both daily repeatable jobs on module init', async () => {
+  it('starts its worker and registers both daily repeatable jobs at bootstrap', async () => {
     const { processor, queue } = buildProcessor([]);
-    await processor.onModuleInit();
+    const run = jest.fn().mockResolvedValue(undefined);
+    (processor as any)._worker = { run };
+    await processor.onApplicationBootstrap();
 
+    expect(run).toHaveBeenCalled();
     expect(queue.upsertJobScheduler).toHaveBeenCalledWith(
       'attendance-finalize-daily',
       { pattern: '0 2 * * *' },
@@ -67,6 +70,22 @@ describe('AttendanceFinalizationProcessor', () => {
       { pattern: '0 3 * * *' },
       { name: 'resolve-cutoff' },
     );
+  });
+
+  it('with background workers disabled: neither starts the worker nor schedules anything', async () => {
+    const previous = process.env.WORKERS_ENABLED;
+    process.env.WORKERS_ENABLED = 'false';
+    try {
+      const { processor, queue } = buildProcessor([]);
+      const run = jest.fn();
+      (processor as any)._worker = { run };
+      await processor.onApplicationBootstrap();
+      expect(run).not.toHaveBeenCalled();
+      expect(queue.upsertJobScheduler).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.WORKERS_ENABLED;
+      else process.env.WORKERS_ENABLED = previous;
+    }
   });
 
   describe('runFinalization()', () => {

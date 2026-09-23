@@ -1,6 +1,7 @@
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { Job, Queue } from 'bullmq';
+import { PAUSED_WORKER, startBackgroundWorker } from '../common/background-workers';
 import { PlatformPrismaClientProvider } from '../prisma/platform-prisma-client.provider';
 import { PLATFORM_ADMIN_QUEUE } from './platform-admin.constants';
 import { PlatformAdminService } from './platform-admin.service';
@@ -16,8 +17,8 @@ import { PlatformAdminService } from './platform-admin.service';
  *   EXPIRED so a forgotten grant doesn't sit "active" past its TTL.
  */
 @Injectable()
-@Processor(PLATFORM_ADMIN_QUEUE)
-export class PlatformScheduledJobsProcessor extends WorkerHost implements OnModuleInit {
+@Processor(PLATFORM_ADMIN_QUEUE, PAUSED_WORKER)
+export class PlatformScheduledJobsProcessor extends WorkerHost implements OnApplicationBootstrap {
   private readonly logger = new Logger(PlatformScheduledJobsProcessor.name);
 
   constructor(
@@ -28,17 +29,21 @@ export class PlatformScheduledJobsProcessor extends WorkerHost implements OnModu
     super();
   }
 
-  async onModuleInit() {
-    await this.queue.upsertJobScheduler(
-      'renew-subscriptions-daily',
-      { pattern: '0 3 * * *' },
-      { name: 'renew-subscriptions' },
-    );
-    await this.queue.upsertJobScheduler(
-      'expire-breakglass-hourly',
-      { pattern: '0 * * * *' },
-      { name: 'expire-breakglass' },
-    );
+  /** Starts the worker + registers its schedule only where background workers
+   *  are enabled (`common/background-workers.ts`). */
+  async onApplicationBootstrap() {
+    await startBackgroundWorker(this, async () => {
+      await this.queue.upsertJobScheduler(
+        'renew-subscriptions-daily',
+        { pattern: '0 3 * * *' },
+        { name: 'renew-subscriptions' },
+      );
+      await this.queue.upsertJobScheduler(
+        'expire-breakglass-hourly',
+        { pattern: '0 * * * *' },
+        { name: 'expire-breakglass' },
+      );
+    });
   }
 
   async process(job: Job): Promise<void> {

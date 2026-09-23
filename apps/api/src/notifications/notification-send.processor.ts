@@ -1,7 +1,8 @@
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Job, Queue } from 'bullmq';
+import { PAUSED_WORKER, startBackgroundWorker } from '../common/background-workers';
 import type { AppConfig } from '../config/configuration';
 import { PlatformPrismaClientProvider } from '../prisma/platform-prisma-client.provider';
 import { TenantPrismaClientProvider } from '../prisma/tenant-prisma-client.provider';
@@ -30,8 +31,8 @@ const STALE_QUEUED_MS = 10 * 60 * 1000;
  * schema (for the From line / footer).
  */
 @Injectable()
-@Processor(NOTIFICATIONS_QUEUE)
-export class NotificationSendProcessor extends WorkerHost implements OnModuleInit {
+@Processor(NOTIFICATIONS_QUEUE, PAUSED_WORKER)
+export class NotificationSendProcessor extends WorkerHost implements OnApplicationBootstrap {
   private readonly logger = new Logger(NotificationSendProcessor.name);
   private readonly appBaseUrl: string;
 
@@ -46,12 +47,16 @@ export class NotificationSendProcessor extends WorkerHost implements OnModuleIni
     this.appBaseUrl = config.get('appBaseUrl', { infer: true });
   }
 
-  async onModuleInit() {
-    await this.queue.upsertJobScheduler(
-      'notifications-sweep',
-      { pattern: '*/10 * * * *' },
-      { name: 'sweep' },
-    );
+  /** Starts the worker + registers its schedule only where background workers
+   *  are enabled (`common/background-workers.ts`). */
+  async onApplicationBootstrap() {
+    await startBackgroundWorker(this, async () => {
+      await this.queue.upsertJobScheduler(
+        'notifications-sweep',
+        { pattern: '*/10 * * * *' },
+        { name: 'sweep' },
+      );
+    });
   }
 
   async process(job: Job): Promise<void> {

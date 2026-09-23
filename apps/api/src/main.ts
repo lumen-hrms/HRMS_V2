@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
+import { backgroundWorkersEnabled } from './common/background-workers';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -28,6 +29,12 @@ async function bootstrap() {
   await app.listen(port);
   // eslint-disable-next-line no-console
   console.log(`HRMS API listening on http://localhost:${port}/api`);
+  // eslint-disable-next-line no-console
+  console.log(
+    backgroundWorkersEnabled()
+      ? 'Background workers: ON (emails, document scans, scheduled jobs run here)'
+      : 'Background workers: OFF (NODE_ENV=development) — set WORKERS_ENABLED=true to run them here',
+  );
 }
 
 bootstrap();

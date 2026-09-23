@@ -23,9 +23,12 @@ describe('LoginAuditRetentionProcessor', () => {
     return { processor, deleteMany, fakeQueue, fakePlatformPrisma };
   }
 
-  it('registers a daily repeatable job on module init', async () => {
+  it('starts its worker and registers a daily repeatable job at bootstrap', async () => {
     const { processor, fakeQueue } = buildProcessor([]);
-    await processor.onModuleInit();
+    const run = jest.fn().mockResolvedValue(undefined);
+    (processor as any)._worker = { run };
+    await processor.onApplicationBootstrap();
+    expect(run).toHaveBeenCalled();
     expect(fakeQueue.upsertJobScheduler).toHaveBeenCalledWith(
       'login-audit-retention-daily',
       { pattern: '0 2 * * *' },
