@@ -213,6 +213,11 @@ this doc works around the bug, it doesn't fix it.)
      for links in emails). The CD workflow forwards them to the container.
   4. Redeploy, then use **Email log → Retry** on anything that failed while
      it was unconfigured.
+  5. Firebase console → Authentication → Settings → **Authorized domains**:
+     add your app domain (e.g. `www.lumenhrms.work`). Password-reset and
+     invite emails (also sent via SES) use it as the "back to sign-in" link
+     after a password is set; without it they still work, just without the
+     redirect.
 - **ClamAV (document scanning, module 09).** Every upload stays
   `PENDING_SCAN` — shown as "Scanning…", not downloadable — until clamd has
   scanned it; scanning fails closed. The CD workflow

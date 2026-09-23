@@ -1,12 +1,12 @@
 import * as React from 'react';
-import { sendPasswordResetEmail } from 'firebase/auth';
 import { Building2, KeyRound, LogOut, Mail, ShieldCheck, UserRound } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/context/auth-context';
-import { auth } from '@/lib/firebase';
+import { getTenantSubdomain, requestPasswordReset } from '@/lib/api';
+
 import { accessApi } from '@/lib/access/client';
 import type { AccessSelf } from '@/lib/access/types';
 import { RoleBadge, UserStatusBadge, fmtDateTimeIST, fmtDateIST, fmtRelative, humanizeEmail } from '../shared';
@@ -43,7 +43,9 @@ export function MyAccountTab() {
     if (!user) return;
     setBusy(true);
     try {
-      await sendPasswordResetEmail(auth, user.email);
+      const subdomain = getTenantSubdomain();
+      if (!subdomain) throw new Error('No workspace selected');
+      await requestPasswordReset(subdomain, user.email);
       toast({
         title: 'Password reset email sent to you',
         description: `Check ${user.email} for the link.`,

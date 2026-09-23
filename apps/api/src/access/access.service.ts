@@ -11,7 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma, type LoginOutcome } from '@prisma/client';
 import type * as admin from 'firebase-admin';
 import { FIREBASE_AUTH } from '../firebase/firebase-admin.provider';
-import { sendFirebasePasswordResetEmail } from '../firebase/send-reset-email';
+import { AuthEmailService } from '../notifications/auth-email.service';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service';
 import type { AppConfig } from '../config/configuration';
 import type { AppRole } from '../common/decorators/roles.decorator';
@@ -64,6 +64,7 @@ export class AccessService {
     private readonly tenantPrisma: TenantPrismaService,
     private readonly config: ConfigService<AppConfig, true>,
     @Inject(FIREBASE_AUTH) private readonly firebaseAuth: admin.auth.Auth,
+    private readonly authEmails: AuthEmailService,
   ) {}
 
   // ---- Users -------------------------------------------------------------
@@ -435,14 +436,16 @@ export class AccessService {
   }
 
   /**
-   * Admin-triggered password reset for ANOTHER user — sends Firebase's hosted
-   * reset email (the Admin SDK can only generate a link, not send it).
+   * Admin-triggered password reset for ANOTHER user — a Firebase reset link,
+   * emailed from the workspace's own domain via SES (module 10's
+   * AuthEmailService; falls back to Firebase's own email if SES isn't set up).
    */
-  private sendResetEmail(email: string): Promise<void> {
-    return sendFirebasePasswordResetEmail(
-      this.config.get('firebase.webApiKey', { infer: true }),
+  private async sendResetEmail(email: string): Promise<void> {
+    await this.authEmails.sendPasswordReset({
       email,
-    );
+      kind: 'ADMIN_RESET',
+      tenantId: this.tenantPrisma.tenantId,
+    });
   }
 }
 

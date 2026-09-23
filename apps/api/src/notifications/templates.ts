@@ -95,7 +95,7 @@ function dayLabel(days: number): string {
 }
 
 /** Plain paragraphs + key/value rows + one call-to-action link. */
-interface Body {
+export interface EmailBody {
   subject: string;
   intro: string;
   rows: [string, string][];
@@ -106,7 +106,7 @@ interface Body {
 // `context` comes back from a JSON column, so it's typed loosely here; the
 // typed `TemplateContexts` contract is enforced where rows are *written*
 // (NotificationDispatcher.notify).
-function body(template: NotificationTemplate, ctx: any): Body {
+function body(template: NotificationTemplate, ctx: any): EmailBody {
   switch (template) {
     case 'LEAVE_PENDING_APPROVAL':
       return {
@@ -206,8 +206,16 @@ export function render(
   context: unknown,
   opts: RenderOptions,
 ): RenderedEmail {
-  const b = body(template, context);
-  const url = `${opts.appBaseUrl}${b.cta.path}`;
+  return renderEmail(body(template, context), opts);
+}
+
+/**
+ * The shared email shell — also used by the auth emails (password reset /
+ * workspace invite, `auth-email.templates.ts`). `cta.path` is appended to
+ * `appBaseUrl` unless it's already an absolute URL (a Firebase action link).
+ */
+export function renderEmail(b: EmailBody, opts: RenderOptions): RenderedEmail {
+  const url = /^https?:\/\//.test(b.cta.path) ? b.cta.path : `${opts.appBaseUrl}${b.cta.path}`;
   const footer = `Sent by ${opts.tenantName} via Lumen HRMS. You're receiving this because of a request in your HR workspace.`;
 
   const text = [
