@@ -1091,9 +1091,15 @@ payslip PDFs, and a bank disbursement file. Two hard invariants:
 
 ## 8. Statutory Compliance 🔴
 
-**Status:** not started. Table-stakes for the Indian market; filing
-errors expose customers to penalties. **Generate files for portal upload
-— do not build live e-filing APIs for V1** (`CLAUDE.md` deferred list).
+**Deep spec:** `docs/modules/08_STATUTORY_COMPLIANCE.md`
+**Status:** not started, deep spec written 2026-09-23. Table-stakes for
+the Indian market; filing errors expose customers to penalties.
+**Generate files for portal upload — do not build live e-filing APIs for
+V1** (`CLAUDE.md` deferred list). **Hard prerequisite: module 7 Payroll
+Engine (also 0%)** — EPF/ESI/Income-Tax features all consume only
+processed payroll runs; only the POSH sub-module (ICC management,
+complaint workflow, annual report) is buildable independently of Payroll.
+See the deep spec's §0.
 **Target code location:** `apps/api/src/compliance`
 
 ### Expectation
