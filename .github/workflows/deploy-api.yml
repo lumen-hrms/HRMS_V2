@@ -17,10 +17,21 @@ jobs:
     steps:
       - name: SSH and redeploy
         uses: appleboy/ssh-action@v1.0.3
+        # Object storage (module 09 documents) comes from repo secrets so the
+        # box's .env never needs hand-editing — e.g. Supabase Storage's S3
+        # endpoint (docs/DEPLOY.md). Each is only passed to the container
+        # when set; unset ones fall back to apps/api/.env / code defaults.
+        env:
+          S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+          S3_REGION: ${{ secrets.S3_REGION }}
+          S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+          S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2SSHKEY }}
+          envs: S3_ENDPOINT,S3_REGION,S3_ACCESS_KEY,S3_SECRET_KEY,S3_BUCKET
           script: |
             set -e
             cd ~/HRMS_V2
@@ -32,10 +43,18 @@ jobs:
             docker stop clamav >/dev/null 2>&1 || true
             DOCKER_BUILDKIT=0 docker build -f apps/api/Dockerfile -t hrms-api .
 
+            # Only forward S3_* secrets that are actually set — an empty
+            # -e would override a working value from apps/api/.env.
+            s3_env=""
+            for v in S3_ENDPOINT S3_REGION S3_ACCESS_KEY S3_SECRET_KEY S3_BUCKET; do
+              val="${!v}"
+              if [ -n "$val" ]; then s3_env="$s3_env -e $v=$val"; fi
+            done
+
             docker rm -f hrms-api || true
             docker run -d --name hrms-api --restart unless-stopped \
               --env-file apps/api/.env -e CLAMAV_HOST=clamav -e CLAMAV_PORT=3310 \
-              -p 80:3000 --network hrms hrms-api
+              $s3_env -p 80:3000 --network hrms hrms-api
 
             # Boot time on this burstable, swap-backed box varies (seconds to
             # a minute+), so poll instead of a fixed sleep. Dump the API's own

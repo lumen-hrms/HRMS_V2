@@ -183,10 +183,21 @@ so a missing Redis degrades gracefully instead of hanging the whole API —
 this doc works around the bug, it doesn't fix it.)
 
 ### Optional extras
-- **S3 / document uploads.** `StorageService` fails soft without it — the
-  rest of the API is fine. To enable, add `S3_ENDPOINT` / `S3_REGION` /
-  `S3_ACCESS_KEY` / `S3_SECRET_KEY` / `S3_BUCKET` to `.env` (any
-  S3-compatible bucket, incl. Supabase Storage's S3 endpoint).
+- **S3 / document uploads.** Without it every upload 500s (the API falls
+  back to `localhost:9000`, i.e. a laptop's MinIO, which doesn't exist in
+  the container); the rest of the API is fine. Set it via **GitHub repo
+  secrets** — `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`
+  (+ optional `S3_BUCKET`, default `hrms-documents`) — which the CD
+  workflow forwards to the container on the next deploy, no SSH needed.
+  Any S3-compatible bucket works; the simplest is **Supabase Storage**
+  (Storage → create a *private* `hrms-documents` bucket; Storage → S3
+  Connection → enable + create an access key; endpoint
+  `https://<project-ref>.supabase.co/storage/v1/s3`, region = the
+  project's region). Path-style addressing is already the default
+  (`S3_FORCE_PATH_STYLE=true`). Tip: put the same values in each
+  developer's `apps/api/.env` so local uploads land in the same shared
+  bucket instead of per-laptop MinIO (the dev DB is shared, so per-laptop
+  files are unreachable from anywhere else).
 - **ClamAV (document scanning, module 09).** Every upload stays
   `PENDING_SCAN` — shown as "Scanning…", not downloadable — until clamd has
   scanned it; scanning fails closed. The CD workflow
