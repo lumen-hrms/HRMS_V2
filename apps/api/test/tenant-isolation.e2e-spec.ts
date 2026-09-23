@@ -32,7 +32,7 @@ describe('Tenant isolation (e2e)', () => {
   beforeAll(async () => {
     app = await createTestApp();
     [tenantA, tenantB] = await Promise.all([createTenantFixture('a'), createTenantFixture('b')]);
-  });
+  }, 60_000);
 
   afterAll(async () => {
     await cleanupTenantFixture(tenantA.tenantId);
@@ -40,7 +40,7 @@ describe('Tenant isolation (e2e)', () => {
     await deleteTrackedFirebaseUsers();
     await superuserPrisma.$disconnect();
     await app.close();
-  });
+  }, 60_000);
 
   const server = () => app.getHttpServer();
 

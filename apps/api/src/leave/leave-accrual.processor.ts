@@ -1,7 +1,8 @@
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import { AccrualFrequency } from '@prisma/client';
 import { Job, Queue } from 'bullmq';
+import { PAUSED_WORKER, startBackgroundWorker } from '../common/background-workers';
 import { PlatformPrismaClientProvider } from '../prisma/platform-prisma-client.provider';
 import { TenantPrismaClientProvider } from '../prisma/tenant-prisma-client.provider';
 import { withTenantContext } from '../prisma/with-tenant-context';
@@ -23,8 +24,8 @@ const ACCRUAL_DIVISOR: Record<'MONTHLY' | 'QUARTERLY', number> = { MONTHLY: 12, 
  * headcount volume grows.
  */
 @Injectable()
-@Processor(LEAVE_QUEUE)
-export class LeaveAccrualProcessor extends WorkerHost implements OnModuleInit {
+@Processor(LEAVE_QUEUE, PAUSED_WORKER)
+export class LeaveAccrualProcessor extends WorkerHost implements OnApplicationBootstrap {
   constructor(
     @InjectQueue(LEAVE_QUEUE) private readonly leaveQueue: Queue,
     private readonly platformPrisma: PlatformPrismaClientProvider,
@@ -33,12 +34,16 @@ export class LeaveAccrualProcessor extends WorkerHost implements OnModuleInit {
     super();
   }
 
-  async onModuleInit() {
-    await this.leaveQueue.upsertJobScheduler(
-      'leave-accrual-daily',
-      { pattern: '0 1 * * *' },
-      { name: 'accrue' },
-    );
+  /** Starts the worker + registers its schedule only where background workers
+   *  are enabled (`common/background-workers.ts`). */
+  async onApplicationBootstrap() {
+    await startBackgroundWorker(this, async () => {
+      await this.leaveQueue.upsertJobScheduler(
+        'leave-accrual-daily',
+        { pattern: '0 1 * * *' },
+        { name: 'accrue' },
+      );
+    });
   }
 
   async process(job: Job): Promise<void> {

@@ -1,6 +1,7 @@
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { Job, Queue } from 'bullmq';
+import { PAUSED_WORKER, startBackgroundWorker } from '../common/background-workers';
 import { PlatformPrismaClientProvider } from '../prisma/platform-prisma-client.provider';
 import { TenantPrismaClientProvider } from '../prisma/tenant-prisma-client.provider';
 import { withTenantContext } from '../prisma/with-tenant-context';
@@ -16,8 +17,8 @@ const RETENTION_YEARS = 2;
  * `upsertJobScheduler` pattern as `LeaveAccrualProcessor`.
  */
 @Injectable()
-@Processor(ACCESS_QUEUE)
-export class LoginAuditRetentionProcessor extends WorkerHost implements OnModuleInit {
+@Processor(ACCESS_QUEUE, PAUSED_WORKER)
+export class LoginAuditRetentionProcessor extends WorkerHost implements OnApplicationBootstrap {
   private readonly logger = new Logger(LoginAuditRetentionProcessor.name);
 
   constructor(
@@ -28,12 +29,16 @@ export class LoginAuditRetentionProcessor extends WorkerHost implements OnModule
     super();
   }
 
-  async onModuleInit() {
-    await this.accessQueue.upsertJobScheduler(
-      'login-audit-retention-daily',
-      { pattern: '0 2 * * *' },
-      { name: 'purge' },
-    );
+  /** Starts the worker + registers its schedule only where background workers
+   *  are enabled (`common/background-workers.ts`). */
+  async onApplicationBootstrap() {
+    await startBackgroundWorker(this, async () => {
+      await this.accessQueue.upsertJobScheduler(
+        'login-audit-retention-daily',
+        { pattern: '0 2 * * *' },
+        { name: 'purge' },
+      );
+    });
   }
 
   async process(job: Job): Promise<void> {

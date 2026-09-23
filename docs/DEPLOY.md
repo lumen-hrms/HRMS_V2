@@ -198,6 +198,11 @@ this doc works around the bug, it doesn't fix it.)
   developer's `apps/api/.env` so local uploads land in the same shared
   bucket instead of per-laptop MinIO (the dev DB is shared, so per-laptop
   files are unreachable from anywhere else).
+- **Background workers run only on this box.** The CD workflow starts the
+  API with `WORKERS_ENABLED=true`; laptops default to off
+  (`NODE_ENV=development`). Rows queued by a laptop (emails, uploads to
+  scan) are picked up here by the 10–15-minute sweeps. The API logs
+  `Background workers: ON/OFF` at startup.
 - **Email (notifications, module 10 — AWS SES v2).** Without it every
   workflow email is recorded as `FAILED` ("SES_FROM_ADDRESS is unset") in
   the app's **Email log** — nothing else breaks. To turn it on:

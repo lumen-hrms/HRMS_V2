@@ -66,18 +66,21 @@ jobs:
               if [ -n "$val" ]; then secret_args+=(-e "$v=$val"); fi
             done
 
+            # WORKERS_ENABLED=true: this box is THE instance that runs the
+            # background jobs against the shared DB — explicit so it never
+            # depends on NODE_ENV in apps/api/.env (common/background-workers.ts).
             # Validate the full run command against the new image BEFORE
             # removing the running container, so a bad argument can never
             # take the API down (docker create does the same parsing as run).
             docker rm -f hrms-api-check >/dev/null 2>&1 || true
             docker create --name hrms-api-check \
-              --env-file apps/api/.env -e CLAMAV_HOST=clamav -e CLAMAV_PORT=3310 \
+              --env-file apps/api/.env -e CLAMAV_HOST=clamav -e CLAMAV_PORT=3310 -e WORKERS_ENABLED=true \
               "${secret_args[@]}" --network hrms hrms-api >/dev/null
             docker rm hrms-api-check >/dev/null
 
             docker rm -f hrms-api || true
             docker run -d --name hrms-api --restart unless-stopped \
-              --env-file apps/api/.env -e CLAMAV_HOST=clamav -e CLAMAV_PORT=3310 \
+              --env-file apps/api/.env -e CLAMAV_HOST=clamav -e CLAMAV_PORT=3310 -e WORKERS_ENABLED=true \
               "${secret_args[@]}" -p 80:3000 --network hrms hrms-api
 
             # Boot time on this burstable, swap-backed box varies (seconds to

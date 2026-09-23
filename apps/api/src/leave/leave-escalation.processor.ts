@@ -1,6 +1,7 @@
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import { Job, Queue } from 'bullmq';
+import { PAUSED_WORKER, startBackgroundWorker } from '../common/background-workers';
 import { TenantPrismaClientProvider } from '../prisma/tenant-prisma-client.provider';
 import { withTenantContext } from '../prisma/with-tenant-context';
 import { LEAVE_QUEUE } from './leave.constants';
@@ -21,14 +22,20 @@ interface EscalationJobData {
  * follow up manually — a balance deduction is never auto-approved.
  */
 @Injectable()
-@Processor(LEAVE_QUEUE)
-export class LeaveEscalationProcessor extends WorkerHost {
+@Processor(LEAVE_QUEUE, PAUSED_WORKER)
+export class LeaveEscalationProcessor extends WorkerHost implements OnApplicationBootstrap {
   constructor(
     private readonly tenantPrismaRaw: TenantPrismaClientProvider,
     @InjectQueue(LEAVE_QUEUE) private readonly leaveQueue: Queue,
     private readonly notifications: NotificationDispatcher,
   ) {
     super();
+  }
+
+  /** Starts the worker only where background workers are enabled
+   *  (`common/background-workers.ts`). */
+  async onApplicationBootstrap() {
+    await startBackgroundWorker(this);
   }
 
   async process(job: Job): Promise<void> {

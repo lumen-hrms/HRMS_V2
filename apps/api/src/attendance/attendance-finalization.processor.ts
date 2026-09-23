@@ -1,6 +1,7 @@
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { Job, Queue } from 'bullmq';
+import { PAUSED_WORKER, startBackgroundWorker } from '../common/background-workers';
 import { PlatformPrismaClientProvider } from '../prisma/platform-prisma-client.provider';
 import { TenantPrismaClientProvider } from '../prisma/tenant-prisma-client.provider';
 import { withTenantContext } from '../prisma/with-tenant-context';
@@ -23,8 +24,8 @@ import { baseStatusFor, isLateCheckIn } from './attendance.util';
  *   per `attendance_settings.unactionedBehavior`.
  */
 @Injectable()
-@Processor(ATTENDANCE_QUEUE)
-export class AttendanceFinalizationProcessor extends WorkerHost implements OnModuleInit {
+@Processor(ATTENDANCE_QUEUE, PAUSED_WORKER)
+export class AttendanceFinalizationProcessor extends WorkerHost implements OnApplicationBootstrap {
   private readonly logger = new Logger(AttendanceFinalizationProcessor.name);
 
   constructor(
@@ -36,17 +37,21 @@ export class AttendanceFinalizationProcessor extends WorkerHost implements OnMod
     super();
   }
 
-  async onModuleInit() {
-    await this.queue.upsertJobScheduler(
-      'attendance-finalize-daily',
-      { pattern: '0 2 * * *' },
-      { name: 'finalize' },
-    );
-    await this.queue.upsertJobScheduler(
-      'attendance-cutoff-daily',
-      { pattern: '0 3 * * *' },
-      { name: 'resolve-cutoff' },
-    );
+  /** Starts the worker + registers its schedule only where background workers
+   *  are enabled (`common/background-workers.ts`). */
+  async onApplicationBootstrap() {
+    await startBackgroundWorker(this, async () => {
+      await this.queue.upsertJobScheduler(
+        'attendance-finalize-daily',
+        { pattern: '0 2 * * *' },
+        { name: 'finalize' },
+      );
+      await this.queue.upsertJobScheduler(
+        'attendance-cutoff-daily',
+        { pattern: '0 3 * * *' },
+        { name: 'resolve-cutoff' },
+      );
+    });
   }
 
   async process(job: Job): Promise<void> {

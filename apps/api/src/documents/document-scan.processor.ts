@@ -1,6 +1,7 @@
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { Job, Queue } from 'bullmq';
+import { PAUSED_WORKER, startBackgroundWorker } from '../common/background-workers';
 import { PlatformPrismaClientProvider } from '../prisma/platform-prisma-client.provider';
 import { TenantPrismaClientProvider } from '../prisma/tenant-prisma-client.provider';
 import { withTenantContext } from '../prisma/with-tenant-context';
@@ -33,8 +34,8 @@ export interface ScanJobData {
  * on the NOBYPASSRLS `hrms_app` connection, like Leave's processors.
  */
 @Injectable()
-@Processor(DOCUMENTS_QUEUE)
-export class DocumentScanProcessor extends WorkerHost implements OnModuleInit {
+@Processor(DOCUMENTS_QUEUE, PAUSED_WORKER)
+export class DocumentScanProcessor extends WorkerHost implements OnApplicationBootstrap {
   private readonly logger = new Logger(DocumentScanProcessor.name);
 
   constructor(
@@ -48,12 +49,16 @@ export class DocumentScanProcessor extends WorkerHost implements OnModuleInit {
     super();
   }
 
-  async onModuleInit() {
-    await this.queue.upsertJobScheduler(
-      'documents-scan-sweep',
-      { pattern: '*/15 * * * *' },
-      { name: 'sweep' },
-    );
+  /** Starts the worker + registers its schedule only where background workers
+   *  are enabled (`common/background-workers.ts`). */
+  async onApplicationBootstrap() {
+    await startBackgroundWorker(this, async () => {
+      await this.queue.upsertJobScheduler(
+        'documents-scan-sweep',
+        { pattern: '*/15 * * * *' },
+        { name: 'sweep' },
+      );
+    });
   }
 
   async process(job: Job): Promise<void> {

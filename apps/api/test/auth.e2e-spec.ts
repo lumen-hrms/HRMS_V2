@@ -24,14 +24,14 @@ describe('Auth: session exchange (e2e)', () => {
   beforeAll(async () => {
     app = await createTestApp();
     tenant = await createTenantFixture('auth');
-  });
+  }, 60_000);
 
   afterAll(async () => {
     await cleanupTenantFixture(tenant.tenantId);
     await deleteTrackedFirebaseUsers();
     await superuserPrisma.$disconnect();
     await app.close();
-  });
+  }, 60_000);
 
   const server = () => app.getHttpServer();
 

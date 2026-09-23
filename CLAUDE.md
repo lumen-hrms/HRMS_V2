@@ -376,6 +376,11 @@ docs/
   owned centrally: the migration owner runs `./scripts/dev.sh migrate`;
   everyone else pulls + `prisma generate`. The three-role RLS isolation
   model is unchanged (created there by `20260101000002_roles_and_rls`).
+  Background workers (BullMQ: emails, document scans, scheduled jobs) are
+  **off on laptops** (`NODE_ENV=development`, override with
+  `WORKERS_ENABLED`) and run only on the preview box — they scan the shared
+  DB, so a half-configured laptop would otherwise mark the preview's rows
+  failed (`apps/api/src/common/background-workers.ts`).
   Local Docker Postgres is now used **only** by the e2e suite (it
   creates/drops tenants — never point it at the shared DB). Connection
   strings live in the team vault, not git. This is a dev-infra choice; prod
