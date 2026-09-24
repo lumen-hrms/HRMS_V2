@@ -8,8 +8,8 @@ import { ApiError } from './api';
 export interface ContactFormInput {
   name: string;
   email: string;
-  company?: string;
-  phone?: string;
+  company: string;
+  phone: string;
   message: string;
 }
 

@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsEmail, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator';
 
 const trim = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
 
@@ -16,17 +16,17 @@ export class CreateContactSubmissionDto {
   @MaxLength(320)
   email!: string;
 
-  @IsOptional()
   @Transform(trim)
   @IsString()
+  @MinLength(2)
   @MaxLength(200)
-  company?: string;
+  company!: string;
 
-  @IsOptional()
   @Transform(trim)
   @IsString()
+  @MinLength(6)
   @MaxLength(40)
-  phone?: string;
+  phone!: string;
 
   @Transform(trim)
   @IsString()

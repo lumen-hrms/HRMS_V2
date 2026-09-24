@@ -735,8 +735,8 @@ function Contact() {
       await submitContactForm({
         name,
         email,
-        company: company || undefined,
-        phone: phone || undefined,
+        company,
+        phone,
         message,
       });
       setStatus('sent');
@@ -809,8 +809,10 @@ function Contact() {
                 />
               </label>
               <label className="flex flex-col gap-1.5 text-sm">
-                <span className="text-[var(--text-2)]">Company (optional)</span>
+                <span className="text-[var(--text-2)]">Company</span>
                 <input
+                  required
+                  minLength={2}
                   maxLength={200}
                   value={company}
                   onChange={(e) => setCompany(e.target.value)}
@@ -819,8 +821,11 @@ function Contact() {
                 />
               </label>
               <label className="flex flex-col gap-1.5 text-sm">
-                <span className="text-[var(--text-2)]">Phone (optional)</span>
+                <span className="text-[var(--text-2)]">Phone</span>
                 <input
+                  required
+                  type="tel"
+                  minLength={6}
                   maxLength={40}
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}

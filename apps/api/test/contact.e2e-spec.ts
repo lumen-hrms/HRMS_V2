@@ -48,6 +48,7 @@ describe('Contact form + Platform Admin settings/leads (e2e)', () => {
         name: 'Lead Person',
         email: 'lead@e2e.test',
         company: 'Acme Hospital',
+        phone: '9999999999',
         message: 'We would like to see a demo of Lumen HRMS for our team.',
       });
       expect(res.status).toBe(202);
@@ -69,6 +70,8 @@ describe('Contact form + Platform Admin settings/leads (e2e)', () => {
       const body = {
         name: 'Spammer',
         email: 'ratelimit@e2e.test',
+        company: 'Spam Inc',
+        phone: '9999999999',
         message: 'Please contact me about your product offering.',
       };
       for (let i = 0; i < 3; i++) {
