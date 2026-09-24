@@ -3,7 +3,9 @@
 > **Audience:** developers touching onboarding, settings, attendance, leave,
 > or payroll. This is the model for *where per-tenant rules live* and *who
 > sets them*. Read `CLAUDE.md` (multi-tenancy) and `docs/MODULE_SPECS.md`
-> (per-module contracts) alongside it.
+> (per-module contracts) alongside it. For the module-shaped view (personas,
+> permission matrix, acceptance criteria) see `docs/modules/13_TENANT_CONFIGURATION.md` —
+> this file stays the primary reference for the mechanism itself.
 >
 > **Status:** 2026-09-18 — **100%**, and module 05 (Attendance), the main
 > consumer of this config, reached 100% the same day too — the nightly

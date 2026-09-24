@@ -8,6 +8,7 @@ import { TenantPrismaService } from '../prisma/tenant-prisma.service';
 import { LeaveService } from '../leave/leave.service';
 import { DocumentsService } from '../documents/documents.service';
 import { HR_ROLES, NotificationDispatcher } from '../notifications/notification-dispatcher.service';
+import { AuditService } from '../audit/audit.service';
 import { recursiveReportIds as recursiveReportIdsPure } from '../common/reporting-hierarchy';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import type {
@@ -35,6 +36,7 @@ export class AttendanceService {
     private readonly leave: LeaveService,
     private readonly documents: DocumentsService,
     private readonly notifications: NotificationDispatcher,
+    private readonly audit: AuditService,
   ) {}
 
   /** Applicant email on any regularization decision (manual here; auto-resolve lives in the finalization processor). */
@@ -101,18 +103,13 @@ export class AttendanceService {
     targetId: string,
     metadata: Record<string, unknown>,
   ) {
-    await this.tenantPrisma.client.auditLog
-      .create({
-        data: {
-          tenantId: this.tenantPrisma.tenantId,
-          actorUserId: user.sub,
-          action,
-          targetType: 'employee',
-          targetId,
-          metadata: { module: 'attendance', ...metadata },
-        },
-      })
-      .catch(() => undefined);
+    await this.audit.log({
+      actorUserId: user.sub,
+      action,
+      targetType: 'employee',
+      targetId,
+      metadata: { module: 'attendance', ...metadata },
+    });
   }
 
   /**

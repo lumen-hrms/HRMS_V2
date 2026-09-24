@@ -21,9 +21,32 @@
 > spec draft that is no longer maintained — ignore them; this file and the
 > code are the source of truth.)
 >
-> **Last synced to code:** 2026-09-23. Landed since the previous sync
-> (2026-09-22):
+> **Last synced to code:** 2026-09-24. Landed since the previous sync
+> (2026-09-23):
 >
+> - **Platform Admin (module 2): public contact form + Leads + Settings.**
+>   New `apps/api/src/contact` module — `POST /api/contact` (unauthenticated,
+>   no tenant, excluded from `TenantResolutionMiddleware`, rate-limited)
+>   writes an append-only `platform.contact_submissions` row, then
+>   best-effort emails whichever addresses are in the new
+>   `platform.platform_settings` singleton row via the existing SES sender.
+>   New console screens: **Leads** (every submission, regardless of whether
+>   the notify email sent) and **Settings** (manage the recipient list,
+>   `GET`/`PATCH /api/platform-admin/settings`, audited
+>   `platform_settings.updated`). Landing page gets a matching `#contact`
+>   section. See `docs/modules/02_PLATFORM_ADMIN.md`.
+> - **Audit Log (module 12) → 100%.** A shared `apps/api/src/audit` module
+>   (`AuditService`) is now the one write path for `public.audit_log` —
+>   Identity & Access, Employee Master and Attendance were migrated onto it
+>   instead of each hand-rolling its own try/catch write, closing the
+>   "generic audit interceptor" gap. Employee field/compensation edits
+>   (`PATCH /api/employees/:id`) are now audited with before/after values —
+>   the last uncovered must-cover write point (attendance decisions and
+>   manual marking were already covered, contrary to this file's prior
+>   status). New `GET /api/audit` + `GET /api/audit/modules` give the
+>   cross-module aggregation read the gap list asked for, surfaced in the
+>   web app as a third "All activity" sub-tab on Access › Audit. See
+>   `docs/modules/12_AUDIT_LOG.md`.
 > - **Auth emails now go through SES too** (module 10 + Identity & Access /
 >   Platform Admin). Tenant-onboarding invites, admin-triggered resets and
 >   self-service "Forgot password?" are sent by `AuthEmailService` — a
@@ -337,7 +360,7 @@
 | Module | Status | Progress |
 |---|---|---|
 | 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ | `████████████████████` 100% — auth/RBAC/tenancy live; `access` module wired (Users, role/status/reset, login+access audit, My Account) with e2e RBAC + append-only tests; `LoginAuditEntry` table written on every session outcome, with a daily BullMQ job purging entries past the 2-year retention window. `BAD_CREDENTIALS`/`TENANT_SUSPENDED` staying server-unobserved is an owner-approved scope decision (§1), not a gap |
-| 2. Platform Admin | ✅ | `███████████████████░` 99% — full operator console UI (tenants list, new-tenant wizard, tenant detail tabs, **Plans catalog**, audit screen); onboarding emails a hosted reset link; **operator-editable `platform.plans`** (per-seat list price / default seats / modules / features / isolation tier) with snapshot-at-assign + re-snapshot-on-renewal; **per-tenant negotiated per-seat rate** (`PATCH .../pricing`; monthly = rate × seats, computed); `PATCH .../plan` + `POST .../renew` live (renewal now also runs on a daily scheduled job off `renewsAt`); `PlatformAuditLog` written for every operator action and readable (`GET .../audit`), now true append-only at the DB grant level; `GET tenants/:id` and `POST .../refresh-headcount` live. Break-glass has a full audited request/track/expire/revoke lifecycle but does not yet grant an operator actual elevated tenant-data access during the window — that escalation mechanism is a deliberate follow-on |
+| 2. Platform Admin | ✅ | `███████████████████░` 99% — full operator console UI (tenants list, new-tenant wizard, tenant detail tabs, **Plans catalog**, **Leads**, **Settings**, audit screen); onboarding emails a hosted reset link; **operator-editable `platform.plans`** (per-seat list price / default seats / modules / features / isolation tier) with snapshot-at-assign + re-snapshot-on-renewal; **per-tenant negotiated per-seat rate** (`PATCH .../pricing`; monthly = rate × seats, computed); `PATCH .../plan` + `POST .../renew` live (renewal now also runs on a daily scheduled job off `renewsAt`); `PlatformAuditLog` written for every operator action and readable (`GET .../audit`), now true append-only at the DB grant level; `GET tenants/:id` and `POST .../refresh-headcount` live. The public landing-page contact form (`POST /api/contact`, no tenant, rate-limited) writes an append-only lead + best-effort notifies the operator-configured recipient list (`GET`/`PATCH .../settings`). Break-glass has a full audited request/track/expire/revoke lifecycle but does not yet grant an operator actual elevated tenant-data access during the window — that escalation mechanism is a deliberate follow-on |
 | 3. Employee Master + Org Structure | ✅ | `████████████████████` 100% — lifecycle state machine, the full field set (statutory/bank via KMS-style AES-256-GCM encryption, emergency contacts, comp-adjacent fields), bulk-import UI, document hardening, department edit/delete-with-reassign, an interactive org chart (search/expand/collapse/zoom/quick-view), a real photo-upload widget, a proper reveal-reason dialog, and Leave's recursive Line-Manager scoping mirror are all live. Only the deliberately-deferred BU→Team hierarchy remains |
 | 4. Leave Management | ✅ | `████████████████████` 100% — backend fully wired & tested; FE live path built and running against the real API by default (`client.ts`'s `USE_MOCK` now defaults to **off**, matching `access/client.ts` — set `VITE_LEAVE_MOCK=true` to force the fixture store); `allowLopRequests`/`minNoticeDays`/`fyStartMonth`/`genderRestriction`/`requiresApproval` all enforced/settable; mid-year-joiner proration; comp-off credit on holiday/weekly-off clock-in; approved leave reconciles into `AttendanceRecord.ON_LEAVE` |
 | 5. Attendance & Time Tracking | ✅ | `████████████████████` 100% — reads the tenant's `Shift`/`tenant_settings` config, gated behind the `ATTENDANCE` plan entitlement; punches write-path, a nightly finalization job (holiday → weekly-off → punches → genuine absence), full regularization approval (window/cap enforcement, approve/reject/bulk-approve, audited, auto-resolved at payroll cut-off), manager/HR team roster + manual marking, overtime hours, and a `getLopDays()` export contract for Payroll are all live. GPS/biometric/selfie-QR capture and `POST /attendance/ingest` stay explicitly deferred (CLAUDE.md) |
@@ -346,8 +369,8 @@
 | 8. Statutory Compliance | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
 | 9. Documents | ✅ | `████████████████████` 100% — shared `documents` module owns every user upload (employee profile docs, leave attachments, regularization evidence): type/magic-byte/size validation, ClamAV scan before download (fail-closed, self-healing sweep), 5-min attachment-disposition presigned URLs, subject-employee visibility, audited soft delete (no `DELETE` grant). Retention purge deliberately out of V1 scope. Deep spec: `docs/modules/09_DOCUMENTS.md` |
 | 10. Notifications | 🟡 | `███████████████████░` 95% — queued, deduped, audited-retry email pipeline on AWS SES v2 (`notification_log`, BullMQ `notifications` queue, 10-min self-healing sweep, Email log screen) wired into every Leave / Attendance-regularization / Documents workflow event. Remaining: first live SES delivery, blocked on the owner's SES setup (verified sender + IAM credentials). Deep spec: `docs/modules/10_NOTIFICATIONS.md` |
-| 11. Reports & Analytics | 🔴 | `██░░░░░░░░░░░░░░░░░░` 10% (only the Dashboard aggregates exist) |
-| 12. Audit Log | 🟡 | `███████░░░░░░░░░░░░░` 35% — three append-only trails live: `login_audit_entries` (sign-in outcomes, with a daily retention-purge job), `public.audit_log` (`access.*` change events — role/status/reset/login-created), `platform.platform_audit_log` (tenant create/status/plan/renewal/price-adjust/plan-edit/breakglass — now readable + expanded). All three tables have no `UPDATE`/`DELETE` grant (true append-only). Missing: a generic audit interceptor, employee field/salary + attendance-decision coverage, an aggregation/query UI |
+| 11. Reports & Analytics | 🔴 | `██░░░░░░░░░░░░░░░░░░` 10% (only the Dashboard aggregates exist; the module's two `[MUST]` features that need payroll-cost/statutory data are structurally blocked on the unbuilt Payroll module — see the deep spec §1.1). Deep spec: `docs/modules/11_REPORTS_AND_ANALYTICS.md` |
+| 12. Audit Log | ✅ | `████████████████████` 100% — three append-only trails live: `login_audit_entries` (sign-in outcomes, with a daily retention-purge job), `public.audit_log` (Identity & Access, Employee Master and Attendance events, all now written through the shared `AuditService`), `platform.platform_audit_log` (tenant create/status/plan/renewal/price-adjust/plan-edit/breakglass). All three tables have no `UPDATE`/`DELETE` grant (true append-only). Employee field/compensation edits are now audited with before/after values; `GET /api/audit` + `/audit/modules` give the cross-module aggregation/query view (web: Access › Audit's "All activity" sub-tab). Deep spec: `docs/modules/12_AUDIT_LOG.md` |
 | 13. Tenant Configuration | ✅ | `████████████████████` 100% — schema, onboarding defaults, `EntitlementGuard` (+ `@RequiresModule`/`@RequiresFeature`, wired onto Leave + Attendance), `attendance.service.ts` reading tenant `Shift`/`tenant_settings` instead of hardcoded constants, Settings screens (shift CRUD + attendance/general settings), and a skippable/resumable first-run setup wizard (`apps/web/src/components/setup-wizard`, `apps/api/src/tenant-config`) are all live. See `docs/TENANT_CONFIGURATION.md` |
 
 Deferred to a later phase — **do not build without a scope discussion**
@@ -481,7 +504,10 @@ creation) and on every role change. Never trust a claim the client could set.
 **UI prompt:** `docs/ui-build-prompts/02-platform-admin.md`
 **Status:** ✅ 99% — full operator console UI (`/platform-admin/*` —
 login, tenants list, new-tenant wizard, tenant detail w/ 4 tabs, **Plans
-catalog**, audit screen) · ✅ operator-editable `platform.plans` (per-seat
+catalog**, **Leads**, **Settings**, audit screen) · ✅ public landing-page
+contact form (`POST /api/contact`, no tenant, rate-limited) writes an
+append-only lead + best-effort notifies the operator-configured recipient
+list · ✅ operator-editable `platform.plans` (per-seat
 list price / default seats / modules / features / isolation tier) with
 **snapshot-at-assign + re-snapshot-on-renewal** · ✅ **per-tenant
 negotiated per-seat rate** (`PATCH .../pricing`; monthly = rate × seats,
@@ -493,9 +519,10 @@ readable (`GET .../audit`), and now true append-only at the DB grant level
 a full audited request/track/expire/revoke lifecycle but no underlying
 elevated-read mechanism yet (see "Known gaps")
 **Code:** `apps/api/src/platform-admin` (`+ plans.service.ts`),
-`apps/web/src/pages/platform-admin` (`console.tsx` gate → `shell.tsx` +
-`tenants` / `tenant-new` / `tenant-detail` / `plans` / `audit` +
-`components/`, `lib/{types,plan-catalog,format,platform-auth}`)
+`apps/api/src/contact` (the public form), `apps/web/src/pages/platform-admin`
+(`console.tsx` gate → `shell.tsx` + `tenants` / `tenant-new` /
+`tenant-detail` / `plans` / `leads` / `settings` / `audit` + `components/`,
+`lib/{types,plan-catalog,format,platform-auth}`)
 
 ### Expectation
 
@@ -521,6 +548,7 @@ future logged, time-boxed break-glass flow, not a standing grant.
 | Per-seat pricing + per-tenant negotiation | ✅ `Subscription.pricePerSeat` is the **negotiated** rate for that one tenant (defaults to the plan's list price at assign-time, operator tunes it). **Effective monthly = `pricePerSeat × seats`**, computed at display, never stored. `PATCH /api/platform-admin/tenants/:id/pricing` `{pricePerSeat?, seats?, reason}` adjusts commercials without a plan change (`subscription.price_adjusted` audit). A plan change resets the rate to the new plan's list price. |
 | Change a tenant's plan | ✅ `PATCH /api/platform-admin/tenants/:id/plan` — re-snapshots the new plan's current definition onto the `Subscription` and **resets the per-seat rate to the new plan's list price**; `tenant.plan_changed` audit. |
 | Operator console UI | ✅ full multi-screen console — see Status line |
+| Public "Contact us" form + notification + leads record | ✅ `POST /api/contact` (unauthenticated, no tenant, excluded from `TenantResolutionMiddleware`, rate-limited 3/email + 10/IP per 15 min) writes an append-only `platform.contact_submissions` row, then best-effort emails every address in `platform.platform_settings.contactNotifyEmails` (SES, same sender module 10 uses). **Leads** screen lists every submission; **Settings** screen manages the recipient list (`GET`/`PATCH /api/platform-admin/settings`, audited `platform_settings.updated`) |
 | Billing / plan enforcement (seat limits, dunning) | 🔴 not started |
 | Break-glass support access to tenant data | 🟡 `platform.break_glass_grants` gives the full audited control-plane lifecycle — request (`POST .../breakglass`, one active grant per tenant, TTL 15/30/60/120 min), status (`GET .../breakglass`), revoke (`POST .../breakglass/:grantId/revoke`), and an hourly job auto-expiring overdue grants — console fully wired (request dialog + live status sheet with countdown + revoke). Does **not** yet grant an operator any actual elevated read against the tenant's data during the window — that's a separate connection-pool escalation mechanism, deliberately still unbuilt |
 
@@ -1268,7 +1296,10 @@ queue — never inline in the request path — with every send logged.
 ## 11. Reports & Analytics 🔴 (10%)
 
 **Status:** only the Dashboard aggregates exist. **Target code location:**
-`apps/api/src/reports`.
+`apps/api/src/reports`. **Deep spec:** `docs/modules/11_REPORTS_AND_ANALYTICS.md`
+— covers why this module can't reach 100% until Payroll lands (§1.1), what's
+independently buildable today (headcount, most of attrition), and the
+target technical design.
 
 ### Expectation
 
@@ -1295,31 +1326,49 @@ dashboards; later a custom report builder.
 
 ---
 
-## 12. Audit Log 🟡 (35%)
+## 12. Audit Log ✅ (100%)
 
-**Status:** three append-only trails are **live and written**, all now with
-no `UPDATE`/`DELETE` grant — the generic cross-module interceptor is still
-the missing piece.
+**Status:** three append-only trails are **live and written**, all with no
+`UPDATE`/`DELETE` grant, and every tenant-scoped write now goes through one
+shared service instead of hand-rolled call sites. **Deep spec:**
+`docs/modules/12_AUDIT_LOG.md`.
 - `public.login_audit_entries` — one row per server-observed
   `POST /api/auth/session` outcome (Identity & Access, §1).
-- `public.audit_log` — access-change events (`access.*` actions,
-  `metadata.module = "identity-access"`): role change, activate/deactivate,
-  password-reset, login created. Written by `AccessService` **and**
-  `EmployeesService` via the shared `buildAccessAuditData()` helper
-  (`apps/api/src/access/access.support.ts`); read via
-  `GET /api/access/audit?feed=access`.
+- `public.audit_log` — the generic tenant-scoped trail, `metadata.module`
+  namespaced per writer: `identity-access` (role change, activate/
+  deactivate, password-reset, login created), `employee-master` (sensitive-
+  field update, field reveal, lifecycle change, and now general field /
+  compensation edits with before/after values), `attendance`
+  (regularization approve/reject, manual mark). Written through
+  `AuditService.log()` (`apps/api/src/audit/audit.service.ts`) by
+  `AccessService`, `EmployeesService` and `AttendanceService` alike — one
+  write path, one error-handling contract (log and swallow, never fail the
+  business operation), instead of each service owning its own
+  `tenantPrisma.client.auditLog.create().catch(...)`. Read two ways:
+  the narrow `GET /api/access/audit?feed=login|access` (Identity & Access
+  only, unchanged) and the new cross-module `GET /api/audit` +
+  `GET /api/audit/modules` (`apps/api/src/audit/audit.controller.ts`),
+  `@Roles(COMPANY_ADMIN, AUDITOR)`.
 - `platform.platform_audit_log` — tenant `created` / `status_changed` /
   `plan_changed` / `subscription.renewed` / `subscription.price_adjusted` /
-  `plan.updated` (Platform Admin, §2).
+  `plan.updated` (Platform Admin, §2). Deliberately a separate
+  schema/table/service (`PlatformAdminService`), not folded into
+  `AuditService` — Platform Admin has zero grants on tenant business
+  tables by design (`CLAUDE.md`), and this trail is platform-schema, not
+  tenant-schema.
 
 Leave keeps its own `LeaveApproval` (decision/escalation, append-only) and
 `LeaveLedgerEntry` (balance-movement) trails rather than writing the generic
 `audit_log`.
 
-**Code:** `apps/api/src/access/access.support.ts`
-(`buildAccessAuditData`), `apps/api/src/auth/auth.service.ts`,
-`apps/api/src/platform-admin/*`. A shared `apps/api/src/audit` module +
-interceptor is still the target for uniform coverage.
+**Code:** `apps/api/src/audit/{audit.service.ts,audit.controller.ts,
+audit.module.ts}` (the shared write/query path, `@Global()` so every
+module injects `AuditService` directly), `apps/api/src/access/
+access.support.ts` (`buildAccessAuditData` — still the Identity & Access
+row-shape builder, now feeding `AuditService.log()` instead of writing
+directly), `apps/api/src/auth/auth.service.ts`, `apps/api/src/platform-
+admin/*`. Frontend: `apps/web/src/lib/audit/{client.ts,types.ts}` +
+the "All activity" sub-tab in `apps/web/src/pages/access/tabs/audit.tsx`.
 
 ### Expectation
 
@@ -1334,6 +1383,8 @@ grant for `hrms_app` (`20260908074457_identity_access_audit` also revoked
 them from the pre-existing `audit_log`). `platform_audit_log` is now the
 same: migration `20260918100000_break_glass_and_audit_grants` revoked
 `UPDATE`/`DELETE` from `hrms_platform`, leaving `SELECT`/`INSERT` only.
+`AuditService.log()` doesn't change any of this — it's the same
+`tenantPrisma.client.auditLog.create()` call, just centralized.
 
 ### Must-cover write points
 
@@ -1343,27 +1394,29 @@ same: migration `20260918100000_break_glass_and_audit_grants` revoked
 | Access change: role / status / reset / login-created (→ `audit_log`) | ✅ |
 | Tenant create / status / plan / pricing (→ `platform_audit_log`) | ✅ |
 | Leave approve / reject / cancel / escalate | ✅ via `LeaveApproval` (separate from `audit_log`) |
-| Employee create / update / status / **salary** change | 🟡 login-creation only; field & compensation edits **not** logged |
-| Attendance regularisation decision; manual mark | 🔴 |
+| Employee create / update / status / **salary** change | ✅ sensitive fields, lifecycle and field/compensation edits (designation, department, reporting manager, employment type, CTC, pay grade, cost center — before/after) all audited |
+| Attendance regularisation decision; manual mark | ✅ |
 | Document upload / delete / download-URL issue / malware detection (`documents.*`) | ✅ |
-| Payroll run state transitions; compliance file generation | 🔴 (modules not built) |
+| Payroll run state transitions; compliance file generation | 🔴 (modules not built — out of scope until Payroll lands) |
 
 ### Happy path
 
 An HR Manager changes a user's role → `AccessService` writes the row via
-`buildAccessAuditData` (`action: 'access.role_changed'`, actor, target,
-before/after role) → an Auditor lists it through
-`GET /api/access/audit?feed=access`; the missing `UPDATE`/`DELETE` grant
-means no one can alter it.
+`buildAccessAuditData` + `AuditService.log()` (`action:
+'access.role_changed'`, actor, target, before/after role) → an Auditor
+lists it through `GET /api/access/audit?feed=access` **or** the
+cross-module `GET /api/audit`; the missing `UPDATE`/`DELETE` grant means
+no one can alter it. An HR Manager editing an employee's designation and
+CTC → `EmployeesService.update()` diffs the changed compensation/org
+fields against the pre-update record and calls `AuditService.log()` with
+an `employee.updated` row carrying `{field, before, after}` for each
+changed field — visible in the same `GET /api/audit?module=employee-master`
+view, or the web app's Access › Audit → "All activity" tab.
 
 ### Known gaps / TODO
 
-- **Generic audit interceptor** so every mutating service records uniformly
-  (a `@nestjs` interceptor + `apps/api/src/audit` service), instead of the
-  current hand-wired call sites.
-- **Employee field/salary edits** and **attendance decisions** into
-  `audit_log`.
-- **Aggregation / query UI** beyond the Identity & Access audit feed.
+- None against the Expectation. Payroll/Compliance write points are
+  tracked against those modules, not this one — they don't exist yet.
 
 ---
 

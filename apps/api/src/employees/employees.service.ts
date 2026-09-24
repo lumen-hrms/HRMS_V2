@@ -20,6 +20,7 @@ import {
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import type { AppRole } from '../common/decorators/roles.decorator';
 import { buildAccessAuditData, ROLE_LABELS } from '../access/access.support';
+import { AuditService } from '../audit/audit.service';
 import type {
   CreateDepartmentDto,
   CreateEmployeeDto,
@@ -75,6 +76,7 @@ export class EmployeesService {
     private readonly storage: StorageService,
     private readonly fieldEncryption: FieldEncryptionService,
     @Inject(FIREBASE_AUTH) private readonly firebaseAuth: admin.auth.Auth,
+    private readonly audit: AuditService,
   ) {}
 
   /**
@@ -387,9 +389,23 @@ export class EmployeesService {
     }
   }
 
+  /** Compensation/org fields worth a before/after audit trail — everything
+   *  else on this endpoint (contact details, personal attributes) only gets
+   *  a `fieldsChanged` entry, same restraint `updateSensitiveFields` uses. */
+  private static readonly AUDITED_UPDATE_FIELDS = [
+    'designation',
+    'departmentId',
+    'reportingManagerId',
+    'employmentType',
+    'workLocation',
+    'ctcAnnual',
+    'payGrade',
+    'costCenter',
+  ] as const;
+
   async update(id: string, dto: UpdateEmployeeDto, user: AuthenticatedUser) {
     this.assertCanEditEmployee(id, user);
-    await this.get(id, user); // 404 / scope check
+    const existing = await this.get(id, user); // 404 / scope check
 
     const isSelfEdit = user.role === 'EMPLOYEE';
     if (isSelfEdit) {
@@ -429,6 +445,33 @@ export class EmployeesService {
           costCenter: dto.costCenter,
         };
     const updated = await this.tenantPrisma.client.employee.update({ where: { id }, data });
+
+    const fieldsChanged = Object.keys(dto).filter((k) => (dto as any)[k] !== undefined);
+    if (fieldsChanged.length > 0) {
+      const changes = fieldsChanged
+        .filter((k) => (EmployeesService.AUDITED_UPDATE_FIELDS as readonly string[]).includes(k))
+        .map((k) => ({
+          field: k,
+          before: (existing as any)[k] ?? null,
+          after: (updated as any)[k] ?? null,
+        }))
+        .filter((c) => c.before !== c.after);
+
+      await this.audit.log({
+        actorUserId: user.sub,
+        action: 'employee.updated',
+        targetType: 'employee',
+        targetId: id,
+        metadata: {
+          module: 'employee-master',
+          actorName: user.email ? humanizeEmail(user.email) : 'System',
+          actorRole: user.role,
+          fieldsChanged,
+          changes,
+        },
+      });
+    }
+
     return this.sanitize(updated);
   }
 
@@ -465,29 +508,19 @@ export class EmployeesService {
 
     const updated = await this.tenantPrisma.client.employee.update({ where: { id }, data });
 
-    try {
-      await this.tenantPrisma.client.auditLog.create({
-        data: {
-          tenantId: this.tenantPrisma.tenantId,
-          actorUserId: actor.sub,
-          action: 'employee.sensitive_fields_updated',
-          targetType: 'employee',
-          targetId: id,
-          metadata: {
-            module: 'employee-master',
-            actorName: actor.email ? humanizeEmail(actor.email) : 'System',
-            actorRole: actor.role,
-            // Which fields changed, never the values themselves.
-            fieldsChanged: Object.keys(dto),
-          } satisfies Prisma.InputJsonObject,
-        },
-      });
-    } catch (err) {
-      this.logger.error(
-        `Employee ${id} sensitive fields updated but the audit write failed`,
-        err instanceof Error ? err.stack : String(err),
-      );
-    }
+    await this.audit.log({
+      actorUserId: actor.sub,
+      action: 'employee.sensitive_fields_updated',
+      targetType: 'employee',
+      targetId: id,
+      metadata: {
+        module: 'employee-master',
+        actorName: actor.email ? humanizeEmail(actor.email) : 'System',
+        actorRole: actor.role,
+        // Which fields changed, never the values themselves.
+        fieldsChanged: Object.keys(dto),
+      },
+    });
 
     return this.sanitize(updated);
   }
@@ -511,20 +544,17 @@ export class EmployeesService {
     }
     const value = this.fieldEncryption.decrypt(ciphertext);
 
-    await this.tenantPrisma.client.auditLog.create({
-      data: {
-        tenantId: this.tenantPrisma.tenantId,
-        actorUserId: actor.sub,
-        action: 'employee.field_revealed',
-        targetType: 'employee',
-        targetId: id,
-        metadata: {
-          module: 'employee-master',
-          actorName: actor.email ? humanizeEmail(actor.email) : 'System',
-          actorRole: actor.role,
-          field: dto.field,
-          reason: dto.reason,
-        } satisfies Prisma.InputJsonObject,
+    await this.audit.log({
+      actorUserId: actor.sub,
+      action: 'employee.field_revealed',
+      targetType: 'employee',
+      targetId: id,
+      metadata: {
+        module: 'employee-master',
+        actorName: actor.email ? humanizeEmail(actor.email) : 'System',
+        actorRole: actor.role,
+        field: dto.field,
+        reason: dto.reason,
       },
     });
 
@@ -650,31 +680,21 @@ export class EmployeesService {
 
     const updated = await this.tenantPrisma.client.employee.update({ where: { id }, data });
 
-    try {
-      await this.tenantPrisma.client.auditLog.create({
-        data: {
-          tenantId: this.tenantPrisma.tenantId,
-          actorUserId: actor.sub,
-          action: 'employee.lifecycle_changed',
-          targetType: 'employee',
-          targetId: id,
-          metadata: {
-            module: 'employee-master',
-            actorName: actor.email ? humanizeEmail(actor.email) : 'System',
-            actorRole: actor.role,
-            employeeCode: employee.employeeCode,
-            before: from,
-            after: to,
-            reason: dto.reason,
-          } satisfies Prisma.InputJsonObject,
-        },
-      });
-    } catch (err) {
-      this.logger.error(
-        `Employee ${id} moved ${from} -> ${to} but the audit write failed`,
-        err instanceof Error ? err.stack : String(err),
-      );
-    }
+    await this.audit.log({
+      actorUserId: actor.sub,
+      action: 'employee.lifecycle_changed',
+      targetType: 'employee',
+      targetId: id,
+      metadata: {
+        module: 'employee-master',
+        actorName: actor.email ? humanizeEmail(actor.email) : 'System',
+        actorRole: actor.role,
+        employeeCode: employee.employeeCode,
+        before: from,
+        after: to,
+        reason: dto.reason,
+      },
+    });
 
     return updated;
   }

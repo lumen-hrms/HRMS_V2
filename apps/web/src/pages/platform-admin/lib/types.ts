@@ -93,7 +93,8 @@ export type PlatformAuditAction =
   | 'headcount.refreshed'
   | 'breakglass.requested'
   | 'breakglass.used'
-  | 'breakglass.expired';
+  | 'breakglass.expired'
+  | 'platform_settings.updated';
 
 /** `platform.platform_audit_log` row, shaped for the UI. */
 export interface PlatformAuditEntry {
@@ -154,7 +155,25 @@ export const AUDIT_ACTION_LABEL: Record<PlatformAuditAction, string> = {
   'breakglass.requested': 'Break-glass requested',
   'breakglass.used': 'Break-glass used',
   'breakglass.expired': 'Break-glass expired',
+  'platform_settings.updated': 'Settings updated',
 };
+
+/** `platform.contact_submissions` row (`GET /api/platform-admin/leads`) —
+ *  a lead from the landing page's public "Contact us" form. */
+export interface ContactLead {
+  id: string;
+  at: string;
+  name: string;
+  email: string;
+  company: string | null;
+  phone: string | null;
+  message: string;
+}
+
+/** `GET`/`PATCH /api/platform-admin/settings`. */
+export interface PlatformSettings {
+  contactNotifyEmails: string[];
+}
 
 /** Effective plan for display — TRIAL status wins over the stored plan. */
 export function effectivePlan(t: Pick<TenantRow, 'status' | 'subscription'>): PlanKey {

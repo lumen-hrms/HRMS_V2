@@ -225,7 +225,12 @@ level. Break-glass has a full audited request/track/expire/revoke lifecycle
 elevated read access to a tenant's data during the grant window — that
 escalation mechanism (a temporary, scoped credential or RLS bypass, itself
 logged per-query) is a deliberate follow-on, the one thing keeping this
-module below 100%.
+module below 100%. The landing page's public "Contact us" form
+(`POST /api/contact`, unauthenticated, no tenant, rate-limited) now writes
+an append-only lead to `platform.contact_submissions` and best-effort
+emails whichever addresses an operator has set on the new **Settings**
+screen (`platform.platform_settings`); a **Leads** screen lists every
+submission regardless of whether the notify email sent.
 
 **Tenant Configuration — done, 100%.** Layer 1 (plan entitlements) is now
 enforced, not just stored: `EntitlementGuard` + `@RequiresModule`/
@@ -272,6 +277,27 @@ Payroll's job. Payroll and Compliance exports remain **not started** — see
 the blueprint's 12-week plan for sequencing (payroll is the
 highest-effort, highest-risk module; protect its time budget over breadth
 elsewhere).
+
+**Audit Log — done, 100%.** A shared `apps/api/src/audit` module
+(`AuditService`) is now the one write path every tenant-scoped module goes
+through for `public.audit_log` — Identity & Access, Employee Master and
+Attendance all route through it instead of hand-rolling their own
+try/catch write, closing the "generic interceptor" gap. Employee field and
+compensation edits (`PATCH /api/employees/:id` — designation, department,
+reporting manager, employment type, CTC, pay grade, cost center) are now
+audited with before/after values, closing the last uncovered write point
+from the must-cover list (attendance regularization decisions and manual
+marking were already covered). `GET /api/audit` (+ `/audit/modules`) is
+the new cross-module aggregation read side — a superset of the existing
+`GET /api/access/audit?feed=login|access` feeds — surfaced in the web app
+as a third "All activity" sub-tab on Access › Audit. Platform Admin's
+`platform_audit_log` stays a separate schema/table by design (module 02)
+and isn't part of this aggregation. **Reports & Analytics (module 11)
+stays at its prior scope** — its payroll-cost and PF/ESI/Gratuity
+statutory-register features are blocked on the Payroll module, which
+isn't merged into this codebase yet; only the parts that don't depend on
+Payroll are candidates for a future pass. See
+`docs/modules/12_AUDIT_LOG.md`.
 
 ## Keeping module status in sync — MANDATORY, no reminder needed
 

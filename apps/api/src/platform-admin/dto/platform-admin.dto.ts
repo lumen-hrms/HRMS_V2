@@ -205,3 +205,10 @@ export class UpdatePlanDto {
   @IsIn(['POOLED', 'DEDICATED'])
   isolationTier?: 'POOLED' | 'DEDICATED';
 }
+
+/** `PATCH /api/platform-admin/settings` */
+export class UpdatePlatformSettingsDto {
+  @IsArray()
+  @IsEmail({}, { each: true })
+  contactNotifyEmails!: string[];
+}

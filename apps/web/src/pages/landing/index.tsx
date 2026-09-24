@@ -6,13 +6,16 @@ import {
   Building2,
   CalendarDays,
   Check,
+  CheckCircle2,
   Clock,
   Database,
   FileScan,
   KeyRound,
   Landmark,
   Layers,
+  Loader2,
   Lock,
+  Mail,
   Network,
   Receipt,
   Rocket,
@@ -25,6 +28,8 @@ import {
   Workflow,
 } from 'lucide-react';
 import { trackPointer, useReveal } from './use-reveal';
+import { isApiError } from '@/lib/api';
+import { submitContactForm } from '@/lib/contact';
 import './landing.css';
 
 /**
@@ -56,6 +61,7 @@ export function LandingPage() {
       <Security />
       <BuiltFor />
       <Roadmap />
+      <Contact />
       <FinalCta />
       <Footer />
     </div>
@@ -87,6 +93,9 @@ function Nav() {
           </a>
           <a href="#roadmap" className="transition-colors hover:text-[var(--text)]">
             Roadmap
+          </a>
+          <a href="#contact" className="transition-colors hover:text-[var(--text)]">
+            Contact
           </a>
         </nav>
         <Link
@@ -707,6 +716,163 @@ function Roadmap() {
 
 // ─────────────────────────────────────────────────────────────────────────
 
+type ContactStatus = 'idle' | 'sending' | 'sent' | 'error';
+
+function Contact() {
+  const [name, setName] = React.useState('');
+  const [email, setEmail] = React.useState('');
+  const [company, setCompany] = React.useState('');
+  const [phone, setPhone] = React.useState('');
+  const [message, setMessage] = React.useState('');
+  const [status, setStatus] = React.useState<ContactStatus>('idle');
+  const [error, setError] = React.useState<string | null>(null);
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setStatus('sending');
+    setError(null);
+    try {
+      await submitContactForm({
+        name,
+        email,
+        company: company || undefined,
+        phone: phone || undefined,
+        message,
+      });
+      setStatus('sent');
+      setName('');
+      setEmail('');
+      setCompany('');
+      setPhone('');
+      setMessage('');
+    } catch (err) {
+      setStatus('error');
+      setError(
+        isApiError(err) && err.status === 429
+          ? "You've sent a few of these already — please wait a few minutes and try again."
+          : 'Something went wrong sending your message. Please try again in a moment.',
+      );
+    }
+  }
+
+  return (
+    <section id="contact" className="hairline-top scroll-mt-20 py-24">
+      <div className="mx-auto max-w-3xl px-5">
+        <SectionHead
+          kicker="Get in touch"
+          title="Talk to us about your team"
+          body="Tell us a bit about your company and what you need — we'll get back to you shortly."
+        />
+
+        <div data-reveal className="spot-card mt-12 rounded-2xl p-6 sm:p-8" onPointerMove={trackPointer}>
+          {status === 'sent' ? (
+            <div className="flex flex-col items-center gap-3 py-10 text-center">
+              <span className="icon-chip flex h-12 w-12 items-center justify-center rounded-full">
+                <CheckCircle2 className="h-6 w-6" />
+              </span>
+              <h3 className="text-lg font-semibold">Message sent</h3>
+              <p className="max-w-sm text-sm text-[var(--text-2)]">
+                Thanks for reaching out — we'll get back to you at the email you gave us.
+              </p>
+              <button
+                type="button"
+                onClick={() => setStatus('idle')}
+                className="btn-ghost mt-2 inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-medium"
+              >
+                Send another message
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={onSubmit} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <label className="flex flex-col gap-1.5 text-sm">
+                <span className="text-[var(--text-2)]">Name</span>
+                <input
+                  required
+                  minLength={2}
+                  maxLength={200}
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Jane Doe"
+                  className="form-field rounded-lg px-3.5 py-2.5 text-sm"
+                />
+              </label>
+              <label className="flex flex-col gap-1.5 text-sm">
+                <span className="text-[var(--text-2)]">Work email</span>
+                <input
+                  required
+                  type="email"
+                  maxLength={320}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="jane@company.com"
+                  className="form-field rounded-lg px-3.5 py-2.5 text-sm"
+                />
+              </label>
+              <label className="flex flex-col gap-1.5 text-sm">
+                <span className="text-[var(--text-2)]">Company (optional)</span>
+                <input
+                  maxLength={200}
+                  value={company}
+                  onChange={(e) => setCompany(e.target.value)}
+                  placeholder="Acme Hospital"
+                  className="form-field rounded-lg px-3.5 py-2.5 text-sm"
+                />
+              </label>
+              <label className="flex flex-col gap-1.5 text-sm">
+                <span className="text-[var(--text-2)]">Phone (optional)</span>
+                <input
+                  maxLength={40}
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="+91 98765 43210"
+                  className="form-field rounded-lg px-3.5 py-2.5 text-sm"
+                />
+              </label>
+              <label className="flex flex-col gap-1.5 text-sm sm:col-span-2">
+                <span className="text-[var(--text-2)]">Message</span>
+                <textarea
+                  required
+                  minLength={10}
+                  maxLength={4000}
+                  rows={4}
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  placeholder="Tell us about your team and what you're looking for…"
+                  className="form-field resize-none rounded-lg px-3.5 py-2.5 text-sm"
+                />
+              </label>
+
+              {status === 'error' && error && (
+                <p className="sm:col-span-2 text-sm text-[#ff9b9b]">{error}</p>
+              )}
+
+              <div className="sm:col-span-2">
+                <button
+                  type="submit"
+                  disabled={status === 'sending'}
+                  className="btn-gold inline-flex items-center gap-2 rounded-xl px-6 py-3 text-[15px] font-semibold disabled:opacity-60"
+                >
+                  {status === 'sending' ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" /> Sending…
+                    </>
+                  ) : (
+                    <>
+                      <Mail className="h-4 w-4" /> Send message
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+
 function FinalCta() {
   return (
     <section className="px-5 pb-24">
@@ -748,6 +914,9 @@ function Footer() {
           </a>
           <a href="#security" className="hover:text-[var(--text)]">
             Security
+          </a>
+          <a href="#contact" className="hover:text-[var(--text)]">
+            Contact
           </a>
           <Link to="/login" className="hover:text-[var(--text)]">
             Sign in

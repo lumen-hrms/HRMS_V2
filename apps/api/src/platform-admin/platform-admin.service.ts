@@ -107,6 +107,10 @@ function mapAuditRow(row: {
     case 'breakglass.expired':
       note = str(m.reason ?? m.note);
       break;
+    case 'platform_settings.updated':
+      before = Array.isArray(m.before) ? (m.before as string[]).join(', ') || '(none)' : null;
+      after = Array.isArray(m.after) ? (m.after as string[]).join(', ') || '(none)' : null;
+      break;
     default:
       note = str(m.note ?? m.reason);
   }
@@ -819,5 +823,72 @@ export class PlatformAdminService {
         .catch(() => undefined);
     }
     return overdue.length;
+  }
+
+  // ---- Platform settings + leads (contact form) ----
+  //
+  // `platform.platform_settings` is a singleton row (id 'singleton'); an
+  // operator editing `contactNotifyEmails` is the only write this module
+  // makes to it today. `platform.contact_submissions` is append-only
+  // (leads) — see the migration + ContactService for the write side.
+
+  /** `GET /api/platform-admin/settings`. */
+  async getSettings(): Promise<{ contactNotifyEmails: string[] }> {
+    const row = await this.platformPrisma.platformSettings.findUnique({
+      where: { id: 'singleton' },
+      select: { contactNotifyEmails: true },
+    });
+    return { contactNotifyEmails: row?.contactNotifyEmails ?? [] };
+  }
+
+  /** `PATCH /api/platform-admin/settings` — replaces the notify list wholesale. */
+  async updateSettings(
+    contactNotifyEmails: string[],
+    actorEmail?: string,
+  ): Promise<{ contactNotifyEmails: string[] }> {
+    const before = await this.platformPrisma.platformSettings.findUnique({
+      where: { id: 'singleton' },
+      select: { contactNotifyEmails: true },
+    });
+    const updated = await this.platformPrisma.platformSettings.upsert({
+      where: { id: 'singleton' },
+      create: { id: 'singleton', contactNotifyEmails },
+      update: { contactNotifyEmails },
+      select: { contactNotifyEmails: true },
+    });
+
+    await this.platformPrisma.platformAuditLog
+      .create({
+        data: {
+          actorEmail: actorEmail ?? 'unknown',
+          action: 'platform_settings.updated',
+          targetType: 'platform_settings',
+          targetId: 'singleton',
+          metadata: {
+            before: before?.contactNotifyEmails ?? [],
+            after: contactNotifyEmails,
+          },
+        },
+      })
+      .catch(() => undefined);
+
+    return updated;
+  }
+
+  /** `GET /api/platform-admin/leads` — contact-form submissions, newest first. */
+  async listLeads() {
+    const rows = await this.platformPrisma.contactSubmission.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      at: r.createdAt.toISOString(),
+      name: r.name,
+      email: r.email,
+      company: r.company,
+      phone: r.phone,
+      message: r.message,
+    }));
   }
 }

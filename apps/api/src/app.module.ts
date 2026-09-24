@@ -16,6 +16,8 @@ import { AttendanceModule } from './attendance/attendance.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { TenantConfigModule } from './tenant-config/tenant-config.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { AuditModule } from './audit/audit.module';
+import { ContactModule } from './contact/contact.module';
 
 @Module({
   imports: [
@@ -37,6 +39,8 @@ import { NotificationsModule } from './notifications/notifications.module';
     DashboardModule,
     TenantConfigModule,
     NotificationsModule,
+    AuditModule,
+    ContactModule,
   ],
   controllers: [HealthController],
 })
@@ -45,12 +49,14 @@ export class AppModule implements NestModule {
     // Every tenant-facing route gets a resolved tenant attached to the
     // request BEFORE auth runs (login needs it too). Platform-admin routes
     // have no tenant concept at all; the health probe answers before auth
-    // and has no tenant either — both are excluded.
+    // and has no tenant either; the public contact form is pre-tenant too
+    // (a prospect, not a signed-in user of any tenant) — all three excluded.
     consumer
       .apply(TenantResolutionMiddleware)
       .exclude(
         { path: 'platform-admin/(.*)', method: RequestMethod.ALL },
         { path: 'health', method: RequestMethod.ALL },
+        { path: 'contact', method: RequestMethod.ALL },
       )
       .forRoutes('*');
   }

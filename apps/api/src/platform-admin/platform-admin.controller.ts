@@ -12,6 +12,7 @@ import {
   PlatformSessionDto,
   RequestBreakGlassDto,
   UpdatePlanDto,
+  UpdatePlatformSettingsDto,
   UpdateTenantStatusDto,
 } from './dto/platform-admin.dto';
 
@@ -150,5 +151,28 @@ export class PlatformAdminController {
     @Req() req: Request & { user?: AuthenticatedPlatformAdmin },
   ) {
     return this.plans.update(key, dto, req.user?.email);
+  }
+
+  // ---- Platform settings + leads (contact form) ----
+
+  @UseGuards(PlatformJwtAuthGuard)
+  @Get('settings')
+  getSettings() {
+    return this.service.getSettings();
+  }
+
+  @UseGuards(PlatformJwtAuthGuard)
+  @Patch('settings')
+  updateSettings(
+    @Body() dto: UpdatePlatformSettingsDto,
+    @Req() req: Request & { user?: AuthenticatedPlatformAdmin },
+  ) {
+    return this.service.updateSettings(dto.contactNotifyEmails, req.user?.email);
+  }
+
+  @UseGuards(PlatformJwtAuthGuard)
+  @Get('leads')
+  listLeads() {
+    return this.service.listLeads();
   }
 }

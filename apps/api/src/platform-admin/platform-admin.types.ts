@@ -15,7 +15,8 @@ export type PlatformAuditAction =
   | 'breakglass.requested'
   | 'breakglass.used'
   | 'breakglass.expired'
-  | 'breakglass.revoked';
+  | 'breakglass.revoked'
+  | 'platform_settings.updated';
 
 /** Mirrors apps/web/src/pages/platform-admin/lib/types.ts BreakGlassGrant. */
 export interface BreakGlassGrantDto {

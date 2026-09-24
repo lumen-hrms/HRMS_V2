@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { EmployeesService } from './employees.service';
+import { AuditService } from '../audit/audit.service';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
 
 /** Minimal fake of the tenant-scoped Prisma surface EmployeesService touches. */
@@ -89,11 +90,13 @@ function buildService(
   const firebaseAuth = fakeFirebaseAuth(firebaseOverrides);
   const fieldEncryption = fakeFieldEncryption();
   const storage = fakeStorage(storageOverrides);
+  const audit = new AuditService(tenantPrisma as any);
   const service = new EmployeesService(
     tenantPrisma as any,
     storage as any,
     fieldEncryption as any,
     firebaseAuth as any,
+    audit,
   );
   return { service, tenantPrisma, firebaseAuth, fieldEncryption, storage };
 }
@@ -456,6 +459,46 @@ describe('EmployeesService.update (RULE-1 self-edit whitelist)', () => {
     const data = tenantPrisma.client.employee.update.mock.calls[0][0].data;
     expect(data.designation).toBe('Staff Engineer');
     expect(data.ctcAnnual).toBe(1500000);
+  });
+
+  it('audits a compensation/org field change with before/after values', async () => {
+    const { service, tenantPrisma } = buildService({
+      id: 'emp-1',
+      employeeCode: 'LUM-1',
+      designation: 'Engineer',
+      ctcAnnual: 1000000,
+    });
+
+    await service.update('emp-1', { designation: 'Staff Engineer', ctcAnnual: 1500000 }, actor());
+
+    expect(tenantPrisma.client.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'employee.updated',
+          targetId: 'emp-1',
+          metadata: expect.objectContaining({
+            module: 'employee-master',
+            changes: expect.arrayContaining([
+              { field: 'designation', before: 'Engineer', after: 'Staff Engineer' },
+              { field: 'ctcAnnual', before: 1000000, after: 1500000 },
+            ]),
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('records an empty change list for a no-op update (value resubmitted unchanged)', async () => {
+    const { service, tenantPrisma } = buildService({
+      id: 'emp-1',
+      employeeCode: 'LUM-1',
+      designation: 'Engineer',
+    });
+
+    await service.update('emp-1', { designation: 'Engineer' }, actor());
+
+    const changes = tenantPrisma.client.auditLog.create.mock.calls[0][0].data.metadata.changes;
+    expect(changes).toEqual([]);
   });
 });
 

@@ -165,6 +165,40 @@ model PlatformAuditLog {
   @@schema("platform")
 }
 
+// The public "Contact us" form on the landing page (pre-tenant, no auth) —
+// captured here rather than relying on the notification email alone
+// arriving, so a lead survives even if SES is unreachable at submit time.
+// `hrms_platform` has SELECT/INSERT only (no UPDATE/DELETE) — same
+// append-only instinct as the audit tables, since a lead record shouldn't
+// be edited after the fact.
+model ContactSubmission {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  email     String
+  company   String?
+  phone     String?
+  message   String
+  ipAddress String?  @map("ip_address")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@map("contact_submissions")
+  @@schema("platform")
+}
+
+// Singleton row (id is always the literal string "singleton") for
+// operator-editable, non-tenant platform configuration. Today this is just
+// who gets emailed on a new ContactSubmission; more platform-wide settings
+// can land as columns here later rather than one-table-per-setting.
+model PlatformSettings {
+  id                  String   @id @default("singleton")
+  contactNotifyEmails String[] @default([]) @map("contact_notify_emails")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@map("platform_settings")
+  @@schema("platform")
+}
+
 // Time-boxed, logged, read-only support access to one tenant — the
 // "break-glass" flow CLAUDE.md's multi-tenancy section calls for instead of
 // a standing grant. This table is the auditable control-plane record

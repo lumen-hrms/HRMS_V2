@@ -10,10 +10,12 @@
 import { auth } from './firebase';
 import type {
   BreakGlassGrant,
+  ContactLead,
   CreatedTenant,
   CreateTenantInput,
   Plan,
   PlatformAuditEntry,
+  PlatformSettings,
   TenantDetail,
   TenantRow,
   TenantStatus,
@@ -156,5 +158,20 @@ export const platformApi = {
   /** `POST /tenants/:id/breakglass/:grantId/revoke` */
   revokeBreakGlass(id: string, grantId: string) {
     return raw.post<{ status: 'REVOKED' }>(`/tenants/${id}/breakglass/${grantId}/revoke`);
+  },
+
+  /** `GET /leads` — contact-form submissions, newest first. */
+  listLeads() {
+    return raw.get<ContactLead[]>('/leads');
+  },
+
+  /** `GET /settings` — currently just the contact-notify recipient list. */
+  getSettings() {
+    return raw.get<PlatformSettings>('/settings');
+  },
+
+  /** `PATCH /settings` — replaces the recipient list wholesale, audited. */
+  updateSettings(contactNotifyEmails: string[]) {
+    return raw.patch<PlatformSettings>('/settings', { contactNotifyEmails });
   },
 };

@@ -376,6 +376,27 @@
   border: 1px solid rgba(245, 181, 68, 0.18);
 }
 
+/* ---- Contact form -------------------------------------------------- */
+.form-field {
+  background: rgba(245, 247, 249, 0.04);
+  border: 1px solid var(--line);
+  color: var(--text);
+  transition:
+    border-color 200ms ease,
+    background 200ms ease;
+}
+.form-field::placeholder {
+  color: var(--text-3);
+}
+.form-field:focus {
+  outline: none;
+  border-color: rgba(245, 181, 68, 0.5);
+  background: rgba(245, 247, 249, 0.06);
+}
+.form-field:disabled {
+  opacity: 0.6;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .landing *,
   .landing *::before,

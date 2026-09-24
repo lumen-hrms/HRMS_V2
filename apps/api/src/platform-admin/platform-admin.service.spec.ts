@@ -288,3 +288,96 @@ describe('PlatformAdminService.createTenant — Firebase Admin failure handling'
     });
   });
 });
+
+function buildSettingsHarness(initial: string[] | undefined) {
+  const platformPrisma = {
+    platformSettings: {
+      findUnique: jest
+        .fn()
+        .mockResolvedValue(initial === undefined ? null : { contactNotifyEmails: initial }),
+      upsert: jest.fn((args: any) => ({ contactNotifyEmails: args.update.contactNotifyEmails })),
+    },
+    contactSubmission: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    platformAuditLog: { create: jest.fn().mockResolvedValue({}) },
+  };
+  const service = new PlatformAdminService(
+    platformPrisma as any,
+    {} as any,
+    { get: jest.fn() } as any,
+    {} as any,
+    {} as any,
+    {} as any,
+  );
+  return { service, platformPrisma };
+}
+
+describe('PlatformAdminService.getSettings / updateSettings', () => {
+  it('returns an empty list when no settings row exists yet', async () => {
+    const { service } = buildSettingsHarness(undefined);
+    await expect(service.getSettings()).resolves.toEqual({ contactNotifyEmails: [] });
+  });
+
+  it('returns the stored recipient list', async () => {
+    const { service } = buildSettingsHarness(['a@x.test']);
+    await expect(service.getSettings()).resolves.toEqual({ contactNotifyEmails: ['a@x.test'] });
+  });
+
+  it('upserts the recipient list and writes an audit row with before/after', async () => {
+    const { service, platformPrisma } = buildSettingsHarness(['old@x.test']);
+
+    const result = await service.updateSettings(['new@x.test'], 'operator@lumenhrms.com');
+
+    expect(result).toEqual({ contactNotifyEmails: ['new@x.test'] });
+    expect(platformPrisma.platformSettings.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'singleton' },
+        update: { contactNotifyEmails: ['new@x.test'] },
+      }),
+    );
+    expect(platformPrisma.platformAuditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          actorEmail: 'operator@lumenhrms.com',
+          action: 'platform_settings.updated',
+          metadata: { before: ['old@x.test'], after: ['new@x.test'] },
+        }),
+      }),
+    );
+  });
+});
+
+describe('PlatformAdminService.listLeads', () => {
+  it('maps contact_submissions rows newest-first', async () => {
+    const { service, platformPrisma } = buildSettingsHarness([]);
+    platformPrisma.contactSubmission.findMany.mockResolvedValue([
+      {
+        id: 'lead-1',
+        createdAt: new Date('2026-09-24T10:00:00.000Z'),
+        name: 'Asha Rao',
+        email: 'asha@acme.test',
+        company: 'Acme',
+        phone: null,
+        message: 'Interested in a demo',
+      },
+    ]);
+
+    const result = await service.listLeads();
+
+    expect(platformPrisma.contactSubmission.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: { createdAt: 'desc' } }),
+    );
+    expect(result).toEqual([
+      {
+        id: 'lead-1',
+        at: '2026-09-24T10:00:00.000Z',
+        name: 'Asha Rao',
+        email: 'asha@acme.test',
+        company: 'Acme',
+        phone: null,
+        message: 'Interested in a demo',
+      },
+    ]);
+  });
+});

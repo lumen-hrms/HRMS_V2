@@ -3,7 +3,6 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
-  Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -13,6 +12,7 @@ import type * as admin from 'firebase-admin';
 import { FIREBASE_AUTH } from '../firebase/firebase-admin.provider';
 import { AuthEmailService } from '../notifications/auth-email.service';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service';
+import { AuditService } from '../audit/audit.service';
 import type { AppConfig } from '../config/configuration';
 import type { AppRole } from '../common/decorators/roles.decorator';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
@@ -58,13 +58,12 @@ type UserWithEmployee = Prisma.UserGetPayload<{ include: typeof userInclude }>;
  */
 @Injectable()
 export class AccessService {
-  private readonly logger = new Logger(AccessService.name);
-
   constructor(
     private readonly tenantPrisma: TenantPrismaService,
     private readonly config: ConfigService<AppConfig, true>,
     @Inject(FIREBASE_AUTH) private readonly firebaseAuth: admin.auth.Auth,
     private readonly authEmails: AuthEmailService,
+    private readonly audit: AuditService,
   ) {}
 
   // ---- Users -------------------------------------------------------------
@@ -411,28 +410,20 @@ export class AccessService {
     after: string | null,
     note: string | null,
   ): Promise<void> {
-    try {
-      const actorName = await this.resolveActorName(actor);
-      await this.tenantPrisma.client.auditLog.create({
-        data: buildAccessAuditData({
-          tenantId: this.tenantPrisma.tenantId,
-          actorUserId: actor.sub,
-          actorName,
-          actorRole: actor.role,
-          action,
-          targetUserId,
-          targetEmail,
-          before,
-          after,
-          note,
-        }),
-      });
-    } catch (err) {
-      this.logger.error(
-        `Failed to write access-change audit (${action}) for ${targetEmail}`,
-        err instanceof Error ? err.stack : String(err),
-      );
-    }
+    const actorName = await this.resolveActorName(actor);
+    const data = buildAccessAuditData({
+      tenantId: this.tenantPrisma.tenantId,
+      actorUserId: actor.sub,
+      actorName,
+      actorRole: actor.role,
+      action,
+      targetUserId,
+      targetEmail,
+      before,
+      after,
+      note,
+    });
+    await this.audit.log({ ...data, metadata: data.metadata as Record<string, unknown> });
   }
 
   /**

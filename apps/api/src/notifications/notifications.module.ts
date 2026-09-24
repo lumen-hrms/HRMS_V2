@@ -31,6 +31,6 @@ import { AuthEmailService } from './auth-email.service';
     SesEmailSender,
     AuthEmailService,
   ],
-  exports: [NotificationDispatcher, AuthEmailService],
+  exports: [NotificationDispatcher, AuthEmailService, SesEmailSender],
 })
 export class NotificationsModule {}

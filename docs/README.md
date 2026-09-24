@@ -38,11 +38,11 @@ criteria, open questions.
 | `modules/06_DASHBOARD.md` | Role-aware Dashboard |
 | `modules/07_PAYROLL_ENGINE.md` | Payroll Engine *(pending)* |
 | `modules/08_STATUTORY_COMPLIANCE.md` | Statutory Compliance |
-| `modules/09_DOCUMENTS.md` | Documents *(pending)* |
-| `modules/10_NOTIFICATIONS.md` | Notifications *(pending)* |
-| `modules/11_REPORTS_AND_ANALYTICS.md` | Reports & Analytics *(pending)* |
-| `modules/12_AUDIT_LOG.md` | Audit Log *(pending)* |
-| `modules/13_TENANT_CONFIGURATION.md` | Tenant Configuration *(pending — pairs with `TENANT_CONFIGURATION.md`)* |
+| `modules/09_DOCUMENTS.md` | Documents |
+| `modules/10_NOTIFICATIONS.md` | Notifications |
+| `modules/11_REPORTS_AND_ANALYTICS.md` | Reports & Analytics *(10% — blocked on Payroll, see the spec's §1.1)* |
+| `modules/12_AUDIT_LOG.md` | Audit Log |
+| `modules/13_TENANT_CONFIGURATION.md` | Tenant Configuration *(pairs with `TENANT_CONFIGURATION.md`, the primary mechanism doc)* |
 
 ## `ui-build-prompts/*.md` — lowercase, build inputs (not source of truth)
 

@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { AttendanceService } from './attendance.service';
+import { AuditService } from '../audit/audit.service';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
 
 /** Minimal fake of the tenant-scoped Prisma surface AttendanceService touches. */
@@ -77,6 +78,12 @@ function fakeNotifications(): any {
   return { notify: jest.fn().mockResolvedValue(undefined) };
 }
 
+/** Real AuditService wired to the same fake tenantPrisma so existing
+ *  `tenantPrisma.client.auditLog.create` assertions keep working unchanged. */
+function fakeAudit(tenantPrisma: { tenantId: string; client: any }): any {
+  return new AuditService(tenantPrisma as any);
+}
+
 function fakeDocuments(overrides: Record<string, any> = {}): any {
   return {
     attachmentsFor: jest.fn().mockResolvedValue(new Map()),
@@ -116,6 +123,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       const result = await service.clockIn(user());
@@ -136,6 +144,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       const result = await service.clockIn(user());
@@ -154,6 +163,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       await expect(service.clockIn(user())).rejects.toThrow(BadRequestException);
@@ -166,6 +176,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
       await expect(service.clockIn(user({ employeeId: undefined }))).rejects.toThrow(
         BadRequestException,
@@ -186,6 +197,7 @@ describe('AttendanceService', () => {
         leave as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       const result = await service.clockIn(user());
@@ -207,6 +219,7 @@ describe('AttendanceService', () => {
         leave as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       const result = await service.clockIn(user());
@@ -234,6 +247,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       const result = await service.clockIn(user());
@@ -250,6 +264,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
       await expect(service.clockIn(user())).rejects.toThrow(BadRequestException);
     });
@@ -273,6 +288,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       const result = await service.today(user());
@@ -300,6 +316,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       const result = await service.today(user());
@@ -317,6 +334,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
       await expect(service.clockOut(user())).rejects.toThrow(BadRequestException);
     });
@@ -335,6 +353,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
       await expect(service.clockOut(user())).rejects.toThrow(BadRequestException);
     });
@@ -358,6 +377,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       const started = await service.startBreak(user());
@@ -375,6 +395,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
       await expect(service.startBreak(user())).rejects.toThrow(BadRequestException);
     });
@@ -389,6 +410,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
       await expect(service.endBreak(user())).rejects.toThrow(BadRequestException);
     });
@@ -404,6 +426,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       const result = await service.requestRegularization(
@@ -426,6 +449,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       await service.requestRegularization(
@@ -454,6 +478,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       // "today" is faked to 2026-03-02; 2026-02-01 is 29 days back.
@@ -474,6 +499,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       await expect(
@@ -500,6 +526,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       await expect(
@@ -526,6 +553,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       await service.pendingRegularizations(user({ role: 'LINE_MANAGER', employeeId: 'mgr-1' }));
@@ -544,6 +572,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       await service.pendingRegularizations(user({ role: 'HR_MANAGER' }));
@@ -576,6 +605,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         notifications,
+        fakeAudit(tenantPrisma),
       );
 
       await service.requestRegularization(
@@ -627,6 +657,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         notifications,
+        fakeAudit(tenantPrisma),
       );
       const hr = user({ role: 'HR_MANAGER', employeeId: 'hr-1', sub: 'user-hr' });
 
@@ -668,6 +699,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       const result = await service.approveRegularization(
@@ -702,6 +734,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       await expect(
@@ -722,6 +755,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       await expect(
@@ -748,6 +782,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       const result = await service.rejectRegularization('reg-1', user({ role: 'HR_MANAGER' }));
@@ -785,6 +820,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       const results = await service.bulkApproveRegularizations(
@@ -819,6 +855,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       const roster = await service.teamRoster(
@@ -845,6 +882,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       const roster = await service.teamRoster(user({ role: 'LINE_MANAGER', employeeId: 'mgr-1' }));
@@ -860,6 +898,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       await service.markAttendance(
@@ -898,6 +937,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       const days = await service.getLopDays('emp-1', '2026-03');
@@ -929,6 +969,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
       await expect(service.cancelRegularization('reg-1', user())).rejects.toThrow(
         ForbiddenException,
@@ -948,6 +989,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
       await expect(service.cancelRegularization('reg-1', user())).rejects.toThrow(
         BadRequestException,
@@ -967,11 +1009,13 @@ describe('AttendanceService', () => {
     it('uploads a REGULARIZATION document for the applicant on a pending request', async () => {
       const evidence = { id: 'doc-1', scanStatus: 'PENDING_SCAN' };
       const documents = fakeDocuments({ upload: jest.fn().mockResolvedValue(evidence) });
+      const tenantPrisma = withRequest({ id: 'reg-1', employeeId: 'emp-1', status: 'PENDING' });
       const service = new AttendanceService(
-        withRequest({ id: 'reg-1', employeeId: 'emp-1', status: 'PENDING' }) as any,
+        tenantPrisma as any,
         fakeLeave() as any,
         documents,
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       const result = await service.attachEvidence('reg-1', png, user());
@@ -991,11 +1035,13 @@ describe('AttendanceService', () => {
 
     it('forbids anyone but the applicant — even HR', async () => {
       const documents = fakeDocuments();
+      const tenantPrisma = withRequest({ id: 'reg-1', employeeId: 'emp-2', status: 'PENDING' });
       const service = new AttendanceService(
-        withRequest({ id: 'reg-1', employeeId: 'emp-2', status: 'PENDING' }) as any,
+        tenantPrisma as any,
         fakeLeave() as any,
         documents,
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
       await expect(
         service.attachEvidence('reg-1', png, user({ role: 'HR_MANAGER' })),
@@ -1005,11 +1051,13 @@ describe('AttendanceService', () => {
 
     it('rejects a request that is no longer pending', async () => {
       const documents = fakeDocuments();
+      const tenantPrisma = withRequest({ id: 'reg-1', employeeId: 'emp-1', status: 'APPROVED' });
       const service = new AttendanceService(
-        withRequest({ id: 'reg-1', employeeId: 'emp-1', status: 'APPROVED' }) as any,
+        tenantPrisma as any,
         fakeLeave() as any,
         documents,
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
       await expect(service.attachEvidence('reg-1', png, user())).rejects.toBeInstanceOf(
         BadRequestException,
@@ -1032,6 +1080,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         documents,
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       const rows = await service.listRegularizations(user());
@@ -1052,6 +1101,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       await service.createShift({
@@ -1077,6 +1127,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
       await expect(service.updateShift('missing', { name: 'X' })).rejects.toThrow(
         'Shift not found',
@@ -1092,6 +1143,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
       await expect(service.deleteShift('shift-1')).rejects.toThrow(BadRequestException);
     });
@@ -1108,6 +1160,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
       await expect(service.deleteShift('shift-2')).resolves.toEqual({ deleted: true });
     });
@@ -1121,6 +1174,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       const result = await service.getAttendanceConfig();
@@ -1143,6 +1197,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       await service.updateAttendanceConfig({ regularizationWindowDays: 10 });
@@ -1161,6 +1216,7 @@ describe('AttendanceService', () => {
         fakeLeave() as any,
         fakeDocuments(),
         fakeNotifications(),
+        fakeAudit(tenantPrisma),
       );
 
       await service.updateAttendanceConfig({ weeklyOffDays: [0] });
