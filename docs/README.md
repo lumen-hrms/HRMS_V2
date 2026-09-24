@@ -36,7 +36,7 @@ criteria, open questions.
 | `modules/04_LEAVE_MANAGEMENT.md` | Leave Management |
 | `modules/05_ATTENDANCE.md` | Attendance & Time Tracking |
 | `modules/06_DASHBOARD.md` | Role-aware Dashboard |
-| `modules/07_PAYROLL_ENGINE.md` | Payroll Engine *(pending)* |
+| `modules/07_PAYROLL_ENGINE.md` | Payroll Engine |
 | `modules/08_STATUTORY_COMPLIANCE.md` | Statutory Compliance |
 | `modules/09_DOCUMENTS.md` | Documents |
 | `modules/10_NOTIFICATIONS.md` | Notifications |

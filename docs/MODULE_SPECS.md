@@ -1045,8 +1045,13 @@ calls — keeps "what does an HR Manager see vs an Employee" in one place.
 
 ## 7. Payroll Engine 🔴
 
-**Status:** not started. **Highest-effort, highest-risk module — protect
-its time budget over breadth elsewhere** (`CLAUDE.md`).
+**Deep spec:** `docs/modules/07_PAYROLL_ENGINE.md`
+**Status:** not started, deep spec written 2026-09-23. **Highest-effort,
+highest-risk module — protect its time budget over breadth elsewhere**
+(`CLAUDE.md`). The one upstream contract it needs is already live:
+Attendance's `getLopDays(employeeId, month)` / `GET
+/attendance/lop-days`. It is itself the hard prerequisite for module 8
+Statutory Compliance (also 0%) — see that module's deep spec §0.
 **Target code location:** `apps/api/src/payroll`
 
 ### Expectation
