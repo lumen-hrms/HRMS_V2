@@ -13,6 +13,8 @@ import {
   MinLength,
 } from 'class-validator';
 
+export const SEPARATION_REASONS = ['VOLUNTARY', 'INVOLUNTARY', 'OTHER'] as const;
+
 export const LIFECYCLE_STATES = [
   'PRE_JOINING',
   'PROBATION',
@@ -277,6 +279,13 @@ export class TransitionLifecycleDto {
   @IsString()
   @MinLength(1)
   reason!: string;
+
+  // Only meaningful for targetState=SEPARATED (the service rejects it for any
+  // other target). Optional so existing callers keep working; Reports groups
+  // the unset ones as "unspecified".
+  @IsOptional()
+  @IsIn(SEPARATION_REASONS)
+  separationReason?: (typeof SEPARATION_REASONS)[number];
 }
 
 export class CreateDepartmentDto {

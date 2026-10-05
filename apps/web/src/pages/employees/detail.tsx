@@ -1116,6 +1116,7 @@ function LifecycleDialog({
   const [targetState, setTargetState] = React.useState(targets[0] ?? '');
   const [effectiveDate, setEffectiveDate] = React.useState('');
   const [reason, setReason] = React.useState('');
+  const [separationReason, setSeparationReason] = React.useState('');
   const [submitting, setSubmitting] = React.useState(false);
   const [formError, setFormError] = React.useState<string | null>(null);
 
@@ -1124,6 +1125,7 @@ function LifecycleDialog({
       setTargetState(targets[0] ?? '');
       setEffectiveDate('');
       setReason('');
+      setSeparationReason('');
       setFormError(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1148,6 +1150,8 @@ function LifecycleDialog({
         targetState,
         effectiveDate: effectiveDate || undefined,
         reason: reason.trim(),
+        separationReason:
+          targetState === 'SEPARATED' && separationReason ? separationReason : undefined,
       });
       onOpenChange(false);
       onChanged(targetState);
@@ -1195,6 +1199,19 @@ function LifecycleDialog({
               <p className="rounded-md bg-warning/10 px-3 py-2 text-xs text-warning">
                 This will disable the employee's login.
               </p>
+            )}
+            {targetState === 'SEPARATED' && (
+              <Field
+                label="Separation type"
+                hint="Used for voluntary vs involuntary attrition on Reports."
+              >
+                <Select value={separationReason} onChange={(e) => setSeparationReason(e.target.value)}>
+                  <option value="">Not recorded</option>
+                  <option value="VOLUNTARY">Voluntary (resignation)</option>
+                  <option value="INVOLUNTARY">Involuntary (termination, dismissal)</option>
+                  <option value="OTHER">Other (end of contract, death, retirement)</option>
+                </Select>
+              </Field>
             )}
             <Field label="Reason" required>
               <Textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} />

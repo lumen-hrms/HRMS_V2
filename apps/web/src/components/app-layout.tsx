@@ -13,6 +13,7 @@ import {
   Moon,
   Sun,
   Monitor,
+  ChartColumn,
 } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import { useTheme } from '@/context/theme-context';
@@ -47,6 +48,12 @@ const NAV: { to: string; label: string; icon: typeof LayoutDashboard; end?: bool
   },
   { to: '/leave', label: 'Leave', icon: CalendarDays },
   { to: '/attendance', label: 'Attendance', icon: Clock },
+  {
+    to: '/reports',
+    label: 'Reports',
+    icon: ChartColumn,
+    roles: ['COMPANY_ADMIN', 'HR_MANAGER'],
+  },
   {
     to: '/access',
     label: 'Identity & Access',

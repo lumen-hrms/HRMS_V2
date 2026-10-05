@@ -292,12 +292,19 @@ the new cross-module aggregation read side — a superset of the existing
 `GET /api/access/audit?feed=login|access` feeds — surfaced in the web app
 as a third "All activity" sub-tab on Access › Audit. Platform Admin's
 `platform_audit_log` stays a separate schema/table by design (module 02)
-and isn't part of this aggregation. **Reports & Analytics (module 11)
-stays at its prior scope** — its payroll-cost and PF/ESI/Gratuity
-statutory-register features are blocked on the Payroll module, which
-isn't merged into this codebase yet; only the parts that don't depend on
-Payroll are candidates for a future pass. See
-`docs/modules/12_AUDIT_LOG.md`.
+and isn't part of this aggregation. See `docs/modules/12_AUDIT_LOG.md`.
+
+**Reports & Analytics — 50%, Payroll-independent slice done.** A new
+`apps/api/src/reports` module serves headcount (as-of date, dept and
+employment-type breakdown), monthly joiners/leavers with net change, and
+attrition (rate, average tenure, voluntary/involuntary split) to
+COMPANY_ADMIN and HR_MANAGER only, each exportable as CSV/XLSX; the web
+app has a `/reports` screen. Attrition's voluntary/involuntary split reads
+`Employee.separationReason`, captured on the SEPARATED lifecycle
+transition. Its payroll-cost and PF/ESI/Gratuity statutory-register
+features stay blocked on the Payroll module, which isn't merged into this
+codebase yet — the module can't reach 100% until it lands. See
+`docs/modules/11_REPORTS_AND_ANALYTICS.md`.
 
 ## Keeping module status in sync — MANDATORY, no reminder needed
 

@@ -3,23 +3,21 @@
 > **This file is the authoritative, detailed spec for further development of
 > this module.** `docs/MODULE_SPECS.md` §11 is the one-page summary.
 >
-> **Status:** 🔴 10% — only the Dashboard's own aggregates exist
-> (`apps/api/src/dashboard/dashboard.controller.ts`: headcount, department
-> breakdown, pending-approvals count); there is no `apps/api/src/reports`
-> module, no register screens, and no export pipeline yet. **This module is
-> currently blocked, in part, on Payroll** — see §1.1. Not built in this
-> pass (2026-09-24): scoped and documented, code not started, by explicit
-> owner decision (build what doesn't depend on Payroll first was one option
-> considered and declined in favor of waiting — see §8).
-> **Target code location:** `apps/api/src/reports` (backend, not yet
-> created), a `Reports` route in `apps/web/src/pages` (frontend, not yet
-> created).
+> **Status:** 🟡 50% — the Payroll-independent slice is built: headcount,
+> joiners/leavers, attrition, and CSV/XLSX export of each.
+> Payroll-cost (FR-RPT-002) and statutory registers (FR-RPT-004) remain
+> blocked on Payroll — see §1.1. The 2026-09-24 sequencing call (§8) was
+> revisited on 2026-10-05 at the owner's request to finish what was
+> buildable now.
+> **Code location:** `apps/api/src/reports` (backend; `reports.calculations.ts`
+> holds the pure math), `apps/web/src/pages/reports` + `apps/web/src/lib/reports`
+> (frontend, route `/reports`).
 > **Related:** `docs/MODULE_SPECS.md` §11 · module `06_DASHBOARD.md` (the
 > aggregates this module will supersede/extend) · module
 > `08_STATUTORY_COMPLIANCE.md` (the statutory registers this module
 > exports depend on the same Payroll data) · `CLAUDE.md`'s "V1 module
 > scope" (Payroll: "not started").
-> **Last synced to code:** 2026-09-24 (spec written; no code change).
+> **Last synced to code:** 2026-10-05 (Payroll-independent slice landed).
 
 ---
 
@@ -92,12 +90,12 @@ merged — starts from a real plan instead of a blank slate.
 
 | Feature | SRS | Status | Depends on |
 |---|---|---|---|
-| Headcount: active vs separated, joiners/leavers, dept-wise | FR-RPT-001 | 🟡 partial today (Dashboard has headcount + dept breakdown only; no joiners/leavers trend, no time-series) | Employee Master only — buildable now |
+| Headcount: active vs separated, joiners/leavers, dept-wise | FR-RPT-001 | ✅ as-of headcount + dept breakdown; monthly joiners/leavers with net change | Employee Master only |
 | Payroll cost: monthly cost, CTC vs actual, dept-wise salary | FR-RPT-002 | 🔴 | Payroll (not built) |
-| Attrition: monthly rate, avg tenure, voluntary vs involuntary | FR-RPT-003 | 🔴 | Employee Master's `lastWorkingDate`/lifecycle history for rate + tenure; voluntary/involuntary split needs a structured separation-reason field not currently on `Employee` (today `transitionLifecycle`'s `reason` is free text, module 03 §4.4) — buildable *with a small schema addition*, not blocked on Payroll |
+| Attrition: monthly rate, avg tenure, voluntary vs involuntary | FR-RPT-003 | ✅ | Employee Master's `lastWorkingDate`/lifecycle history for rate + tenure; voluntary/involuntary split needs a structured separation-reason field not currently on `Employee` (today `transitionLifecycle`'s `reason` is free text, module 03 §4.4) — buildable *with a small schema addition*, not blocked on Payroll |
 | Statutory registers: Salary, PF, ESI, Gratuity | FR-RPT-004 | 🔴 | Payroll (Salary/PF/ESI) + Payroll's gratuity calc (Gratuity) |
 | `[SHOULD]` drag-drop custom report builder + scheduled email | FR-RPT-005 | 🔴 | All of the above existing first |
-| `[SHOULD]` export PDF / XLSX / CSV everywhere | FR-RPT-006 | 🔴 | Per-report export ships with that report; this is the later generalization |
+| `[SHOULD]` export PDF / XLSX / CSV everywhere | FR-RPT-006 | 🟡 CSV + XLSX for the three built reports; no PDF, no generic export | Per-report export ships with that report; this is the later generalization |
 
 ---
 
@@ -177,11 +175,13 @@ these specifically.)
   anyway. Revisit this call once Payroll's schema is closer to landing —
   if Payroll's `PayrollRun`/`Payslip`-equivalent shapes are stable early,
   building headcount/attrition first may become worth it again.
-- **Voluntary vs involuntary attrition** needs a structured field
-  (`Employee.separationReason` enum or similar) that doesn't exist today
-  — `transitionLifecycle`'s `reason` is free text (module 03 §4.4). Small
-  schema addition, not blocked on Payroll; flag to whoever picks this
-  module up.
+- **Voluntary vs involuntary attrition** — resolved 2026-10-05:
+  `Employee.separationReason` is captured on the SEPARATED transition (module
+  03 §4.4, optional). Leavers exited before this shipped, or without a reason,
+  show as "unspecified" rather than being guessed.
+- **Headcount definition:** a person is counted at an instant if joined by
+  then and not yet left (last working day is counted as gone at its end).
+  Employees with no joining date are excluded and reported separately.
 - **PDF export library** not chosen yet — evaluate at build time rather
   than locking in a dependency this spec can't validate against real
   report layouts.
