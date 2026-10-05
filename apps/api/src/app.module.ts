@@ -18,6 +18,7 @@ import { TenantConfigModule } from './tenant-config/tenant-config.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AuditModule } from './audit/audit.module';
 import { ContactModule } from './contact/contact.module';
+import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { ContactModule } from './contact/contact.module';
     NotificationsModule,
     AuditModule,
     ContactModule,
+    ReportsModule,
   ],
   controllers: [HealthController],
 })

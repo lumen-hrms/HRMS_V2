@@ -665,6 +665,9 @@ export class EmployeesService {
     if (requiredDateField && !dto.effectiveDate) {
       throw new BadRequestException(`${to} requires ${requiredDateField}`);
     }
+    if (dto.separationReason && to !== 'SEPARATED') {
+      throw new BadRequestException('separationReason only applies to a SEPARATED transition');
+    }
 
     // Do the part that can fail (the Firebase call) *before* any DB write,
     // so a failed cascade never leaves the employee SEPARATED with an
@@ -674,6 +677,9 @@ export class EmployeesService {
     }
 
     const data: Prisma.EmployeeUpdateInput = { lifecycleState: to as any };
+    if (to === 'SEPARATED') {
+      data.separationReason = (dto.separationReason ?? null) as any;
+    }
     if (requiredDateField && dto.effectiveDate) {
       (data as any)[requiredDateField] = new Date(dto.effectiveDate);
     }
@@ -693,6 +699,7 @@ export class EmployeesService {
         before: from,
         after: to,
         reason: dto.reason,
+        ...(to === 'SEPARATED' ? { separationReason: dto.separationReason ?? null } : {}),
       },
     });
 

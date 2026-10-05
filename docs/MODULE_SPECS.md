@@ -21,8 +21,16 @@
 > spec draft that is no longer maintained — ignore them; this file and the
 > code are the source of truth.)
 >
-> **Last synced to code:** 2026-09-24. Landed since the previous sync
-> (2026-09-23):
+> **Last synced to code:** 2026-10-05. Landed since the previous sync
+> (2026-09-24):
+>
+> - **Reports & Analytics (module 11): Payroll-independent slice built.**
+>   New `apps/api/src/reports` — `GET /api/reports/{headcount|movement|attrition}`
+>   and `…/export?format=csv|xlsx`, COMPANY_ADMIN + HR_MANAGER only. Adds
+>   `Employee.separationReason` (migration `20260929090000_reports_separation_reason`),
+>   captured on the SEPARATED lifecycle transition. Web: `/reports` screen.
+>   Payroll-cost and statutory registers remain blocked on Payroll.
+>
 >
 > - **Platform Admin (module 2): public contact form + Leads + Settings.**
 >   New `apps/api/src/contact` module — `POST /api/contact` (unauthenticated,
@@ -369,7 +377,7 @@
 | 8. Statutory Compliance | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
 | 9. Documents | ✅ | `████████████████████` 100% — shared `documents` module owns every user upload (employee profile docs, leave attachments, regularization evidence): type/magic-byte/size validation, ClamAV scan before download (fail-closed, self-healing sweep), 5-min attachment-disposition presigned URLs, subject-employee visibility, audited soft delete (no `DELETE` grant). Retention purge deliberately out of V1 scope. Deep spec: `docs/modules/09_DOCUMENTS.md` |
 | 10. Notifications | 🟡 | `███████████████████░` 95% — queued, deduped, audited-retry email pipeline on AWS SES v2 (`notification_log`, BullMQ `notifications` queue, 10-min self-healing sweep, Email log screen) wired into every Leave / Attendance-regularization / Documents workflow event. Remaining: first live SES delivery, blocked on the owner's SES setup (verified sender + IAM credentials). Deep spec: `docs/modules/10_NOTIFICATIONS.md` |
-| 11. Reports & Analytics | 🔴 | `██░░░░░░░░░░░░░░░░░░` 10% (only the Dashboard aggregates exist; the module's two `[MUST]` features that need payroll-cost/statutory data are structurally blocked on the unbuilt Payroll module — see the deep spec §1.1). Deep spec: `docs/modules/11_REPORTS_AND_ANALYTICS.md` |
+| 11. Reports & Analytics | 🟡 | `██████████░░░░░░░░░░` 50% (headcount, joiners/leavers and attrition — with voluntary/involuntary split and tenure — plus CSV/XLSX export are live; payroll-cost and statutory registers stay blocked on the unbuilt Payroll module — see the deep spec §1.1). Deep spec: `docs/modules/11_REPORTS_AND_ANALYTICS.md` |
 | 12. Audit Log | ✅ | `████████████████████` 100% — three append-only trails live: `login_audit_entries` (sign-in outcomes, with a daily retention-purge job), `public.audit_log` (Identity & Access, Employee Master and Attendance events, all now written through the shared `AuditService`), `platform.platform_audit_log` (tenant create/status/plan/renewal/price-adjust/plan-edit/breakglass). All three tables have no `UPDATE`/`DELETE` grant (true append-only). Employee field/compensation edits are now audited with before/after values; `GET /api/audit` + `/audit/modules` give the cross-module aggregation/query view (web: Access › Audit's "All activity" sub-tab). Deep spec: `docs/modules/12_AUDIT_LOG.md` |
 | 13. Tenant Configuration | ✅ | `████████████████████` 100% — schema, onboarding defaults, `EntitlementGuard` (+ `@RequiresModule`/`@RequiresFeature`, wired onto Leave + Attendance), `attendance.service.ts` reading tenant `Shift`/`tenant_settings` instead of hardcoded constants, Settings screens (shift CRUD + attendance/general settings), and a skippable/resumable first-run setup wizard (`apps/web/src/components/setup-wizard`, `apps/api/src/tenant-config`) are all live. See `docs/TENANT_CONFIGURATION.md` |
 
@@ -1293,13 +1301,17 @@ queue — never inline in the request path — with every send logged.
 
 ---
 
-## 11. Reports & Analytics 🔴 (10%)
+## 11. Reports & Analytics 🟡 (50%)
 
-**Status:** only the Dashboard aggregates exist. **Target code location:**
-`apps/api/src/reports`. **Deep spec:** `docs/modules/11_REPORTS_AND_ANALYTICS.md`
-— covers why this module can't reach 100% until Payroll lands (§1.1), what's
-independently buildable today (headcount, most of attrition), and the
-target technical design.
+**Status:** the Payroll-independent slice is live: headcount (as-of date,
+department and employment-type breakdown), monthly joiners/leavers with
+net change, and attrition (rate, average tenure, voluntary / involuntary /
+unspecified split), each exportable as CSV or XLSX. **Target code location:**
+`apps/api/src/reports` (built). **Deep spec:** `docs/modules/11_REPORTS_AND_ANALYTICS.md`
+— explains why the module can't reach 100% until Payroll lands (§1.1).
+Known gaps: payroll-cost (FR-RPT-002) and statutory registers (FR-RPT-004)
+are blocked on Payroll; the custom report builder (FR-RPT-005) is `[SHOULD]`
+and later; export is per-report, not "everywhere" (FR-RPT-006 partial).
 
 ### Expectation
 
@@ -1310,12 +1322,12 @@ dashboards; later a custom report builder.
 
 | Feature | SRS | Status |
 |---|---|---|
-| Headcount: active vs separated, joiners/leavers, dept-wise | FR-RPT-001 | 🟡 partial (Dashboard headcount + dept breakdown) |
+| Headcount: active vs separated, joiners/leavers, dept-wise | FR-RPT-001 | ✅ as-of headcount + dept/employment-type breakdown; monthly joiners/leavers and net change |
 | Payroll cost: monthly cost, CTC vs actual, dept-wise salary | FR-RPT-002 | 🔴 (needs Payroll) |
-| Attrition: monthly rate, avg tenure, voluntary vs involuntary | FR-RPT-003 | 🔴 |
-| Statutory registers: Salary, PF, ESI, Gratuity | FR-RPT-004 | 🔴 |
+| Attrition: monthly rate, avg tenure, voluntary vs involuntary | FR-RPT-003 | ✅ monthly + period rate, annualised rate, avg leaver/active tenure, voluntary/involuntary/other/unspecified split (split is only as good as the reason captured on exit) |
+| Statutory registers: Salary, PF, ESI, Gratuity | FR-RPT-004 | 🔴 (needs Payroll) |
 | `[SHOULD]` drag-drop custom report builder + scheduled email | FR-RPT-005 | 🔴 |
-| `[SHOULD]` export PDF / XLSX / CSV everywhere | FR-RPT-006 | 🔴 |
+| `[SHOULD]` export PDF / XLSX / CSV everywhere | FR-RPT-006 | 🟡 CSV + XLSX per report for headcount, joiners/leavers and attrition; PDF and generic "export any view" not built |
 
 ### Happy path
 

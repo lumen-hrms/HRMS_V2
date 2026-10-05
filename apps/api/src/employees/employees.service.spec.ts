@@ -170,6 +170,59 @@ describe('EmployeesService.transitionLifecycle', () => {
     expect(result.lifecycleState).toBe('CONFIRMED');
   });
 
+  it('records the separation reason on a SEPARATED transition', async () => {
+    const { service, tenantPrisma } = buildService({
+      id: 'emp-1',
+      employeeCode: 'LUM-1',
+      lifecycleState: 'NOTICE_PERIOD',
+      userId: null,
+    });
+
+    await service.transitionLifecycle(
+      'emp-1',
+      {
+        targetState: 'SEPARATED',
+        effectiveDate: '2026-03-15',
+        reason: 'Resignation',
+        separationReason: 'VOLUNTARY',
+      },
+      actor(),
+    );
+
+    expect(tenantPrisma.client.employee.update).toHaveBeenCalledWith({
+      where: { id: 'emp-1' },
+      data: {
+        lifecycleState: 'SEPARATED',
+        lastWorkingDate: new Date('2026-03-15'),
+        separationReason: 'VOLUNTARY',
+      },
+    });
+    expect(tenantPrisma.client.auditLog.create).toHaveBeenCalled();
+  });
+
+  it('rejects a separation reason on a non-SEPARATED transition', async () => {
+    const { service, tenantPrisma } = buildService({
+      id: 'emp-1',
+      employeeCode: 'LUM-1',
+      lifecycleState: 'PROBATION',
+      userId: null,
+    });
+
+    await expect(
+      service.transitionLifecycle(
+        'emp-1',
+        {
+          targetState: 'CONFIRMED',
+          effectiveDate: '2026-03-01',
+          reason: 'Passed probation',
+          separationReason: 'VOLUNTARY',
+        },
+        actor(),
+      ),
+    ).rejects.toThrow(BadRequestException);
+    expect(tenantPrisma.client.employee.update).not.toHaveBeenCalled();
+  });
+
   it('cascades SEPARATED into disabling the linked login', async () => {
     const { service, tenantPrisma, firebaseAuth } = buildService(
       { id: 'emp-1', employeeCode: 'LUM-1', lifecycleState: 'NOTICE_PERIOD', userId: 'user-1' },

@@ -336,6 +336,14 @@ enum NotificationStatus {
   @@schema("public")
 }
 
+enum SeparationReason {
+  VOLUNTARY
+  INVOLUNTARY
+  OTHER
+
+  @@schema("public")
+}
+
 enum EmployeeLifecycleState {
   PRE_JOINING
   PROBATION
@@ -531,6 +539,9 @@ model Employee {
   confirmationDate DateTime?              @map("confirmation_date")
   noticeStartDate  DateTime?              @map("notice_start_date")
   lastWorkingDate  DateTime?              @map("last_working_date")
+  // Set by the SEPARATED transition (optional — null for legacy rows and for
+  // callers that don't say). Feeds Reports' voluntary/involuntary attrition split.
+  separationReason SeparationReason?      @map("separation_reason")
 
   reportingManagerId String?    @map("reporting_manager_id") @db.Uuid
   reportingManager   Employee?  @relation("ManagerReports", fields: [reportingManagerId], references: [id], onDelete: SetNull)
