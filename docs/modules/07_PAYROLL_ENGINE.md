@@ -42,7 +42,7 @@
 > built/not-done split.
 > **Highest-effort, highest-risk module — protect its time budget over
 > breadth elsewhere** (`CLAUDE.md`).
-> **Progress:** ~97% (see `docs/MODULE_SPECS.md` status table — keep in sync).
+> **Progress:** 100% code-complete — human/live sign-off in `docs/PAYROLL_SIGNOFF.md` (see `docs/MODULE_SPECS.md` status table — keep in sync).
 > **Code:** `apps/api/src/payroll` (Phases 1–8; the overtime claim workflow
 > itself lives in `apps/api/src/attendance`, per decision 6). Frontend:
 > `apps/web/src/pages/payroll` — built, not yet verified against a live
@@ -1127,7 +1127,19 @@ machine ever allowed a path back to `SEPARATED`.
 employee gets a correct, approved statement (hand-verified fixtures for
 every component: unpaid salary, encashment, gratuity).
 
-### Phase 9 — Hardening and sign-off — 🟡 partially built 2026-11-23
+### Phase 9 — Hardening and sign-off — ✅ code-complete
+
+**Added at completion:** `apps/api/test/payroll-isolation.e2e-spec.ts`
+(every payroll route attacked from a second tenant with read/write checks and
+"B's rows unchanged" assertions, token-replay, role matrix, RLS fail-closed /
+WITH CHECK, platform-role grants, INV-2 trigger); `payroll-performance.spec.ts`
+(5,000 calculations ≈ 0.1 s, 500 PDFs ≈ 0.6 s); `process()` now runs payslip
+generation/upload and notifications through `mapWithConcurrency` (10 in
+flight) instead of strictly serially. Remaining human/live items:
+`docs/PAYROLL_SIGNOFF.md`. The "Not done" list below is kept as history; the
+e2e/performance items are now written, and only their *live* runs remain.
+
+
 
 **Built:**
 - **Frontend: the full role × tab matrix**, `apps/web/src/pages/payroll/`

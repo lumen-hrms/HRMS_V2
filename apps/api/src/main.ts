@@ -5,7 +5,10 @@ import { AppModule } from './app.module';
 import { backgroundWorkersEnabled } from './common/background-workers';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    // Razorpay webhook signatures are computed over the exact raw bytes.
+    rawBody: true,
+  });
 
   // Behind CloudFront + the ALB in production; trust the first proxy hop so
   // `req.ip` is the real client address (used for the login audit trail),

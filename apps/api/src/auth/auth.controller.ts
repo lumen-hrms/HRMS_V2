@@ -8,6 +8,7 @@ import { AuthService } from './auth.service';
 import { SessionDto } from './dto/session.dto';
 import { RequestPasswordResetDto } from './dto/password-reset.dto';
 import { PasswordResetService } from './password-reset.service';
+import { WorkspaceStatusService } from './workspace-status.service';
 
 @UseGuards(JwtAuthGuard, TenantGuard)
 @Controller('auth')
@@ -15,6 +16,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly passwordReset: PasswordResetService,
+    private readonly workspaceStatus: WorkspaceStatusService,
   ) {}
 
   /**
@@ -46,6 +48,12 @@ export class AuthController {
   async requestPasswordReset(@Body() dto: RequestPasswordResetDto, @Req() req: Request) {
     await this.passwordReset.request(dto.email, req.ip);
     return { status: 'ok' };
+  }
+
+  /** Trial / grace / read-only state for the in-app banner. Any signed-in role. */
+  @Get('workspace-status')
+  status(@CurrentUser() user: AuthenticatedUser) {
+    return this.workspaceStatus.get(user.tenantId);
   }
 
   @Get('me')

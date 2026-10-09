@@ -15,40 +15,83 @@ const OLD_CONFIG = DEFAULT_TAX_REGIME_CONFIG.OLD;
 
 describe('projectAnnualTax', () => {
   it('computes progressive slab tax + cess, NEW regime, above the 87A rebate threshold', () => {
-    // taxableIncome = 1,000,000 - 75,000 (std. deduction) = 925,000
-    // 300k-600k@5% = 15,000; 600k-900k@10% = 30,000; 900k-925k@15% = 3,750
-    // tax = 48,750; +4% cess = 50,700
+    // taxableIncome = 1,500,000 - 75,000 (std. deduction) = 1,425,000
+    // 4L-8L@5% = 20,000; 8L-12L@10% = 40,000; 12L-14.25L@15% = 33,750
+    // tax = 93,750; +4% cess = 97,500
     const tax = projectAnnualTax({
-      projectedAnnualGross: 1000000,
+      projectedAnnualGross: 1500000,
       declaredExemptions: 0,
       slabs: NEW_SLABS,
       config: NEW_CONFIG,
+      marginalRelief: true,
     });
-    expect(tax.toNumber()).toBe(50700);
+    expect(tax.toNumber()).toBe(97500);
   });
 
   it('zeroes out via the 87A rebate exactly at the threshold', () => {
-    // taxableIncome = 775,000 - 75,000 = 700,000 (== rebateThreshold)
-    // 300k-600k@5% = 15,000; 600k-700k@10% = 10,000 -> tax = 25,000
-    // rebate caps it at max(0, 25,000 - 25,000) = 0
+    // taxableIncome = 1,275,000 - 75,000 = 1,200,000 (== rebateThreshold)
+    // 4L-8L@5% = 20,000; 8L-12L@10% = 40,000 -> tax 60,000, fully rebated
     const tax = projectAnnualTax({
-      projectedAnnualGross: 775000,
+      projectedAnnualGross: 1275000,
       declaredExemptions: 0,
       slabs: NEW_SLABS,
       config: NEW_CONFIG,
+      marginalRelief: true,
     });
     expect(tax.toNumber()).toBe(0);
   });
 
-  it('does not rebate just above the threshold', () => {
-    // taxableIncome = 775001 - 75000 = 700001, one rupee over the threshold
+  it('without marginal relief the rebate cliff is total', () => {
     const tax = projectAnnualTax({
-      projectedAnnualGross: 775001,
+      projectedAnnualGross: 1275001,
       declaredExemptions: 0,
       slabs: NEW_SLABS,
       config: NEW_CONFIG,
     });
-    expect(tax.toNumber()).toBeGreaterThan(0);
+    expect(tax.toNumber()).toBeGreaterThan(60000);
+  });
+
+  it('marginal relief caps tax at the income earned over the threshold (NEW)', () => {
+    // taxableIncome = 1,210,000: slab tax 61,500 but only 10,000 over 12L
+    // -> tax 10,000; +4% cess = 10,400
+    const tax = projectAnnualTax({
+      projectedAnnualGross: 1285000,
+      declaredExemptions: 0,
+      slabs: NEW_SLABS,
+      config: NEW_CONFIG,
+      marginalRelief: true,
+    });
+    expect(tax.toNumber()).toBe(10400);
+  });
+
+  it('marginal relief stops mattering once slab tax is below the excess', () => {
+    // 1,275,000 taxable: slab tax 71,250 vs 75,000 excess -> slab tax wins
+    const tax = projectAnnualTax({
+      projectedAnnualGross: 1350000,
+      declaredExemptions: 0,
+      slabs: NEW_SLABS,
+      config: NEW_CONFIG,
+      marginalRelief: true,
+    });
+    expect(tax.toNumber()).toBe(74100);
+  });
+
+  it('OLD regime keeps the hard 87A cliff at ₹5L', () => {
+    // 550,000 gross - 50,000 = 500,000 taxable: 12,500 fully rebated
+    const at = projectAnnualTax({
+      projectedAnnualGross: 550000,
+      declaredExemptions: 0,
+      slabs: OLD_SLABS,
+      config: OLD_CONFIG,
+    });
+    expect(at.toNumber()).toBe(0);
+    const over = projectAnnualTax({
+      projectedAnnualGross: 550100,
+      declaredExemptions: 0,
+      slabs: OLD_SLABS,
+      config: OLD_CONFIG,
+    });
+    expect(over.toNumber()).toBeGreaterThan(12000);
   });
 
   it('OLD regime applies declared exemptions before the slabs', () => {
@@ -77,12 +120,12 @@ describe('projectAnnualTax', () => {
 
 describe('computeMonthlyTds', () => {
   it('April (12 months remaining): annualises the current month and divides evenly', () => {
-    // projectedAnnualGross = 0 + 100,000 x 12 = 1,200,000; taxableIncome = 1,125,000
-    // 300k-600k@5%=15,000; 600k-900k@10%=30,000; 900k-1,200k@15%=33,750 -> 78,750
-    // +4% cess = 81,900; / 12 months = 6,825
+    // projectedAnnualGross = 150,000 x 12 = 1,800,000; taxableIncome = 1,725,000
+    // 4-8L@5%=20,000; 8-12L@10%=40,000; 12-16L@15%=60,000; 16-17.25L@20%=25,000
+    // -> 145,000; +4% cess = 150,800; / 12 months = 12,566.67 -> 12,567
     const monthly = computeMonthlyTds({
       regime: 'NEW',
-      currentMonthGross: 100000,
+      currentMonthGross: 150000,
       elapsedGross: 0,
       alreadyDeducted: 0,
       remainingMonths: 12,
@@ -90,43 +133,42 @@ describe('computeMonthlyTds', () => {
       slabs: NEW_SLABS,
       config: NEW_CONFIG,
     });
-    expect(monthly.toNumber()).toBe(6825);
+    expect(monthly.toNumber()).toBe(12567);
   });
 
   it('mid-year at a steady gross reproduces the same monthly figure (smoothing is stable)', () => {
-    // By October (remainingMonths=6): elapsed 6 months @ 100,000 = 600,000 gross,
-    // already deducted 6 x 6,825 = 40,950. Same annual projection as the April
-    // case (1,200,000) -> same annual tax (81,900) -> remaining 40,950 / 6 = 6,825.
-    const monthly = computeMonthlyTds({
-      regime: 'NEW',
-      currentMonthGross: 100000,
-      elapsedGross: 600000,
-      alreadyDeducted: 40950,
-      remainingMonths: 6,
-      declaredExemptions: 0,
-      slabs: NEW_SLABS,
-      config: NEW_CONFIG,
-    });
-    expect(monthly.toNumber()).toBe(6825);
-  });
-
-  it('a mid-year salary revision re-projects and re-smooths the remainder', () => {
-    // Same elapsed history as above, but this month's gross jumps to 150,000.
-    // projectedAnnualGross = 600,000 + 150,000 x 6 = 1,500,000; taxableIncome = 1,425,000
-    // 300-600k@5%=15,000; 600-900k@10%=30,000; 900-1,200k@15%=45,000;
-    // 1,200-1,425k@20%=45,000 -> 135,000; +4% cess = 140,400
-    // remaining = 140,400 - 40,950 = 99,450 / 6 months = 16,575
+    // By October (remainingMonths=6): elapsed 6 months @ 150,000 = 900,000 gross,
+    // already deducted ~6 x 12,567 = 75,400. Same annual projection as the April
+    // case (1,800,000) -> annual tax 150,800 -> remaining 75,400 / 6 = 12,567.
     const monthly = computeMonthlyTds({
       regime: 'NEW',
       currentMonthGross: 150000,
-      elapsedGross: 600000,
-      alreadyDeducted: 40950,
+      elapsedGross: 900000,
+      alreadyDeducted: 75400,
       remainingMonths: 6,
       declaredExemptions: 0,
       slabs: NEW_SLABS,
       config: NEW_CONFIG,
     });
-    expect(monthly.toNumber()).toBe(16575);
+    expect(monthly.toNumber()).toBe(12567);
+  });
+
+  it('a mid-year salary revision re-projects and re-smooths the remainder', () => {
+    // Same elapsed history as above, but this month's gross jumps to 200,000.
+    // projectedAnnualGross = 900,000 + 200,000 x 6 = 2,100,000; taxableIncome = 2,025,000
+    // 20,000 + 40,000 + 60,000 + 16-20L@20% 80,000 + 20-20.25L@25% 6,250 = 206,250
+    // +4% cess = 214,500; remaining = 214,500 - 75,400 = 139,100 / 6 = 23,183
+    const monthly = computeMonthlyTds({
+      regime: 'NEW',
+      currentMonthGross: 200000,
+      elapsedGross: 900000,
+      alreadyDeducted: 75400,
+      remainingMonths: 6,
+      declaredExemptions: 0,
+      slabs: NEW_SLABS,
+      config: NEW_CONFIG,
+    });
+    expect(monthly.toNumber()).toBe(23183);
   });
 
   it('never goes negative when already-deducted exceeds the (re-)projected annual tax', () => {
@@ -160,7 +202,7 @@ describe('computeMonthlyTds', () => {
   it('ignores declaredExemptions on the NEW regime', () => {
     const withExemptions = computeMonthlyTds({
       regime: 'NEW',
-      currentMonthGross: 100000,
+      currentMonthGross: 150000,
       elapsedGross: 0,
       alreadyDeducted: 0,
       remainingMonths: 12,
@@ -168,20 +210,20 @@ describe('computeMonthlyTds', () => {
       slabs: NEW_SLABS,
       config: NEW_CONFIG,
     });
-    expect(withExemptions.toNumber()).toBe(6825); // same as the no-exemptions April case
+    expect(withExemptions.toNumber()).toBe(12567); // same as the no-exemptions April case
   });
 
   it('accepts Decimal inputs for the historical figures, not just numbers', () => {
     const monthly = computeMonthlyTds({
       regime: 'NEW',
-      currentMonthGross: new Prisma.Decimal(100000),
-      elapsedGross: new Prisma.Decimal(600000),
-      alreadyDeducted: new Prisma.Decimal(40950),
+      currentMonthGross: new Prisma.Decimal(150000),
+      elapsedGross: new Prisma.Decimal(900000),
+      alreadyDeducted: new Prisma.Decimal(75400),
       remainingMonths: 6,
       declaredExemptions: 0,
       slabs: NEW_SLABS,
       config: NEW_CONFIG,
     });
-    expect(monthly.toNumber()).toBe(6825);
+    expect(monthly.toNumber()).toBe(12567);
   });
 });
