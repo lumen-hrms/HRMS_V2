@@ -19,6 +19,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { AuditModule } from './audit/audit.module';
 import { ContactModule } from './contact/contact.module';
 import { ReportsModule } from './reports/reports.module';
+import { PayrollModule } from './payroll/payroll.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { ReportsModule } from './reports/reports.module';
     AuditModule,
     ContactModule,
     ReportsModule,
+    PayrollModule,
   ],
   controllers: [HealthController],
 })

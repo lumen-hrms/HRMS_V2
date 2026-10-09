@@ -1,9 +1,11 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service';
 import { LeaveService } from '../leave/leave.service';
 import { DocumentsService } from '../documents/documents.service';
@@ -338,22 +340,7 @@ export class AttendanceService {
     const punctualityRate =
       presentDays > 0 ? Math.round(((presentDays - lateDays) / presentDays) * 100) : 100;
 
-    // Overtime — worked hours beyond the shift's minHoursFullDay, summed
-    // over complete (checked-out) days in the month. This is HOURS only;
-    // converting to statutory per-state overtime PAY is Payroll's job
-    // (module 07, not built) — Attendance just measures the time.
-    const targetMs = Number(shift.minHoursFullDay) * 3600 * 1000;
-    let overtimeMs = 0;
-    for (const r of records) {
-      if (!r.checkInAt || !r.checkOutAt) continue;
-      const breakMs = r.breaks.reduce((sum, b) => {
-        const end = b.endAt ?? r.checkOutAt!;
-        return sum + (end.getTime() - b.startAt.getTime());
-      }, 0);
-      const grossMs = r.checkOutAt.getTime() - r.checkInAt.getTime();
-      const effectiveMs = Math.max(grossMs - breakMs, 0);
-      overtimeMs += Math.max(effectiveMs - targetMs, 0);
-    }
+    const overtimeHours = this.sumOvertimeHours(records, shift);
 
     const balances = user.employeeId ? await this.leave.getBalances(user.employeeId, user) : [];
     const remainingLeave = balances.reduce(
@@ -366,23 +353,304 @@ export class AttendanceService {
       workingDays,
       punctualityRate,
       remainingLeave,
-      overtimeHours: Math.round((overtimeMs / 3600000) * 10) / 10,
+      overtimeHours,
     };
   }
 
   /**
-   * Month-end LOP (Loss of Pay) day count for Payroll (module 07, not built
-   * yet) — the defined interface it should call once it exists. Counts
-   * finalized `ABSENT` days only; Leave's own per-request `isLop` flag
-   * (unpaid leave taken) is a separate, already-tracked figure — this is
-   * Attendance's side: genuinely unexplained absence with no clock-in, no
-   * approved leave, no punch, written by the nightly finalization job.
+   * Worked hours beyond the shift's `minHoursFullDay`, summed over complete
+   * (checked-out) days. This is HOURS only; converting to statutory
+   * per-state overtime PAY is Payroll's job (module 07 Phase 4) — Attendance
+   * just measures the time, here and in `getTrackedOvertimeHours()` below.
+   */
+  private sumOvertimeHours(
+    records: Array<{
+      checkInAt: Date | null;
+      checkOutAt: Date | null;
+      breaks: Array<{ startAt: Date; endAt: Date | null }>;
+    }>,
+    shift: { minHoursFullDay: Prisma.Decimal },
+  ): number {
+    const targetMs = Number(shift.minHoursFullDay) * 3600 * 1000;
+    let overtimeMs = 0;
+    for (const r of records) {
+      if (!r.checkInAt || !r.checkOutAt) continue;
+      const breakMs = r.breaks.reduce((sum, b) => {
+        const end = b.endAt ?? r.checkOutAt!;
+        return sum + (end.getTime() - b.startAt.getTime());
+      }, 0);
+      const grossMs = r.checkOutAt.getTime() - r.checkInAt.getTime();
+      const effectiveMs = Math.max(grossMs - breakMs, 0);
+      overtimeMs += Math.max(effectiveMs - targetMs, 0);
+    }
+    return Math.round((overtimeMs / 3600000) * 10) / 10;
+  }
+
+  /** Tracked overtime hours for any employee/month — the ceiling an `OvertimeClaim` can claim. */
+  private async getTrackedOvertimeHours(employeeId: string, month: string): Promise<number> {
+    const { start, end } = monthRange(month);
+    const [records, shift] = await Promise.all([
+      this.tenantPrisma.client.attendanceRecord.findMany({
+        where: { employeeId, date: { gte: start, lt: end } },
+        include: { breaks: true },
+      }),
+      this.resolveShift(employeeId, this.tenantPrisma.tenantId),
+    ]);
+    return this.sumOvertimeHours(records, shift);
+  }
+
+  /** The shift hours/day an employee's hourly overtime rate is computed against (Payroll Phase 4). */
+  async getShiftHours(employeeId: string): Promise<number> {
+    const shift = await this.resolveShift(employeeId, this.tenantPrisma.tenantId);
+    return Number(shift.minHoursFullDay);
+  }
+
+  /**
+   * Month-end LOP (Loss of Pay) day count for Payroll (module 07 decision
+   * 3, RULE-5): finalized `ABSENT` days (genuinely unexplained absence,
+   * written by the nightly finalization job) plus approved unpaid-leave
+   * days from Leave's `getApprovedLopDaysBatch()`.
    */
   async getLopDays(employeeId: string, month: string): Promise<number> {
     const { start, end } = monthRange(month);
-    return this.tenantPrisma.client.attendanceRecord.count({
-      where: { employeeId, date: { gte: start, lt: end }, status: 'ABSENT' },
+    const [absentCount, leaveLop] = await Promise.all([
+      this.tenantPrisma.client.attendanceRecord.count({
+        where: { employeeId, date: { gte: start, lt: end }, status: 'ABSENT' },
+      }),
+      this.leave.getApprovedLopDaysBatch(start, end),
+    ]);
+    return absentCount + (leaveLop.get(employeeId) ?? 0);
+  }
+
+  /** Batch form of `getLopDays()` for a whole tenant's payroll run (module 07 Phase 3). */
+  async getLopDaysBatch(month: string): Promise<Map<string, number>> {
+    const { start, end } = monthRange(month);
+    const [absentRows, leaveLop] = await Promise.all([
+      this.tenantPrisma.client.attendanceRecord.groupBy({
+        by: ['employeeId'],
+        where: { date: { gte: start, lt: end }, status: 'ABSENT' },
+        _count: { _all: true },
+      }),
+      this.leave.getApprovedLopDaysBatch(start, end),
+    ]);
+
+    const result = new Map<string, number>();
+    for (const row of absentRows) result.set(row.employeeId, row._count._all);
+    for (const [employeeId, days] of leaveLop) {
+      result.set(employeeId, (result.get(employeeId) ?? 0) + days);
+    }
+    return result;
+  }
+
+  // ---- Overtime claims (module 07 Phase 4, decision 6) ----
+
+  /** Employee claims a month's already-tracked overtime total once; starts at PENDING_HR with no manager. */
+  async createOvertimeClaim(
+    dto: { month: string; payoutMode: 'CASH' | 'COMP_OFF' },
+    user: AuthenticatedUser,
+  ) {
+    const employeeId = this.requireEmployee(user);
+    const tenantId = this.tenantPrisma.tenantId;
+
+    const hours = await this.getTrackedOvertimeHours(employeeId, dto.month);
+    if (hours <= 0) {
+      throw new BadRequestException(`No tracked overtime hours for ${dto.month}`);
+    }
+    const employee = await this.tenantPrisma.client.employee.findUniqueOrThrow({
+      where: { id: employeeId },
+      select: { firstName: true, lastName: true, reportingManagerId: true },
     });
+    const status = employee.reportingManagerId ? 'PENDING_MANAGER' : 'PENDING_HR';
+
+    let claim;
+    try {
+      claim = await this.tenantPrisma.client.overtimeClaim.create({
+        data: { tenantId, employeeId, month: dto.month, hours, payoutMode: dto.payoutMode, status },
+      });
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new ConflictException(`An overtime claim for ${dto.month} already exists`);
+      }
+      throw e;
+    }
+
+    await this.notifications.notify({
+      tenantId,
+      template: 'OVERTIME_CLAIM_PENDING_APPROVAL',
+      context: {
+        claimId: claim.id,
+        applicantName: `${employee.firstName} ${employee.lastName}`,
+        month: dto.month,
+        hours,
+        level: employee.reportingManagerId ? 'MANAGER' : 'HR',
+      },
+      dedupeKey: `overtime:${claim.id}:pending:${status}`,
+      to: employee.reportingManagerId
+        ? { employeeIds: [employee.reportingManagerId] }
+        : { roles: HR_ROLES },
+      actorUserId: user.sub,
+    });
+    return claim;
+  }
+
+  async listMyOvertimeClaims(user: AuthenticatedUser) {
+    const employeeId = this.requireEmployee(user);
+    return this.tenantPrisma.client.overtimeClaim.findMany({
+      where: { employeeId },
+      orderBy: { month: 'desc' },
+    });
+  }
+
+  private async assertCanDecideAtManagerLevel(employeeId: string, user: AuthenticatedUser) {
+    if (ADMIN_ROLES.includes(user.role)) return;
+    const employee = await this.tenantPrisma.client.employee.findUnique({
+      where: { id: employeeId },
+      select: { reportingManagerId: true },
+    });
+    if (employee?.reportingManagerId === user.employeeId) return;
+    throw new ForbiddenException(
+      'Only the reporting manager or HR admin can give manager approval',
+    );
+  }
+
+  async decideOvertimeClaim(
+    id: string,
+    decision: 'APPROVE' | 'REJECT',
+    user: AuthenticatedUser,
+    reason?: string,
+  ) {
+    const claim = await this.tenantPrisma.client.overtimeClaim.findUniqueOrThrow({ where: { id } });
+    const tenantId = this.tenantPrisma.tenantId;
+    const hours = Number(claim.hours);
+
+    if (claim.status === 'PENDING_MANAGER') {
+      await this.assertCanDecideAtManagerLevel(claim.employeeId, user);
+      if (decision === 'REJECT') {
+        const updated = await this.tenantPrisma.client.overtimeClaim.update({
+          where: { id },
+          data: {
+            status: 'REJECTED',
+            managerApproverId: user.employeeId ?? null,
+            managerDecidedAt: new Date(),
+            rejectionReason: reason ?? null,
+          },
+        });
+        await this.notifications.notify({
+          tenantId,
+          template: 'OVERTIME_CLAIM_DECIDED',
+          context: {
+            claimId: id,
+            month: claim.month,
+            hours,
+            outcome: 'REJECTED',
+            reason: reason ?? null,
+          },
+          dedupeKey: `overtime:${id}:decided:REJECTED`,
+          to: { employeeIds: [claim.employeeId] },
+          actorUserId: user.sub,
+        });
+        return updated;
+      }
+      const updated = await this.tenantPrisma.client.overtimeClaim.update({
+        where: { id },
+        data: {
+          status: 'PENDING_HR',
+          managerApproverId: user.employeeId ?? null,
+          managerDecidedAt: new Date(),
+        },
+      });
+      await this.notifications.notify({
+        tenantId,
+        template: 'OVERTIME_CLAIM_DECIDED',
+        context: { claimId: id, month: claim.month, hours, outcome: 'MANAGER_APPROVED' },
+        dedupeKey: `overtime:${id}:decided:MANAGER_APPROVED`,
+        to: { employeeIds: [claim.employeeId] },
+        actorUserId: user.sub,
+      });
+      await this.notifications.notify({
+        tenantId,
+        template: 'OVERTIME_CLAIM_PENDING_APPROVAL',
+        context: { claimId: id, applicantName: 'Employee', month: claim.month, hours, level: 'HR' },
+        dedupeKey: `overtime:${id}:pending:PENDING_HR`,
+        to: { roles: HR_ROLES },
+        actorUserId: user.sub,
+      });
+      return updated;
+    }
+
+    if (claim.status === 'PENDING_HR') {
+      if (!ADMIN_ROLES.includes(user.role)) {
+        throw new ForbiddenException('Only HR Manager or Company Admin can give final approval');
+      }
+      if (decision === 'REJECT') {
+        const updated = await this.tenantPrisma.client.overtimeClaim.update({
+          where: { id },
+          data: {
+            status: 'REJECTED',
+            hrApproverId: user.employeeId ?? null,
+            hrDecidedAt: new Date(),
+            rejectionReason: reason ?? null,
+          },
+        });
+        await this.notifications.notify({
+          tenantId,
+          template: 'OVERTIME_CLAIM_DECIDED',
+          context: {
+            claimId: id,
+            month: claim.month,
+            hours,
+            outcome: 'REJECTED',
+            reason: reason ?? null,
+          },
+          dedupeKey: `overtime:${id}:decided:REJECTED`,
+          to: { employeeIds: [claim.employeeId] },
+          actorUserId: user.sub,
+        });
+        return updated;
+      }
+      const updated = await this.tenantPrisma.client.overtimeClaim.update({
+        where: { id },
+        data: {
+          status: 'APPROVED',
+          hrApproverId: user.employeeId ?? null,
+          hrDecidedAt: new Date(),
+        },
+      });
+      if (claim.payoutMode === 'COMP_OFF') {
+        const shiftHours = await this.getShiftHours(claim.employeeId);
+        const days = shiftHours > 0 ? hours / shiftHours : 0;
+        await this.leave.creditOvertimeCompOff(claim.employeeId, days, claim.month);
+      }
+      await this.notifications.notify({
+        tenantId,
+        template: 'OVERTIME_CLAIM_DECIDED',
+        context: { claimId: id, month: claim.month, hours, outcome: 'APPROVED' },
+        dedupeKey: `overtime:${id}:decided:APPROVED`,
+        to: { employeeIds: [claim.employeeId] },
+        actorUserId: user.sub,
+      });
+      return updated;
+    }
+
+    throw new BadRequestException(`Overtime claim is not pending (status: ${claim.status})`);
+  }
+
+  /** Payroll (module 07 Phase 4): approved CASH hours for one employee/month, else 0. */
+  async getApprovedOvertime(employeeId: string, month: string): Promise<number> {
+    const claim = await this.tenantPrisma.client.overtimeClaim.findUnique({
+      where: { employeeId_month: { employeeId, month } },
+    });
+    if (!claim || claim.status !== 'APPROVED' || claim.payoutMode !== 'CASH') return 0;
+    return Number(claim.hours);
+  }
+
+  /** Batch form of `getApprovedOvertime()` for a whole tenant's payroll run. */
+  async getApprovedOvertimeBatch(month: string): Promise<Map<string, number>> {
+    const claims = await this.tenantPrisma.client.overtimeClaim.findMany({
+      where: { month, status: 'APPROVED', payoutMode: 'CASH' },
+      select: { employeeId: true, hours: true },
+    });
+    return new Map(claims.map((c) => [c.employeeId, Number(c.hours)]));
   }
 
   // ---- Regularization ----

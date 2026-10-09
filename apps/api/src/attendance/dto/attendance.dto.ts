@@ -236,3 +236,20 @@ export class MarkAttendanceDto {
   @MinLength(5)
   reason!: string;
 }
+
+const OVERTIME_PAYOUT_MODES = ['CASH', 'COMP_OFF'] as const;
+const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+export class CreateOvertimeClaimDto {
+  @Matches(MONTH_PATTERN, { message: 'month must be YYYY-MM' })
+  month!: string;
+
+  @IsIn(OVERTIME_PAYOUT_MODES)
+  payoutMode!: (typeof OVERTIME_PAYOUT_MODES)[number];
+}
+
+export class DecideOvertimeClaimDto {
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}

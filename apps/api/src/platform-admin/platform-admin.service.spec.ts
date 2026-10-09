@@ -163,6 +163,8 @@ function buildScopedTenantClient(userRows: any[] = []) {
     tenantSettings: { create: jest.fn().mockResolvedValue({}) },
     attendanceSettings: { create: jest.fn().mockResolvedValue({}) },
     shift: { create: jest.fn().mockResolvedValue({}) },
+    payrollSettings: { upsert: jest.fn().mockResolvedValue({}) },
+    professionalTaxSlab: { createMany: jest.fn().mockResolvedValue({ count: 0 }) },
     employee: { count: jest.fn().mockResolvedValue(0) },
   };
 }

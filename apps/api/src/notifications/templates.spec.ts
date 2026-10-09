@@ -43,6 +43,25 @@ const CASES: [NotificationTemplate, object, RegExp, string][] = [
     '/attendance',
   ],
   ['DOCUMENT_BLOCKED', { documentLabel: 'payslip.pdf' }, /blocked: payslip\.pdf/, '/'],
+  [
+    'PAYROLL_RUN_STATUS_CHANGED',
+    { period: '2026-09', status: 'APPROVED' },
+    /fully approved/,
+    '/payroll',
+  ],
+  [
+    'OVERTIME_CLAIM_PENDING_APPROVAL',
+    { claimId: 'ot-1', applicantName: 'Asha Rao', month: '2026-09', hours: 6, level: 'MANAGER' },
+    /Asha Rao needs your approval/,
+    '/attendance',
+  ],
+  [
+    'OVERTIME_CLAIM_DECIDED',
+    { claimId: 'ot-1', month: '2026-09', hours: 6, outcome: 'APPROVED' },
+    /was approved$/,
+    '/attendance',
+  ],
+  ['PAYSLIP_READY', { period: '2026-09' }, /payslip for 2026-09 is ready/, '/payroll'],
 ];
 
 describe('render()', () => {

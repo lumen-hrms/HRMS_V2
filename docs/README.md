@@ -36,7 +36,7 @@ criteria, open questions.
 | `modules/04_LEAVE_MANAGEMENT.md` | Leave Management |
 | `modules/05_ATTENDANCE.md` | Attendance & Time Tracking |
 | `modules/06_DASHBOARD.md` | Role-aware Dashboard |
-| `modules/07_PAYROLL_ENGINE.md` | Payroll Engine *(pending)* |
+| `modules/07_PAYROLL_ENGINE.md` | Payroll Engine |
 | `modules/08_STATUTORY_COMPLIANCE.md` | Statutory Compliance |
 | `modules/09_DOCUMENTS.md` | Documents |
 | `modules/10_NOTIFICATIONS.md` | Notifications |
@@ -66,8 +66,9 @@ render in visual sync.
 | `ui-build-prompts/04-leave-management.md` | Overview, apply, approvals, team calendar/balances, leave types, ledger, holidays, settings | Employee · Line Manager · HR Manager · Company Admin · Auditor |
 | `ui-build-prompts/05-attendance.md` | Today (clock in/out, breaks), calendar, stats, regularisation, team roster, approvals, settings (shifts/guardrails) — team/approvals/settings screens are `TODO(api)` build targets | Employee · Line Manager · HR Manager · Company Admin · Auditor |
 | `ui-build-prompts/06-dashboard.md` | Home screen: role-branched stat grid + a shared own-attendance "today" card — fully live, no `TODO(api)` screens | Employee · Line Manager · HR Manager · Company Admin · Auditor |
+| `ui-build-prompts/07-payroll-engine.md` | Runs overview + run detail (stepper, approvals), salary structure list + editor, statutory settings (rates, PT slabs, income-tax slabs/regime config, overtime multiplier), employee My pay, Full & Final — structures/settings, the full run lifecycle (create/adjust/recalculate/approve/process/disburse, with approved overtime pay and real TDS folded in automatically), DOB-locked payslip download, the dummy-CSV bank file, per-employee tax-regime choice (self-service + audited HR override), backdated structure revisions generating arrears folded into the next run, and Full & Final settlement (unpaid salary, leave encashment, gratuity, advance recovery, one-approval lifecycle) for a separated employee are all live; only the runs *list* is a `TODO(api)` build target. The frontend itself is now built (`apps/web/src/pages/payroll`, module 07 Phase 9) — not yet browser-verified against a live backend. The overtime claim/approval screen itself is Attendance's UI (`05-attendance.md`) | Employee · HR Manager · Company Admin · Auditor (Line Manager: none) |
 
-*(Prompts for modules 07–13 are added as those modules are specced.)*
+*(Prompts for modules 08–13 are added as those modules are specced.)*
 
 ## Adding docs
 

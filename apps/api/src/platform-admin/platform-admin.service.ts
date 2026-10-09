@@ -33,6 +33,7 @@ import type {
   PlatformAuditAction,
   PlatformAuditEntryDto,
 } from './platform-admin.types';
+import { seedPayrollDefaults } from '../payroll/payroll-defaults';
 
 function inDateRange(iso: string, from?: string, to?: string): boolean {
   const day = iso.slice(0, 10);
@@ -621,6 +622,7 @@ export class PlatformAdminService {
         isDefault: true,
       },
     });
+    await seedPayrollDefaults(scoped, tenantId);
   }
 
   /**

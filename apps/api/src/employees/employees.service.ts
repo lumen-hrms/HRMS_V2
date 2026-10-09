@@ -440,6 +440,8 @@ export class EmployeesService {
           nationality: dto.nationality,
           employmentType: dto.employmentType as any,
           workLocation: dto.workLocation,
+          workState: dto.workState,
+          weeklyOffDaysOverride: dto.weeklyOffDaysOverride,
           ctcAnnual: dto.ctcAnnual,
           payGrade: dto.payGrade,
           costCenter: dto.costCenter,

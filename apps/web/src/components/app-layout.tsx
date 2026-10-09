@@ -6,6 +6,7 @@ import {
   Network,
   Building2,
   Clock,
+  Wallet,
   ShieldCheck,
   Mail,
   UserCog,
@@ -53,6 +54,12 @@ const NAV: { to: string; label: string; icon: typeof LayoutDashboard; end?: bool
     label: 'Reports',
     icon: ChartColumn,
     roles: ['COMPANY_ADMIN', 'HR_MANAGER'],
+  },
+  {
+    to: '/payroll',
+    label: 'Payroll',
+    icon: Wallet,
+    roles: ['COMPANY_ADMIN', 'HR_MANAGER', 'EMPLOYEE', 'AUDITOR'],
   },
   {
     to: '/access',

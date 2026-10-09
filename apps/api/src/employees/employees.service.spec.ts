@@ -553,6 +553,42 @@ describe('EmployeesService.update (RULE-1 self-edit whitelist)', () => {
     const changes = tenantPrisma.client.auditLog.create.mock.calls[0][0].data.metadata.changes;
     expect(changes).toEqual([]);
   });
+
+  it('lets HR set workState (Professional Tax state) but an Employee cannot set their own', async () => {
+    const hr = buildService({ id: 'emp-1', employeeCode: 'LUM-1' });
+    await hr.service.update('emp-1', { workState: 'KARNATAKA' } as any, actor());
+    expect(hr.tenantPrisma.client.employee.update.mock.calls[0][0].data.workState).toBe(
+      'KARNATAKA',
+    );
+
+    const self = buildService({ id: 'emp-1', employeeCode: 'LUM-1' });
+    await self.service.update(
+      'emp-1',
+      { workState: 'DELHI' } as any,
+      actor({ role: 'EMPLOYEE', employeeId: 'emp-1' }),
+    );
+    expect(self.tenantPrisma.client.employee.update.mock.calls[0][0].data).not.toHaveProperty(
+      'workState',
+    );
+  });
+
+  it('lets HR set a weekly-off override but an Employee cannot set their own', async () => {
+    const hr = buildService({ id: 'emp-1', employeeCode: 'LUM-1' });
+    await hr.service.update('emp-1', { weeklyOffDaysOverride: [0, 3] } as any, actor());
+    expect(
+      hr.tenantPrisma.client.employee.update.mock.calls[0][0].data.weeklyOffDaysOverride,
+    ).toEqual([0, 3]);
+
+    const self = buildService({ id: 'emp-1', employeeCode: 'LUM-1' });
+    await self.service.update(
+      'emp-1',
+      { weeklyOffDaysOverride: [0, 3] } as any,
+      actor({ role: 'EMPLOYEE', employeeId: 'emp-1' }),
+    );
+    expect(self.tenantPrisma.client.employee.update.mock.calls[0][0].data).not.toHaveProperty(
+      'weeklyOffDaysOverride',
+    );
+  });
 });
 
 describe('EmployeesService emergency-contact write authorization', () => {
