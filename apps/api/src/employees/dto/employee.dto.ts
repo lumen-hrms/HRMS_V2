@@ -1,8 +1,11 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsDateString,
   IsEmail,
+  IsEnum,
   IsIn,
   IsNumber,
   IsOptional,
@@ -12,6 +15,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { IndianState } from '@prisma/client';
 
 export const SEPARATION_REASONS = ['VOLUNTARY', 'INVOLUNTARY', 'OTHER'] as const;
 
@@ -157,6 +161,19 @@ export class UpdateEmployeeDto {
   @IsOptional()
   @IsString()
   workLocation?: string;
+
+  // Drives Professional Tax slab selection in Payroll (module 07).
+  @IsOptional()
+  @IsEnum(IndianState)
+  workState?: IndianState;
+
+  // Overrides the tenant's weekly off-days for this employee, for
+  // rotational shift staff (Payroll module 07, decision 14).
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(7)
+  @IsIn([0, 1, 2, 3, 4, 5, 6], { each: true })
+  weeklyOffDaysOverride?: number[];
 
   // Compensation-adjacent — a headline reference figure; the salary
   // *structure* lives in Payroll (module 07), not here.

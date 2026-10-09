@@ -22,8 +22,10 @@ import { CurrentUser, AuthenticatedUser } from '../common/decorators/current-use
 import { AttendanceService } from './attendance.service';
 import {
   BulkDecideRegularizationDto,
+  CreateOvertimeClaimDto,
   CreateRegularizationDto,
   CreateShiftDto,
+  DecideOvertimeClaimDto,
   DecideRegularizationDto,
   MarkAttendanceDto,
   UpdateAttendanceSettingsDto,
@@ -151,6 +153,34 @@ export class AttendanceController {
   async lopDays(@Query('employeeId') employeeId: string, @Query('month') month: string) {
     const days = await this.service.getLopDays(employeeId, month);
     return { employeeId, month, lopDays: days };
+  }
+
+  // ---- Overtime claims (module 07 Phase 4) ----
+
+  @Post('overtime-claims')
+  createOvertimeClaim(@Body() dto: CreateOvertimeClaimDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.service.createOvertimeClaim(dto, user);
+  }
+
+  @Get('overtime-claims')
+  listMyOvertimeClaims(@CurrentUser() user: AuthenticatedUser) {
+    return this.service.listMyOvertimeClaims(user);
+  }
+
+  @Post('overtime-claims/:id/approve')
+  @Roles('LINE_MANAGER', 'HR_MANAGER', 'COMPANY_ADMIN')
+  approveOvertimeClaim(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.service.decideOvertimeClaim(id, 'APPROVE', user);
+  }
+
+  @Post('overtime-claims/:id/reject')
+  @Roles('LINE_MANAGER', 'HR_MANAGER', 'COMPANY_ADMIN')
+  rejectOvertimeClaim(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto?: DecideOvertimeClaimDto,
+  ) {
+    return this.service.decideOvertimeClaim(id, 'REJECT', user, dto?.reason);
   }
 
   // ---- Tenant configuration: shifts + settings ----

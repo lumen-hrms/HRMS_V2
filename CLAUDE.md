@@ -273,7 +273,37 @@ cut-off), and manager/HR team views (roster + manual marking) are all live
 and plan-gated. GPS/biometric/selfie-QR capture and `POST
 /attendance/ingest` stay explicitly deferred (see above), not counted
 against 100%; converting overtime hours to statutory per-state pay is
-Payroll's job. Payroll and Compliance exports remain **not started** — see
+Payroll's job, and the `OvertimeClaim` manager-then-HR approval workflow
+(employee claims the month's tracked hours, CASH/COMP_OFF payout) now
+lives here too, built as part of Payroll's Phase 4 — still counted under
+Payroll's progress, not Attendance's, since it was explicitly out of
+Attendance's own V1 scope. **Payroll is in progress** (Phase 1 — salary
+structures, statutory settings, Professional Tax slabs,
+`Employee.workState` — Phase 2 — the pure `PayrollCalculator`
+(EPF/ESI/PT/LOP/proration), `Employee.weeklyOffDaysOverride` — Phase 3 —
+the `PayrollRun` lifecycle (create/approve/process/disburse,
+INV-1/INV-2/INV-4 enforced) — Phase 4 — overtime claims + the
+calculator's overtime earning line — Phase 5 — DOB-locked payslip
+PDFs generated on `process()`, employee/HR self-service download, and an
+on-demand dummy-CSV bank file behind a `BankFileGenerator` interface —
+Phase 6 — per-FY `TaxSlab`/`TaxRegimeConfig`, a per-employee
+`TdsRegimeChoice` (default NEW, audited HR override), and an
+annual-projection TDS figure now folded into `tdsDeducted`/`netPay` —
+Phase 7 — `SalaryStructureService.revise()` generating a per-period
+`ArrearsLineItem` on a backdated revision (old-vs-new structure delta),
+folded into the next `createDraft`; the Phase 3 re-process guardrails
+already covered this phase's own requirements — and Phase 8 —
+`FullAndFinalSettlement` (unpaid salary, leave encashment via Leave's
+new `getEncashableBalance()` contract, gratuity, advance recovery) for a
+`SEPARATED` employee, one-approval lifecycle, never folded into a
+regular run — are all built; see
+`docs/modules/07_PAYROLL_ENGINE.md` §9). **Phase 9 (hardening) is
+partially built:** the full frontend (`apps/web/src/pages/payroll`) and a
+static RLS/grant audit of all 8 migrations are done, but adversarial
+cross-tenant e2e tests, a ~500/~5,000-employee performance run, and an
+independent domain review of statutory rates remain genuinely blocked —
+the first two need Docker/DB access this environment doesn't have, the
+third needs a human reviewer. Compliance exports remain **not started** — see
 the blueprint's 12-week plan for sequencing (payroll is the
 highest-effort, highest-risk module; protect its time budget over breadth
 elsewhere).

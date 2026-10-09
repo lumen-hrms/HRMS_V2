@@ -47,6 +47,7 @@ function buildFakeTenantPrisma(overrides: Record<string, any> = {}) {
         ...FAKE_REQUEST_RELS,
       })),
       findUniqueOrThrow: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
       groupBy: jest.fn().mockResolvedValue([]),
     },
     leaveApproval: { create: jest.fn() },
@@ -157,6 +158,92 @@ describe('LeaveService', () => {
       expect(result.status).toBe('PENDING_L2'); // no reporting manager to give L1
     });
 
+    it('never flags a half-day request as LOP, even with zero balance (Payroll decision 15)', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        employee: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'emp-1', reportingManagerId: null }),
+        },
+        leaveBalance: {
+          findUnique: jest.fn().mockResolvedValue({ accrued: 0, used: 0 }), // no balance at all
+        },
+      });
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
+
+      const result = await service.apply(
+        { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-05', halfDay: true },
+        user(),
+      );
+
+      expect(result.days).toBe(0.5);
+      expect(result.isLop).toBe(false);
+    });
+  });
+
+  describe('getApprovedLopDaysBatch()', () => {
+    it('counts only approved+isLop requests overlapping the window, clipped to it', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        leaveRequest: {
+          findMany: jest.fn().mockResolvedValue([
+            // Fully inside March: Mon 2026-03-02 .. Wed 2026-03-04 = 3 working days.
+            {
+              employeeId: 'emp-1',
+              startDate: new Date('2026-03-02'),
+              endDate: new Date('2026-03-04'),
+            },
+            // Spans into April: Fri 2026-03-27 .. Tue 2026-03-31 clipped at
+            // month end = Fri,Sat(off),Sun(off),Mon,Tue -> 3 working days.
+            {
+              employeeId: 'emp-1',
+              startDate: new Date('2026-03-27'),
+              endDate: new Date('2026-04-02'),
+            },
+          ]),
+        },
+      });
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
+
+      const result = await service.getApprovedLopDaysBatch(
+        new Date('2026-03-01'),
+        new Date('2026-04-01'),
+      );
+
+      expect(result.get('emp-1')).toBe(6);
+      // Only approved+isLop rows are ever queried.
+      expect(tenantPrisma.client.leaveRequest.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: 'APPROVED', isLop: true }),
+        }),
+      );
+    });
+
+    it('returns an empty map when nothing overlaps the window', async () => {
+      const tenantPrisma = buildFakeTenantPrisma();
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
+
+      const result = await service.getApprovedLopDaysBatch(
+        new Date('2026-03-01'),
+        new Date('2026-04-01'),
+      );
+      expect(result.size).toBe(0);
+    });
+  });
+
+  describe('apply() — more', () => {
     it('rejects an end date before the start date', async () => {
       const tenantPrisma = buildFakeTenantPrisma();
       const service = new LeaveService(
@@ -560,6 +647,58 @@ describe('LeaveService', () => {
     });
   });
 
+  describe('creditOvertimeCompOff() (module 07 Phase 4, decision 6)', () => {
+    it('no-ops when the tenant has no designated comp-off leave type', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        leaveType: {
+          findMany: jest.fn(),
+          findFirst: jest.fn().mockResolvedValue(null),
+          create: jest.fn(),
+          findUniqueOrThrow: jest.fn(),
+        },
+      });
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
+
+      await service.creditOvertimeCompOff('emp-1', 0.25, '2026-09');
+      expect(tenantPrisma.client.leaveBalance.upsert).not.toHaveBeenCalled();
+    });
+
+    it('credits a fractional day amount (hours / shift hours) to the comp-off balance', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        leaveType: {
+          findMany: jest.fn(),
+          findFirst: jest.fn().mockResolvedValue({ id: 'co-1' }),
+          create: jest.fn(),
+          findUniqueOrThrow: jest.fn(),
+        },
+      });
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
+
+      await service.creditOvertimeCompOff('emp-1', 0.25, '2026-09');
+      expect(tenantPrisma.client.leaveBalance.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({ accrued: 0.25 }),
+          update: { accrued: { increment: 0.25 } },
+        }),
+      );
+      expect(tenantPrisma.client.leaveLedgerEntry.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ source: 'COMP_OFF_CREDIT', delta: 0.25 }),
+        }),
+      );
+    });
+  });
+
   describe('assertCanViewEmployee() — Line Manager recursive-subtree visibility', () => {
     it('rejects a Line Manager who is not anywhere in the target employee’s management chain', async () => {
       const tenantPrisma = buildFakeTenantPrisma({
@@ -634,6 +773,72 @@ describe('LeaveService', () => {
           2026,
         ),
       ).resolves.toEqual([]);
+    });
+  });
+
+  describe('getEncashableBalance() (module 07 Phase 8 Full & Final contract)', () => {
+    it('sums accrued-used across isEncashable leave types only, for the resolved year', async () => {
+      const findMany = jest.fn().mockResolvedValue([
+        { accrued: 12, used: 2 }, // 10
+        { accrued: 5, used: 1 }, // 4
+      ]);
+      const tenantPrisma = buildFakeTenantPrisma({ leaveBalance: { findMany } });
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
+
+      const result = await service.getEncashableBalance('emp-1', new Date('2026-06-15'));
+
+      expect(result).toBe(14);
+      expect(findMany).toHaveBeenCalledWith({
+        where: { employeeId: 'emp-1', year: 2026, leaveType: { isEncashable: true } },
+      });
+    });
+
+    it('is 0 when nothing is encashable', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        leaveBalance: { findMany: jest.fn().mockResolvedValue([]) },
+      });
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
+
+      expect(await service.getEncashableBalance('emp-1', new Date('2026-06-15'))).toBe(0);
+    });
+
+    it("resolves the FY from the separation date's month, not the calendar year, when fyStartMonth != 1", async () => {
+      const findMany = jest.fn().mockResolvedValue([]);
+      const tenantPrisma = buildFakeTenantPrisma({
+        leaveBalance: { findMany },
+        tenantSettings: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            leaveApprovalLevels: 2,
+            leaveEscalationDays: 3,
+            weeklyOffDays: [0, 6],
+            allowLopRequests: true,
+            fyStartMonth: 4,
+          }),
+        },
+      });
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+      );
+
+      // February 2027 is still FY2026 (April 2026 -> March 2027) when fyStartMonth = 4.
+      await service.getEncashableBalance('emp-1', new Date('2027-02-10'));
+
+      expect(findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ year: 2026 }) }),
+      );
     });
   });
 

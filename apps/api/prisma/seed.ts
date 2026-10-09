@@ -20,6 +20,7 @@
 import { PrismaClient, Prisma } from '@prisma/client';
 import * as admin from 'firebase-admin';
 import { entitlementsForPlan } from '../src/platform-admin/entitlements';
+import { seedPayrollDefaults } from '../src/payroll/payroll-defaults';
 
 const prisma = new PrismaClient();
 
@@ -243,6 +244,7 @@ async function seedTenant(name: string, subdomain: string, employees: SeedEmploy
         isDefault: true,
       },
     });
+    await seedPayrollDefaults(tx, tenant.id);
     for (const h of [
       { date: new Date(Date.UTC(year, 0, 26)), name: 'Republic Day' },
       { date: new Date(Date.UTC(year, 7, 15)), name: 'Independence Day' },

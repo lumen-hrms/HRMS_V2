@@ -324,6 +324,10 @@ enum NotificationTemplate {
   REGULARIZATION_PENDING_APPROVAL
   REGULARIZATION_DECIDED
   DOCUMENT_BLOCKED
+  PAYROLL_RUN_STATUS_CHANGED
+  OVERTIME_CLAIM_PENDING_APPROVAL
+  OVERTIME_CLAIM_DECIDED
+  PAYSLIP_READY
 
   @@schema("public")
 }
@@ -527,6 +531,16 @@ model Employee {
   designation      String?
   employmentType   EmploymentType?  @map("employment_type")
   workLocation     String?          @map("work_location")
+  // Payroll (module 07): state of the office the employee is attached to;
+  // drives Professional Tax slab selection. Required before the employee
+  // can be included in a payroll run.
+  workState        IndianState?     @map("work_state")
+  // Payroll (module 07, decision 14): this employee's weekly off-days, if
+  // they differ from the tenant's `TenantSettings.weeklyOffDays` (e.g.
+  // rotational shift staff). Empty (the default) falls back to the tenant
+  // default — Prisma can't express an optional list. A fixed set of
+  // weekdays, not a rotating per-week schedule.
+  weeklyOffDaysOverride Int[]       @default([]) @map("weekly_off_days_override")
   dateOfJoining    DateTime?        @map("date_of_joining")
 
   // Lifecycle state machine (module 03 §4.4). New employees start in
@@ -592,6 +606,13 @@ model Employee {
   regularizationRequests   RegularizationRequest[]
   punches                  Punch[]
   emergencyContacts        EmergencyContact[]
+  salaryStructures         SalaryStructure[]
+  payrollLineItems         PayrollLineItem[]
+  overtimeClaims           OvertimeClaim[]
+  tdsRegimeChoices         TdsRegimeChoice[]
+  salaryRevisions          SalaryRevision[]
+  arrearsLineItems         ArrearsLineItem[]
+  fullAndFinalSettlement   FullAndFinalSettlement?
 
   @@unique([tenantId, employeeCode])
   @@index([tenantId])
@@ -690,6 +711,10 @@ model LeaveType {
   // credits into whichever LeaveType has this set (at most one expected per
   // tenant; not DB-enforced). No-op if a tenant hasn't configured one.
   isCompOff         Boolean           @default(false) @map("is_comp_off")
+  // Payroll (module 07 Phase 8, decision 17): counts toward a separated
+  // employee's Full & Final leave-encashment balance. HR-set per type,
+  // same pattern as isCompOff.
+  isEncashable      Boolean           @default(false) @map("is_encashable")
   createdAt        DateTime         @default(now()) @map("created_at")
   updatedAt        DateTime         @updatedAt @map("updated_at")
 
@@ -956,6 +981,56 @@ model RegularizationRequest {
   @@schema("public")
 }
 
+enum OvertimeClaimStatus {
+  PENDING_MANAGER
+  PENDING_HR
+  APPROVED
+  REJECTED
+
+  @@schema("public")
+}
+
+enum OvertimePayoutMode {
+  CASH
+  COMP_OFF
+
+  @@schema("public")
+}
+
+// Module 05 (Attendance) owns this workflow; Payroll (module 07 Phase 4,
+// decision 6) only reads it via getApprovedOvertime()/getApprovedOvertimeBatch().
+// One claim per employee per month: the employee claims that month's
+// already-tracked overtime hours (Attendance.stats()' overtimeHours), then
+// their manager and HR approve in sequence — same two-level shape as Leave.
+// COMP_OFF claims convert to a Leave comp-off credit on HR approval and
+// never reach Payroll; only fully-APPROVED CASH hours are paid.
+model OvertimeClaim {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+
+  employeeId String   @map("employee_id") @db.Uuid
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  month      String              @map("month") @db.VarChar(7) // YYYY-MM
+  hours      Decimal             @db.Decimal(6, 2)
+  payoutMode OvertimePayoutMode  @map("payout_mode")
+  status     OvertimeClaimStatus @default(PENDING_MANAGER)
+
+  managerApproverId String?   @map("manager_approver_id") @db.Uuid
+  managerDecidedAt  DateTime? @map("manager_decided_at")
+  hrApproverId      String?   @map("hr_approver_id") @db.Uuid
+  hrDecidedAt       DateTime? @map("hr_decided_at")
+  rejectionReason   String?   @map("rejection_reason")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([employeeId, month])
+  @@index([tenantId])
+  @@map("overtime_claims")
+  @@schema("public")
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // TENANT CONFIGURATION — how each tenant's HR rules work. Company Admin
 // owns these (via in-app Settings), NOT the platform operator. Seeded with
@@ -1123,5 +1198,512 @@ model NotificationLog {
   @@unique([tenantId, dedupeKey, recipientUserId])
   @@index([tenantId, status, createdAt])
   @@map("notification_log")
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// PAYROLL (module 07) — docs/modules/07_PAYROLL_ENGINE.md
+// Rates/slabs below are tenant-editable config, never constants. Seeded
+// defaults live in apps/api/src/payroll/payroll-defaults.ts and are UNVERIFIED
+// until the Phase 9 domain review.
+// ─────────────────────────────────────────────────────────────────────────
+
+// All Indian states and union territories.
+enum IndianState {
+  ANDHRA_PRADESH
+  ARUNACHAL_PRADESH
+  ASSAM
+  BIHAR
+  CHHATTISGARH
+  GOA
+  GUJARAT
+  HARYANA
+  HIMACHAL_PRADESH
+  JHARKHAND
+  KARNATAKA
+  KERALA
+  MADHYA_PRADESH
+  MAHARASHTRA
+  MANIPUR
+  MEGHALAYA
+  MIZORAM
+  NAGALAND
+  ODISHA
+  PUNJAB
+  RAJASTHAN
+  SIKKIM
+  TAMIL_NADU
+  TELANGANA
+  TRIPURA
+  UTTAR_PRADESH
+  UTTARAKHAND
+  WEST_BENGAL
+  ANDAMAN_AND_NICOBAR_ISLANDS
+  CHANDIGARH
+  DADRA_AND_NAGAR_HAVELI_AND_DAMAN_AND_DIU
+  DELHI
+  JAMMU_AND_KASHMIR
+  LADAKH
+  LAKSHADWEEP
+  PUDUCHERRY
+
+  @@schema("public")
+}
+
+enum SalaryComponentType {
+  BASIC
+  DA
+  HRA
+  SPECIAL_ALLOWANCE
+  CONVEYANCE
+  LTA
+  MEDICAL
+  CUSTOM
+  PF_EMPLOYER
+  ESI_EMPLOYER
+  GRATUITY_PROVISION
+
+  @@schema("public")
+}
+
+enum SalaryCalculationMode {
+  FIXED
+  PERCENT_OF_BASIC
+  PERCENT_OF_CTC
+  FORMULA
+
+  @@schema("public")
+}
+
+enum SalaryStructureStatus {
+  ACTIVE
+  SUPERSEDED
+
+  @@schema("public")
+}
+
+// One ACTIVE structure per employee (partial unique index in the migration —
+// Prisma can't express it). Amounts on components are MONTHLY.
+model SalaryStructure {
+  id         String @id @default(uuid()) @db.Uuid
+  tenantId   String @map("tenant_id") @db.Uuid
+  employeeId String @map("employee_id") @db.Uuid
+
+  ctcAnnual     Decimal               @map("ctc_annual") @db.Decimal(14, 2)
+  effectiveFrom DateTime              @map("effective_from") @db.Date
+  status        SalaryStructureStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  employee   Employee          @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  components SalaryComponent[]
+
+  @@index([tenantId])
+  @@index([tenantId, employeeId])
+  @@map("salary_structures")
+  @@schema("public")
+}
+
+model SalaryComponent {
+  id          String @id @default(uuid()) @db.Uuid
+  tenantId    String @map("tenant_id") @db.Uuid
+  structureId String @map("structure_id") @db.Uuid
+
+  type            SalaryComponentType
+  // Stable identifier formulas refer to (BASIC, HRA, or a tenant-chosen
+  // UPPER_SNAKE code for CUSTOM components). Unique per structure.
+  code            String
+  name            String
+  calculationMode SalaryCalculationMode @map("calculation_mode")
+  // FIXED: monthly amount. PERCENT_OF_*: percentage. FORMULA: unused.
+  value           Decimal?              @db.Decimal(14, 4)
+  formula         String?
+  sortOrder       Int                   @default(0) @map("sort_order")
+
+  structure SalaryStructure @relation(fields: [structureId], references: [id], onDelete: Cascade)
+
+  @@unique([structureId, code])
+  @@index([tenantId])
+  @@map("salary_components")
+  @@schema("public")
+}
+
+// Append-only revision history (module 07 Phase 7). previousStructureId/
+// newStructureId are plain references, not modelled relations — same
+// posture as PayrollRun.preparedBy — so a structure can be superseded/
+// deleted later without constraining this history row.
+model SalaryRevision {
+  id                  String @id @default(uuid()) @db.Uuid
+  tenantId            String @map("tenant_id") @db.Uuid
+  employeeId          String @map("employee_id") @db.Uuid
+  previousStructureId String? @map("previous_structure_id") @db.Uuid
+  newStructureId      String @map("new_structure_id") @db.Uuid
+
+  effectiveDate DateTime @map("effective_date") @db.Date
+  reason        String
+  // The User (not Employee) who made the change — plain reference, like
+  // PayrollRun.preparedBy.
+  approvedBy    String   @map("approved_by") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  employee        Employee          @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  arrearsLineItems ArrearsLineItem[]
+
+  @@index([tenantId])
+  @@index([tenantId, employeeId])
+  @@map("salary_revisions")
+  @@schema("public")
+}
+
+enum ArrearsLineItemStatus {
+  PENDING
+  FOLDED
+
+  @@schema("public")
+}
+
+// A backdated SalaryRevision's correction for one already-PROCESSED period
+// (module 07 Phase 7): the delta between what was paid under the old
+// structure and what should have been paid under the new one, for the same
+// historical workingDays/payableDays/month — never a rewrite of the
+// original PayrollLineItem (INV-2). PENDING until the next DRAFT run folds
+// it into that run's adHocAdjustments (module 07 §12 decision 21's pattern).
+model ArrearsLineItem {
+  id         String @id @default(uuid()) @db.Uuid
+  tenantId   String @map("tenant_id") @db.Uuid
+  employeeId String @map("employee_id") @db.Uuid
+  revisionId String @map("revision_id") @db.Uuid
+
+  period        String // the corrected PayrollRun's period, YYYY-MM
+  originalRunId String  @map("original_run_id") @db.Uuid
+  previousNetPay Decimal @map("previous_net_pay") @db.Decimal(14, 2)
+  revisedNetPay  Decimal @map("revised_net_pay") @db.Decimal(14, 2)
+  // revisedNetPay - previousNetPay; signed (negative if the revision pays less).
+  amount         Decimal @db.Decimal(14, 2)
+
+  status          ArrearsLineItemStatus @default(PENDING)
+  foldedIntoRunId String?               @map("folded_into_run_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  revision SalaryRevision @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+  employee Employee       @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
+  @@index([tenantId, employeeId, status])
+  @@map("arrears_line_items")
+  @@schema("public")
+}
+
+enum FullAndFinalSettlementStatus {
+  DRAFT
+  APPROVED
+  PAID
+
+  @@schema("public")
+}
+
+// Standalone off-cycle settlement for a SEPARATED employee (module 07
+// Phase 8, decision 7) — never folded into a regular PayrollRun. At most
+// one per employee ever (@unique), since this lifecycle is terminal.
+// `calculationSnapshot` holds the full EPF/ESI/PT breakdown behind
+// `unpaidSalaryAmount` for audit purposes (same pattern as
+// PayrollLineItem), since the scalar columns here deliberately stay to
+// the spec's named fields only.
+model FullAndFinalSettlement {
+  id         String @id @default(uuid()) @db.Uuid
+  tenantId   String @map("tenant_id") @db.Uuid
+  employeeId String @unique @map("employee_id") @db.Uuid
+
+  // Snapshot of Employee.lastWorkingDate at generation time.
+  separationDate DateTime @map("separation_date") @db.Date
+
+  unpaidSalaryDays   Int     @map("unpaid_salary_days")
+  unpaidSalaryAmount Decimal @map("unpaid_salary_amount") @db.Decimal(14, 2)
+
+  leaveEncashmentDays   Decimal @map("leave_encashment_days") @db.Decimal(6, 2)
+  leaveEncashmentAmount Decimal @map("leave_encashment_amount") @db.Decimal(14, 2)
+
+  gratuityYearsOfService Int     @map("gratuity_years_of_service")
+  gratuityAmount         Decimal @map("gratuity_amount") @db.Decimal(14, 2)
+
+  // HR-entered; may be revised while DRAFT via PATCH.
+  advanceRecoveryAmount Decimal @default(0) @map("advance_recovery_amount") @db.Decimal(14, 2)
+
+  // unpaidSalaryAmount + leaveEncashmentAmount + gratuityAmount -
+  // advanceRecoveryAmount. May be negative (a large outstanding advance) —
+  // unlike a regular run's net pay, that's not a config error here.
+  netSettlement Decimal @map("net_settlement") @db.Decimal(14, 2)
+
+  calculationSnapshot Json @default("{}") @map("calculation_snapshot")
+
+  status FullAndFinalSettlementStatus @default(DRAFT)
+  // The User (not Employee) who triggered generation/approval — plain
+  // references, like PayrollRun.preparedBy.
+  preparedBy String    @map("prepared_by") @db.Uuid
+  approvedBy String?   @map("approved_by") @db.Uuid
+  approvedAt DateTime? @map("approved_at")
+  paidAt     DateTime? @map("paid_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
+  @@map("full_and_final_settlements")
+  @@schema("public")
+}
+
+// Professional Tax slabs per state. A slab applies when
+// grossFrom <= monthly gross < grossTo (grossTo null = open-ended).
+model ProfessionalTaxSlab {
+  id       String      @id @default(uuid()) @db.Uuid
+  tenantId String      @map("tenant_id") @db.Uuid
+  state    IndianState
+
+  grossFrom      Decimal  @map("gross_from") @db.Decimal(12, 2)
+  grossTo        Decimal? @map("gross_to") @db.Decimal(12, 2)
+  monthlyAmount  Decimal  @map("monthly_amount") @db.Decimal(10, 2)
+  // Some states charge a different amount in February.
+  februaryAmount Decimal? @map("february_amount") @db.Decimal(10, 2)
+
+  @@unique([tenantId, state, grossFrom])
+  @@index([tenantId])
+  @@map("professional_tax_slabs")
+  @@schema("public")
+}
+
+model PayrollSettings {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @unique @map("tenant_id") @db.Uuid
+
+  // Basic must be at least this % of CTC (FR-PAY-003).
+  minBasicPercent Decimal @default(50) @map("min_basic_percent") @db.Decimal(5, 2)
+
+  // EPF: wages capped at epfCeiling unless allowEpfAboveCeiling.
+  epfCeiling           Decimal @default(15000) @map("epf_ceiling") @db.Decimal(10, 2)
+  allowEpfAboveCeiling Boolean @default(false) @map("allow_epf_above_ceiling")
+  // Percentages of PF wages. Employer 12% = EPS 8.33 + EPF 3.67.
+  epfEmployeeRate      Decimal @default(12) @map("epf_employee_rate") @db.Decimal(5, 2)
+  epsRate              Decimal @default(8.33) @map("eps_rate") @db.Decimal(5, 2)
+  epfEmployerRate      Decimal @default(3.67) @map("epf_employer_rate") @db.Decimal(5, 2)
+  epfAdminRate         Decimal @default(0.5) @map("epf_admin_rate") @db.Decimal(5, 2)
+  edliRate             Decimal @default(0.5) @map("edli_rate") @db.Decimal(5, 2)
+
+  // ESI applies while monthly gross <= esiWageCeiling.
+  esiWageCeiling  Decimal @default(21000) @map("esi_wage_ceiling") @db.Decimal(10, 2)
+  esiEmployeeRate Decimal @default(0.75) @map("esi_employee_rate") @db.Decimal(5, 3)
+  esiEmployerRate Decimal @default(3.25) @map("esi_employer_rate") @db.Decimal(5, 3)
+
+  // Overtime (module 07 Phase 4, decision 6): off by default; CASH hours
+  // paid at hourlyRate x overtimeMultiplier when on.
+  overtimeEnabled    Boolean @default(false) @map("overtime_enabled")
+  overtimeMultiplier Decimal @default(2.0) @map("overtime_multiplier") @db.Decimal(4, 2)
+
+  // Full & Final (module 07 Phase 8, decision 17): per-day leave-encashment
+  // rate = sum of these monthly components' amounts (from the active
+  // structure) / leaveEncashmentDivisor, times the encashable balance
+  // Leave (module 04) reports for isEncashable leave types.
+  leaveEncashmentDivisor    Decimal  @default(26) @map("leave_encashment_divisor") @db.Decimal(5, 2)
+  leaveEncashmentComponents String[] @default(["BASIC"]) @map("leave_encashment_components")
+  // Full & Final gratuity (module 07 Phase 8, decision 10): statutory
+  // formula gratuityDaysPerYear/gratuityMonthDivisor x last-drawn Basic x
+  // completed years of service, paid only once gratuityEligibilityYears is
+  // reached. Tenant-editable, defaults are the common 15/26, 5-year rule.
+  gratuityEligibilityYears Int     @default(5) @map("gratuity_eligibility_years")
+  gratuityDaysPerYear      Decimal @default(15) @map("gratuity_days_per_year") @db.Decimal(5, 2)
+  gratuityMonthDivisor     Decimal @default(26) @map("gratuity_month_divisor") @db.Decimal(5, 2)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("payroll_settings")
+  @@schema("public")
+}
+
+enum PayrollRunStatus {
+  DRAFT
+  REVIEW
+  APPROVED
+  PROCESSED
+  DISBURSED
+
+  @@schema("public")
+}
+
+// One per tenant per pay period. Linear DRAFT -> REVIEW -> APPROVED ->
+// PROCESSED -> DISBURSED (module 07 §7). A `(tenant, period)` can have at
+// most one row with isReprocess = false (partial unique index in the
+// migration — Prisma can't express it, same as salary_structures); further
+// runs for an already-processed period must set isReprocess + a reason
+// (INV-1).
+model PayrollRun {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+
+  period String // YYYY-MM
+  status PayrollRunStatus @default(DRAFT)
+
+  isReprocess     Boolean @default(false) @map("is_reprocess")
+  reprocessReason String? @map("reprocess_reason")
+
+  // The User (not Employee) who triggered creation — a plain reference,
+  // like LeaveRequest's approver fields, not a modelled relation.
+  preparedBy String @map("prepared_by") @db.Uuid
+
+  // Employees excluded from this run at assembly time (no workState, no
+  // active structure, or a calculation error) and pending-regularization
+  // warnings (RULE-7) — [{ employeeId?, type, detail }].
+  exceptions Json @default("[]")
+
+  processedAt  DateTime? @map("processed_at")
+  disbursedAt  DateTime? @map("disbursed_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  lineItems PayrollLineItem[]
+  approvals PayrollRunApproval[]
+
+  @@index([tenantId])
+  @@index([tenantId, period])
+  @@map("payroll_runs")
+  @@schema("public")
+}
+
+// Append-only approval trail (INV-1) — replaces first/second-approver
+// columns so it's auditable and the same account approving twice counts
+// once (`@@unique`).
+model PayrollRunApproval {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  runId    String @map("run_id") @db.Uuid
+
+  approverId String   @map("approver_id") @db.Uuid
+  approvedAt DateTime @default(now()) @map("approved_at")
+
+  run PayrollRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, approverId])
+  @@index([tenantId])
+  @@map("payroll_run_approvals")
+  @@schema("public")
+}
+
+// One per employee per PayrollRun. calculationSnapshot is a JSON SNAPSHOT
+// of what applied (module 07 §4.2) — never a live read of SalaryComponent,
+// so this row still makes sense after the employee's structure later
+// changes. Never updated/deleted once its run reaches PROCESSED/DISBURSED
+// — enforced by a DB trigger (the migration), not just the service layer
+// (INV-2).
+model PayrollLineItem {
+  id         String @id @default(uuid()) @db.Uuid
+  tenantId   String @map("tenant_id") @db.Uuid
+  runId      String @map("run_id") @db.Uuid
+  employeeId String @map("employee_id") @db.Uuid
+
+  // The FULL PayrollCalculator result (earnings, EPF/ESI sub-splits,
+  // payableFactor, lopDeduction) — the authoritative immutable snapshot.
+  // The scalar columns below are denormalized copies of its summary
+  // figures for easy querying; calculationSnapshot is the source of truth
+  // a future compliance filing (module 08) reads the EPF/ESI split from.
+  calculationSnapshot Json    @map("calculation_snapshot") @default("{}")
+  workingDays         Int     @map("working_days")
+  payableDays         Int     @map("payable_days")
+  lopDays             Int     @map("lop_days")
+  grossEarnings       Decimal @map("gross_earnings") @db.Decimal(14, 2)
+  epfEmployee         Decimal @map("epf_employee") @db.Decimal(14, 2)
+  epfEmployer         Decimal @map("epf_employer") @db.Decimal(14, 2)
+  esiEmployee         Decimal @map("esi_employee") @db.Decimal(14, 2)
+  esiEmployer         Decimal @map("esi_employer") @db.Decimal(14, 2)
+  professionalTax     Decimal @map("professional_tax") @db.Decimal(14, 2)
+  tdsDeducted         Decimal @default(0) @map("tds_deducted") @db.Decimal(14, 2)
+  // [{ type, amount, note? }] — advance/bonus/incentive/gratuity-payout
+  // entries folded into netPay but never fed back into the statutory wage
+  // base (V1 simplification).
+  adHocAdjustments   Json    @default("[]") @map("ad_hoc_adjustments")
+  netPay             Decimal @map("net_pay") @db.Decimal(14, 2)
+
+  // S3 key of the DOB-locked payslip PDF (module 07 Phase 5), set during
+  // `process()` — null for an employee excluded for missing dateOfBirth
+  // (RULE-3), listed instead in the run's `exceptions`.
+  payslipFileKey String? @map("payslip_file_key")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  run      PayrollRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  employee Employee   @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@unique([runId, employeeId])
+  @@index([tenantId])
+  @@index([tenantId, employeeId])
+  @@map("payroll_line_items")
+  @@schema("public")
+}
+
+// Annual income-tax slabs per financial year ("2026-27") + regime (module 07
+// Phase 6). A slab applies when incomeFrom <= projected annual taxable
+// income < incomeTo (incomeTo null = open-ended), same banding convention
+// as ProfessionalTaxSlab.
+model TaxSlab {
+  id            String    @id @default(uuid()) @db.Uuid
+  tenantId      String    @map("tenant_id") @db.Uuid
+  financialYear String    @map("financial_year")
+  regime        TaxRegime
+
+  incomeFrom  Decimal  @map("income_from") @db.Decimal(14, 2)
+  incomeTo    Decimal? @map("income_to") @db.Decimal(14, 2)
+  ratePercent Decimal  @map("rate_percent") @db.Decimal(5, 2)
+
+  @@unique([tenantId, financialYear, regime, incomeFrom])
+  @@index([tenantId])
+  @@map("tax_slabs")
+  @@schema("public")
+}
+
+// Regime-wide figures for a financial year (module 07 Phase 6): standard
+// deduction, cess, and the Section 87A rebate — not per-slab, so they live
+// in their own row per (financialYear, regime).
+model TaxRegimeConfig {
+  id            String    @id @default(uuid()) @db.Uuid
+  tenantId      String    @map("tenant_id") @db.Uuid
+  financialYear String    @map("financial_year")
+  regime        TaxRegime
+
+  standardDeduction Decimal @map("standard_deduction") @db.Decimal(12, 2)
+  cessPercent       Decimal @map("cess_percent") @db.Decimal(5, 2)
+  // Section 87A: if projected annual taxable income <= rebateThreshold, up
+  // to rebateMaxAmount of tax is waived (often making tax fully nil below
+  // the threshold).
+  rebateThreshold   Decimal @map("rebate_threshold") @db.Decimal(14, 2)
+  rebateMaxAmount   Decimal @map("rebate_max_amount") @db.Decimal(12, 2)
+
+  @@unique([tenantId, financialYear, regime])
+  @@index([tenantId])
+  @@map("tax_regime_configs")
+  @@schema("public")
+}
+
+// Per-employee, per-FY TDS regime choice (module 07 §12 decision 8). No row
+// for an (employee, FY) = defaults to NEW. setByUserId is null when the
+// employee chose it themself; set when HR/Admin moved them to OLD on
+// request — always audited (payroll.tds_regime_overridden) in that case.
+model TdsRegimeChoice {
+  id            String    @id @default(uuid()) @db.Uuid
+  tenantId      String    @map("tenant_id") @db.Uuid
+  employeeId    String    @map("employee_id") @db.Uuid
+  financialYear String    @map("financial_year")
+  regime        TaxRegime
+  setByUserId   String?   @map("set_by_user_id") @db.Uuid
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, employeeId, financialYear])
+  @@index([tenantId])
+  @@map("tds_regime_choices")
   @@schema("public")
 }

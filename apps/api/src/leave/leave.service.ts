@@ -247,6 +247,43 @@ export class LeaveService {
     return new Set(holidays.map((h) => h.date.toISOString().slice(0, 10)));
   }
 
+  /**
+   * Per-employee whole-day LOP from *approved unpaid leave* overlapping
+   * `[start, end)`, for Payroll's `getLopDays`/`getLopDaysBatch` (module 07
+   * decision 3, RULE-5) — the Attendance-side `ABSENT` count is a separate,
+   * already-tracked figure Attendance adds on top of this. A request
+   * spanning the boundary is clipped to the days that actually fall inside
+   * this window and re-counted as working days, not pro-rated from its
+   * stored `days` total (which covers its own full, possibly wider, range).
+   * Half-day leave is never LOP (decision 15), so every day counted here is
+   * a whole day.
+   */
+  async getApprovedLopDaysBatch(start: Date, end: Date): Promise<Map<string, number>> {
+    const settings = await this.getTenantSettings();
+    const inclusiveEnd = new Date(end.getTime() - 1);
+    const [holidayDates, requests] = await Promise.all([
+      this.holidayDatesBetween(start, inclusiveEnd),
+      this.tenantPrisma.client.leaveRequest.findMany({
+        where: {
+          status: 'APPROVED',
+          isLop: true,
+          startDate: { lt: end },
+          endDate: { gte: start },
+        },
+        select: { employeeId: true, startDate: true, endDate: true },
+      }),
+    ]);
+
+    const result = new Map<string, number>();
+    for (const req of requests) {
+      const clippedStart = req.startDate < start ? start : req.startDate;
+      const clippedEnd = req.endDate > inclusiveEnd ? inclusiveEnd : req.endDate;
+      const days = countWorkingDays(clippedStart, clippedEnd, holidayDates, settings.weeklyOffDays);
+      result.set(req.employeeId, (result.get(req.employeeId) ?? 0) + days);
+    }
+    return result;
+  }
+
   // ---- Response mappers (Decimal -> number, relations -> frontend contract) ----
 
   private toRequestDto(
@@ -451,6 +488,23 @@ export class LeaveService {
     );
   }
 
+  /**
+   * Total available balance (accrued - used) across every `isEncashable`
+   * leave type, for the FY `asOfDate` falls in — module 07 Phase 8's Full &
+   * Final encashment contract, defined the same way `getLopDays()` was
+   * defined for Attendance: Payroll calls this and never reads
+   * `leave_balances` directly. Pending (not yet approved) leave is not
+   * subtracted — only what's already posted to the balance.
+   */
+  async getEncashableBalance(employeeId: string, asOfDate: Date): Promise<number> {
+    const settings = await this.getTenantSettings();
+    const year = resolveLeaveYear(asOfDate, settings.fyStartMonth);
+    const balances = await this.tenantPrisma.client.leaveBalance.findMany({
+      where: { employeeId, year, leaveType: { isEncashable: true } },
+    });
+    return balances.reduce((sum, b) => sum + (num(b.accrued) - num(b.used)), 0);
+  }
+
   /** Per-report balance matrix: Line Manager -> direct reports, HR/Admin -> everyone. */
   async teamBalances(user: AuthenticatedUser, year?: number) {
     if (year === undefined) {
@@ -610,7 +664,9 @@ export class LeaveService {
       ? 0.5
       : countWorkingDays(start, end, holidayDates, settings.weeklyOffDays);
     const available = balance ? num(balance.accrued) - num(balance.used) : 0;
-    const isLop = days > available;
+    // Half-day leave is always full pay, never LOP (Payroll module 07,
+    // decision 15) — regardless of balance sufficiency.
+    const isLop = !dto.halfDay && days > available;
 
     if (isLop && !settings.allowLopRequests) {
       throw new BadRequestException(
@@ -1124,6 +1180,51 @@ export class LeaveService {
         balanceAfter,
         source: LeaveLedgerSource.COMP_OFF_CREDIT,
         note: `Comp-off credit for working on ${reason} (${date.toISOString().slice(0, 10)})`,
+        actorUserId: null,
+      },
+    });
+  }
+
+  /**
+   * Overtime-sourced comp-off (module 07 Phase 4, decision 6): a fractional
+   * day amount (hours ÷ shift full-day hours), credited once when HR
+   * approves a COMP_OFF `OvertimeClaim` — the claim's own PENDING_HR ->
+   * APPROVED transition (checked by the caller) is the idempotency
+   * boundary, not a second check here, same as every other one-shot
+   * ledger write in this service.
+   */
+  async creditOvertimeCompOff(employeeId: string, days: number, month: string): Promise<void> {
+    const tenantId = this.tenantPrisma.tenantId;
+    const compOffType = await this.tenantPrisma.client.leaveType.findFirst({
+      where: { isCompOff: true },
+    });
+    if (!compOffType) return;
+
+    const settings = await this.getTenantSettings();
+    const year = resolveLeaveYear(new Date(`${month}-01`), settings.fyStartMonth);
+
+    const balance = await this.tenantPrisma.client.leaveBalance.upsert({
+      where: {
+        tenantId_employeeId_leaveTypeId_year: {
+          tenantId,
+          employeeId,
+          leaveTypeId: compOffType.id,
+          year,
+        },
+      },
+      create: { tenantId, employeeId, leaveTypeId: compOffType.id, year, accrued: days, used: 0 },
+      update: { accrued: { increment: days } },
+    });
+    const balanceAfter = num(balance.accrued) - num(balance.used);
+    await this.tenantPrisma.client.leaveLedgerEntry.create({
+      data: {
+        tenantId,
+        employeeId,
+        leaveTypeId: compOffType.id,
+        delta: days,
+        balanceAfter,
+        source: LeaveLedgerSource.COMP_OFF_CREDIT,
+        note: `Comp-off credit for ${month} approved overtime (${days} day(s))`,
         actorUserId: null,
       },
     });

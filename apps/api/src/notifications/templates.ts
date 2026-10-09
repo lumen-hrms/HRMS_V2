@@ -40,6 +40,25 @@ export interface TemplateContexts {
     comment?: string | null;
   };
   DOCUMENT_BLOCKED: { documentLabel: string };
+  PAYROLL_RUN_STATUS_CHANGED: {
+    period: string; // YYYY-MM
+    status: 'REVIEW' | 'APPROVED' | 'PROCESSED' | 'DISBURSED';
+  };
+  OVERTIME_CLAIM_PENDING_APPROVAL: {
+    claimId: string;
+    applicantName: string;
+    month: string; // YYYY-MM
+    hours: number;
+    level: 'MANAGER' | 'HR';
+  };
+  OVERTIME_CLAIM_DECIDED: {
+    claimId: string;
+    month: string;
+    hours: number;
+    outcome: 'APPROVED' | 'REJECTED' | 'MANAGER_APPROVED';
+    reason?: string | null;
+  };
+  PAYSLIP_READY: { period: string };
 }
 
 export type TemplateContext = TemplateContexts[keyof TemplateContexts];
@@ -186,6 +205,72 @@ function body(template: NotificationTemplate, ctx: any): EmailBody {
         outro:
           'If you believe this is a mistake, scan the file on your device and upload a clean copy.',
         cta: { label: 'Open HRMS', path: '/' },
+      };
+    case 'PAYROLL_RUN_STATUS_CHANGED': {
+      const copy: Record<string, { subject: string; intro: string }> = {
+        REVIEW: {
+          subject: `Payroll for ${ctx.period} is ready for review`,
+          intro: `The payroll run for ${ctx.period} has been assembled and needs two approvals before it can be processed.`,
+        },
+        APPROVED: {
+          subject: `Payroll for ${ctx.period} is fully approved`,
+          intro: `The payroll run for ${ctx.period} has its two required approvals and is ready to process.`,
+        },
+        PROCESSED: {
+          subject: `Payroll for ${ctx.period} has been processed`,
+          intro: `The payroll run for ${ctx.period} is now processed and locked. Line items can no longer be edited.`,
+        },
+        DISBURSED: {
+          subject: `Payroll for ${ctx.period} has been disbursed`,
+          intro: `The payroll run for ${ctx.period} has been marked disbursed.`,
+        },
+      };
+      const c = copy[ctx.status];
+      return {
+        subject: c.subject,
+        intro: c.intro,
+        rows: [],
+        cta: { label: 'Open Payroll', path: '/payroll' },
+      };
+    }
+    case 'OVERTIME_CLAIM_PENDING_APPROVAL':
+      return {
+        subject: `Overtime claim from ${ctx.applicantName} needs your ${ctx.level === 'MANAGER' ? 'approval' : 'final (HR) approval'}`,
+        intro: `${ctx.applicantName} claimed ${ctx.hours} overtime hour(s) for ${ctx.month}.`,
+        rows: [
+          ['Employee', ctx.applicantName],
+          ['Month', ctx.month],
+          ['Hours', String(ctx.hours)],
+        ],
+        cta: { label: 'Review claim', path: '/attendance' },
+      };
+    case 'OVERTIME_CLAIM_DECIDED': {
+      const verb =
+        ctx.outcome === 'APPROVED'
+          ? 'approved'
+          : ctx.outcome === 'REJECTED'
+            ? 'rejected'
+            : 'approved by your manager';
+      return {
+        subject: `Your overtime claim for ${ctx.month} was ${verb}`,
+        intro:
+          ctx.outcome === 'MANAGER_APPROVED'
+            ? 'Your overtime claim was approved by your manager. It now goes to HR for final approval.'
+            : `Your overtime claim for ${ctx.month} (${ctx.hours} hour(s)) was ${verb}.`,
+        rows: [
+          ['Month', ctx.month],
+          ['Hours', String(ctx.hours)],
+          ...(ctx.reason ? ([['Reason', ctx.reason]] as [string, string][]) : []),
+        ],
+        cta: { label: 'View attendance', path: '/attendance' },
+      };
+    }
+    case 'PAYSLIP_READY':
+      return {
+        subject: `Your payslip for ${ctx.period} is ready`,
+        intro: `Your payslip for ${ctx.period} has been generated and is ready to download.`,
+        rows: [['Period', ctx.period]],
+        cta: { label: 'View my payslip', path: '/payroll' },
       };
     default:
       throw new Error(`Unknown notification template: ${String(template)}`);

@@ -21,8 +21,28 @@
 > spec draft that is no longer maintained — ignore them; this file and the
 > code are the source of truth.)
 >
-> **Last synced to code:** 2026-10-05. Landed since the previous sync
-> (2026-09-24):
+> **Last synced to code:** 2026-11-23. Landed since the previous sync
+> (2026-10-05):
+>
+> - **Payroll Engine (module 07): Phases 1–9 built on a separate branch,
+>   module 7 moves 0% → ~97%.** The full backend — salary structures with
+>   a restricted-grammar formula evaluator, the EPF/ESI/PT/LOP calculation
+>   engine, the run lifecycle (`DRAFT → REVIEW → APPROVED → PROCESSED →
+>   DISBURSED` with the two-person approval and payroll-gate invariants),
+>   overtime claims, DOB-locked payslips + a dummy-CSV bank file, per-FY
+>   TDS slabs/regime choice, backdated salary revisions with arrears, and
+>   Full & Final settlement for separated employees — plus the full
+>   frontend (`apps/web/src/pages/payroll`, covering every live screen) and
+>   a static RLS/grant audit of all 8 new migrations (clean). Fixed a real
+>   gap found while wiring the frontend: `UpdatePayrollSettingsDto` was
+>   missing five Full & Final formula fields, which would have 400'd under
+>   the global `forbidNonWhitelisted` pipe. **Not done, environment-
+>   blocked:** adversarial cross-tenant e2e tests and a ~500/~5,000-
+>   employee performance run (no reachable Docker daemon or DB credentials
+>   in the build environment), and an independent human domain review of
+>   statutory rates/slabs — so this stays short of ✅ 100%. See
+>   `docs/modules/07_PAYROLL_ENGINE.md` §9 for the full phase-by-phase
+>   build log and every decision made along the way.
 >
 > - **Reports & Analytics (module 11): Payroll-independent slice built.**
 >   New `apps/api/src/reports` — `GET /api/reports/{headcount|movement|attrition}`
@@ -373,7 +393,7 @@
 | 4. Leave Management | ✅ | `████████████████████` 100% — backend fully wired & tested; FE live path built and running against the real API by default (`client.ts`'s `USE_MOCK` now defaults to **off**, matching `access/client.ts` — set `VITE_LEAVE_MOCK=true` to force the fixture store); `allowLopRequests`/`minNoticeDays`/`fyStartMonth`/`genderRestriction`/`requiresApproval` all enforced/settable; mid-year-joiner proration; comp-off credit on holiday/weekly-off clock-in; approved leave reconciles into `AttendanceRecord.ON_LEAVE` |
 | 5. Attendance & Time Tracking | ✅ | `████████████████████` 100% — reads the tenant's `Shift`/`tenant_settings` config, gated behind the `ATTENDANCE` plan entitlement; punches write-path, a nightly finalization job (holiday → weekly-off → punches → genuine absence), full regularization approval (window/cap enforcement, approve/reject/bulk-approve, audited, auto-resolved at payroll cut-off), manager/HR team roster + manual marking, overtime hours, and a `getLopDays()` export contract for Payroll are all live. GPS/biometric/selfie-QR capture and `POST /attendance/ingest` stay explicitly deferred (CLAUDE.md) |
 | 6. Dashboard | ✅ | `████████████████████` 100% — role-branched `GET /api/dashboard` (admin aggregates vs. personal view) includes an own-attendance "today" snapshot for every role with a linked employee record, gated on the tenant's `ATTENDANCE` entitlement, plus quick actions (clock in/out/break, approve/reject a pending request) that call Attendance's/Leave's own existing endpoints directly and re-fetch the dashboard afterward — no new mutation surface. Admin payroll-cost/attrition tiles and an upcoming-payslip date stay explicitly blocked on Payroll (module 07, not built) — same "not counted against 100%" treatment as Attendance's own Payroll-blocked items. Deep spec: `docs/modules/06_DASHBOARD.md` |
-| 7. Payroll Engine | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
+| 7. Payroll Engine | 🟡 | `███████████████████░` 97% — Phases 1–8 backend fully built (structures, calculator, run lifecycle, overtime, payslips/bank file, TDS, revisions/arrears, Full & Final). Phase 9: full frontend built (`apps/web/src/pages/payroll`, not yet browser-verified against a live backend), a static RLS/grant audit of all 8 migrations (clean), and a real Phase 8 DTO gap fixed (`UpdatePayrollSettingsDto` whitelist). Still missing, environment-blocked: adversarial cross-tenant e2e tests, the ~500/~5,000-employee performance run, and an independent human domain review of statutory rates (decision 11) |
 | 8. Statutory Compliance | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
 | 9. Documents | ✅ | `████████████████████` 100% — shared `documents` module owns every user upload (employee profile docs, leave attachments, regularization evidence): type/magic-byte/size validation, ClamAV scan before download (fail-closed, self-healing sweep), 5-min attachment-disposition presigned URLs, subject-employee visibility, audited soft delete (no `DELETE` grant). Retention purge deliberately out of V1 scope. Deep spec: `docs/modules/09_DOCUMENTS.md` |
 | 10. Notifications | 🟡 | `███████████████████░` 95% — queued, deduped, audited-retry email pipeline on AWS SES v2 (`notification_log`, BullMQ `notifications` queue, 10-min self-healing sweep, Email log screen) wired into every Leave / Attendance-regularization / Documents workflow event. Remaining: first live SES delivery, blocked on the owner's SES setup (verified sender + IAM credentials). Deep spec: `docs/modules/10_NOTIFICATIONS.md` |
@@ -1043,15 +1063,31 @@ calls — keeps "what does an HR Manager see vs an Employee" in one place.
 
 ---
 
-## 7. Payroll Engine 🔴
+## 7. Payroll Engine 🟡 (97%)
 
-**Deep spec:** `docs/modules/07_PAYROLL_ENGINE.md`
-**Status:** not started, deep spec written 2026-09-23. **Highest-effort,
+**Deep spec:** `docs/modules/07_PAYROLL_ENGINE.md` ·
+**UI prompt:** `docs/ui-build-prompts/07-payroll-engine.md`
+**Status:** 🟡 97% — Phase 1 (foundation, 2026-09-24), Phase 2 (calculation
+engine, 2026-10-05), Phase 3 (run lifecycle, 2026-10-12), Phase 4
+(overtime claims, 2026-10-19), Phase 5 (payslips/bank files, 2026-10-26),
+Phase 6 (TDS and regime choice, 2026-11-02), Phase 7 (re-process,
+revisions, arrears, 2026-11-09) and Phase 8 (Full & Final settlement,
+2026-11-16) backend built; Phase 9 (hardening, 2026-11-23) partially
+built — the full frontend (`apps/web/src/pages/payroll`) and a static
+RLS/grant audit are done, but adversarial cross-tenant e2e tests, the
+~500/~5,000-employee performance run, and an independent domain review
+of statutory rates remain genuinely blocked by this environment (no
+Docker/DB access) and a human reviewer, respectively — not skipped by
+choice. None of the eight migrations is applied against a real DB yet.
+**Highest-effort,
 highest-risk module — protect its time budget over breadth elsewhere**
-(`CLAUDE.md`). The one upstream contract it needs is already live:
-Attendance's `getLopDays(employeeId, month)` / `GET
-/attendance/lop-days`. It is itself the hard prerequisite for module 8
-Statutory Compliance (also 0%) — see that module's deep spec §0.
+(`CLAUDE.md`). The upstream contracts it needs are already live:
+Attendance's `getLopDays(employeeId, month)` / `GET /attendance/lop-days`
+(folding in approved-unpaid-leave days per decision 3) and the new
+`OvertimeClaim` workflow's `getApprovedOvertime(Batch)()`. A processed run
+is now a real, readable contract — module 8 Statutory Compliance's EPF/ESI
+work can start reading it (also still 0% itself) — see that module's deep
+spec §0.
 **Target code location:** `apps/api/src/payroll`
 
 ### Expectation

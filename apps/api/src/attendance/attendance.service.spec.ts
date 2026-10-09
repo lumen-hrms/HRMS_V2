@@ -1,4 +1,5 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { AttendanceService } from './attendance.service';
 import { AuditService } from '../audit/audit.service';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
@@ -12,6 +13,7 @@ function buildFakeTenantPrisma(overrides: Record<string, any> = {}) {
       upsert: jest.fn((args: any) => ({ id: 'rec-1', ...args.create })),
       update: jest.fn((args: any) => ({ id: args.where.id, ...args.data })),
       count: jest.fn().mockResolvedValue(0),
+      groupBy: jest.fn().mockResolvedValue([]),
     },
     attendanceBreak: {
       findFirst: jest.fn(),
@@ -40,6 +42,18 @@ function buildFakeTenantPrisma(overrides: Record<string, any> = {}) {
       // No per-employee shift override by default — resolveShift() falls
       // back to the tenant's `isDefault` shift.
       findUnique: jest.fn().mockResolvedValue({ shift: null }),
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        firstName: 'Asha',
+        lastName: 'Rao',
+        reportingManagerId: 'mgr-1',
+      }),
+    },
+    overtimeClaim: {
+      create: jest.fn((args: any) => ({ id: 'ot-1', ...args.data })),
+      findMany: jest.fn().mockResolvedValue([]),
+      findUnique: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
+      update: jest.fn((args: any) => ({ id: args.where.id, ...args.data })),
     },
     shift: {
       findFirst: jest.fn().mockResolvedValue({
@@ -71,7 +85,12 @@ function buildFakeTenantPrisma(overrides: Record<string, any> = {}) {
 }
 
 function fakeLeave() {
-  return { getBalances: jest.fn().mockResolvedValue([]), creditCompOff: jest.fn() };
+  return {
+    getBalances: jest.fn().mockResolvedValue([]),
+    creditCompOff: jest.fn(),
+    getApprovedLopDaysBatch: jest.fn().mockResolvedValue(new Map()),
+    creditOvertimeCompOff: jest.fn().mockResolvedValue(undefined),
+  };
 }
 
 function fakeNotifications(): any {
@@ -951,6 +970,439 @@ describe('AttendanceService', () => {
           },
           status: 'ABSENT',
         },
+      });
+    });
+
+    it('adds approved-unpaid-leave days from Leave (decision 3, RULE-5)', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        attendanceRecord: { count: jest.fn().mockResolvedValue(2) },
+      });
+      const leave = {
+        getBalances: jest.fn(),
+        creditCompOff: jest.fn(),
+        getApprovedLopDaysBatch: jest.fn().mockResolvedValue(new Map([['emp-1', 3]])),
+      };
+      const service = new AttendanceService(
+        tenantPrisma as any,
+        leave as any,
+        fakeDocuments(),
+        fakeNotifications(),
+        fakeAudit(tenantPrisma),
+      );
+
+      const days = await service.getLopDays('emp-1', '2026-03');
+      expect(days).toBe(5); // 2 ABSENT + 3 approved-unpaid-leave
+    });
+  });
+
+  describe('getLopDaysBatch()', () => {
+    it('merges ABSENT counts and approved-unpaid-leave days per employee', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        attendanceRecord: {
+          groupBy: jest.fn().mockResolvedValue([
+            { employeeId: 'emp-1', _count: { _all: 2 } },
+            { employeeId: 'emp-2', _count: { _all: 1 } },
+          ]),
+        },
+      });
+      const leave = {
+        getBalances: jest.fn(),
+        creditCompOff: jest.fn(),
+        getApprovedLopDaysBatch: jest.fn().mockResolvedValue(
+          new Map([
+            ['emp-1', 3],
+            ['emp-3', 1], // leave-only LOP, no ABSENT records this month
+          ]),
+        ),
+      };
+      const service = new AttendanceService(
+        tenantPrisma as any,
+        leave as any,
+        fakeDocuments(),
+        fakeNotifications(),
+        fakeAudit(tenantPrisma),
+      );
+
+      const result = await service.getLopDaysBatch('2026-03');
+      expect(result.get('emp-1')).toBe(5);
+      expect(result.get('emp-2')).toBe(1);
+      expect(result.get('emp-3')).toBe(1);
+    });
+  });
+
+  describe('Overtime claims (module 07 Phase 4)', () => {
+    // 10h worked, 8h shift target -> 2h overtime.
+    const otRecords = [
+      {
+        checkInAt: new Date('2026-09-05T09:00:00Z'),
+        checkOutAt: new Date('2026-09-05T19:00:00Z'),
+        breaks: [],
+      },
+    ];
+
+    describe('createOvertimeClaim()', () => {
+      it('rejects a month with no tracked overtime hours', async () => {
+        const tenantPrisma = buildFakeTenantPrisma();
+        const service = new AttendanceService(
+          tenantPrisma as any,
+          fakeLeave() as any,
+          fakeDocuments(),
+          fakeNotifications(),
+          fakeAudit(tenantPrisma),
+        );
+        await expect(
+          service.createOvertimeClaim({ month: '2026-09', payoutMode: 'CASH' }, user()),
+        ).rejects.toThrow(BadRequestException);
+      });
+
+      it('starts PENDING_MANAGER when the employee has a reporting manager, and notifies them', async () => {
+        const tenantPrisma = buildFakeTenantPrisma({
+          attendanceRecord: { findMany: jest.fn().mockResolvedValue(otRecords) },
+        });
+        const notifications = fakeNotifications();
+        const service = new AttendanceService(
+          tenantPrisma as any,
+          fakeLeave() as any,
+          fakeDocuments(),
+          notifications,
+          fakeAudit(tenantPrisma),
+        );
+
+        const claim = await service.createOvertimeClaim(
+          { month: '2026-09', payoutMode: 'CASH' },
+          user(),
+        );
+        expect(claim.status).toBe('PENDING_MANAGER');
+        expect(claim.hours).toBe(2);
+        expect(notifications.notify).toHaveBeenCalledWith(
+          expect.objectContaining({ to: { employeeIds: ['mgr-1'] } }),
+        );
+      });
+
+      it('starts PENDING_HR and notifies HR when the employee has no reporting manager', async () => {
+        const tenantPrisma = buildFakeTenantPrisma({
+          attendanceRecord: { findMany: jest.fn().mockResolvedValue(otRecords) },
+          employee: {
+            findUnique: jest.fn().mockResolvedValue({ shift: null }),
+            findUniqueOrThrow: jest
+              .fn()
+              .mockResolvedValue({ firstName: 'Asha', lastName: 'Rao', reportingManagerId: null }),
+          },
+        });
+        const notifications = fakeNotifications();
+        const service = new AttendanceService(
+          tenantPrisma as any,
+          fakeLeave() as any,
+          fakeDocuments(),
+          notifications,
+          fakeAudit(tenantPrisma),
+        );
+
+        const claim = await service.createOvertimeClaim(
+          { month: '2026-09', payoutMode: 'CASH' },
+          user(),
+        );
+        expect(claim.status).toBe('PENDING_HR');
+        expect(notifications.notify).toHaveBeenCalledWith(
+          expect.objectContaining({ to: { roles: ['COMPANY_ADMIN', 'HR_MANAGER'] } }),
+        );
+      });
+
+      it('maps a duplicate-month claim (P2002) to a 409', async () => {
+        const tenantPrisma = buildFakeTenantPrisma({
+          attendanceRecord: { findMany: jest.fn().mockResolvedValue(otRecords) },
+          overtimeClaim: {
+            create: jest.fn().mockImplementation(() => {
+              throw new Prisma.PrismaClientKnownRequestError('dup', {
+                code: 'P2002',
+                clientVersion: 'x',
+              });
+            }),
+          },
+        });
+        const service = new AttendanceService(
+          tenantPrisma as any,
+          fakeLeave() as any,
+          fakeDocuments(),
+          fakeNotifications(),
+          fakeAudit(tenantPrisma),
+        );
+        await expect(
+          service.createOvertimeClaim({ month: '2026-09', payoutMode: 'CASH' }, user()),
+        ).rejects.toThrow(ConflictException);
+      });
+    });
+
+    describe('decideOvertimeClaim()', () => {
+      const pendingManager = {
+        id: 'ot-1',
+        employeeId: 'emp-1',
+        month: '2026-09',
+        hours: new Prisma.Decimal(2),
+        payoutMode: 'CASH',
+        status: 'PENDING_MANAGER',
+      };
+      const pendingHr = { ...pendingManager, status: 'PENDING_HR' };
+
+      it('only the reporting manager or an HR admin may decide at the manager level', async () => {
+        const tenantPrisma = buildFakeTenantPrisma({
+          overtimeClaim: {
+            findUniqueOrThrow: jest.fn().mockResolvedValue(pendingManager),
+            update: jest.fn((args: any) => ({
+              ...pendingManager,
+              ...args.data,
+              id: args.where.id,
+            })),
+          },
+          employee: {
+            findUnique: jest.fn().mockResolvedValue({ reportingManagerId: 'mgr-1' }),
+          },
+        });
+        const service = new AttendanceService(
+          tenantPrisma as any,
+          fakeLeave() as any,
+          fakeDocuments(),
+          fakeNotifications(),
+          fakeAudit(tenantPrisma),
+        );
+        await expect(
+          service.decideOvertimeClaim(
+            'ot-1',
+            'APPROVE',
+            user({ role: 'LINE_MANAGER', employeeId: 'someone-else' }),
+          ),
+        ).rejects.toThrow(ForbiddenException);
+
+        await expect(
+          service.decideOvertimeClaim(
+            'ot-1',
+            'APPROVE',
+            user({ role: 'LINE_MANAGER', employeeId: 'mgr-1' }),
+          ),
+        ).resolves.toMatchObject({ status: 'PENDING_HR' });
+      });
+
+      it('manager approval moves PENDING_MANAGER -> PENDING_HR and notifies both sides', async () => {
+        const tenantPrisma = buildFakeTenantPrisma({
+          overtimeClaim: {
+            findUniqueOrThrow: jest.fn().mockResolvedValue(pendingManager),
+            update: jest.fn((args: any) => ({
+              ...pendingManager,
+              ...args.data,
+              id: args.where.id,
+            })),
+          },
+          employee: { findUnique: jest.fn().mockResolvedValue({ reportingManagerId: 'mgr-1' }) },
+        });
+        const notifications = fakeNotifications();
+        const service = new AttendanceService(
+          tenantPrisma as any,
+          fakeLeave() as any,
+          fakeDocuments(),
+          notifications,
+          fakeAudit(tenantPrisma),
+        );
+        const updated = await service.decideOvertimeClaim(
+          'ot-1',
+          'APPROVE',
+          user({ role: 'COMPANY_ADMIN' }),
+        );
+        expect(updated.status).toBe('PENDING_HR');
+        expect(notifications.notify).toHaveBeenCalledTimes(2);
+      });
+
+      it('manager rejection moves PENDING_MANAGER -> REJECTED with the reason', async () => {
+        const tenantPrisma = buildFakeTenantPrisma({
+          overtimeClaim: {
+            findUniqueOrThrow: jest.fn().mockResolvedValue(pendingManager),
+            update: jest.fn((args: any) => ({
+              ...pendingManager,
+              ...args.data,
+              id: args.where.id,
+            })),
+          },
+        });
+        const service = new AttendanceService(
+          tenantPrisma as any,
+          fakeLeave() as any,
+          fakeDocuments(),
+          fakeNotifications(),
+          fakeAudit(tenantPrisma),
+        );
+        const updated = await service.decideOvertimeClaim(
+          'ot-1',
+          'REJECT',
+          user({ role: 'COMPANY_ADMIN' }),
+          'Not authorized overtime',
+        );
+        expect(updated.status).toBe('REJECTED');
+        expect(updated.rejectionReason).toBe('Not authorized overtime');
+      });
+
+      it('only HR Manager/Company Admin may decide at the HR level — a Line Manager is forbidden even if it is their report', async () => {
+        const tenantPrisma = buildFakeTenantPrisma({
+          overtimeClaim: {
+            findUniqueOrThrow: jest.fn().mockResolvedValue(pendingHr),
+            update: jest.fn((args: any) => ({ ...pendingHr, ...args.data, id: args.where.id })),
+          },
+        });
+        const service = new AttendanceService(
+          tenantPrisma as any,
+          fakeLeave() as any,
+          fakeDocuments(),
+          fakeNotifications(),
+          fakeAudit(tenantPrisma),
+        );
+        await expect(
+          service.decideOvertimeClaim(
+            'ot-1',
+            'APPROVE',
+            user({ role: 'LINE_MANAGER', employeeId: 'mgr-1' }),
+          ),
+        ).rejects.toThrow(ForbiddenException);
+      });
+
+      it('HR approval of a CASH claim moves PENDING_HR -> APPROVED without crediting comp-off', async () => {
+        const tenantPrisma = buildFakeTenantPrisma({
+          overtimeClaim: {
+            findUniqueOrThrow: jest.fn().mockResolvedValue(pendingHr),
+            update: jest.fn((args: any) => ({ ...pendingHr, ...args.data, id: args.where.id })),
+          },
+        });
+        const leave = fakeLeave();
+        const service = new AttendanceService(
+          tenantPrisma as any,
+          leave as any,
+          fakeDocuments(),
+          fakeNotifications(),
+          fakeAudit(tenantPrisma),
+        );
+
+        const updated = await service.decideOvertimeClaim(
+          'ot-1',
+          'APPROVE',
+          user({ role: 'HR_MANAGER' }),
+        );
+        expect(updated.status).toBe('APPROVED');
+        expect(leave.creditOvertimeCompOff).not.toHaveBeenCalled();
+      });
+
+      it('HR approval of a COMP_OFF claim credits hours / shift-hours days to Leave', async () => {
+        const tenantPrisma = buildFakeTenantPrisma({
+          overtimeClaim: {
+            findUniqueOrThrow: jest
+              .fn()
+              .mockResolvedValue({ ...pendingHr, payoutMode: 'COMP_OFF' }),
+            update: jest.fn((args: any) => ({ ...pendingHr, ...args.data, id: args.where.id })),
+          },
+        });
+        const leave = fakeLeave();
+        const service = new AttendanceService(
+          tenantPrisma as any,
+          leave as any,
+          fakeDocuments(),
+          fakeNotifications(),
+          fakeAudit(tenantPrisma),
+        );
+
+        await service.decideOvertimeClaim('ot-1', 'APPROVE', user({ role: 'HR_MANAGER' }));
+        // 2 hours / 8-hour shift = 0.25 day.
+        expect(leave.creditOvertimeCompOff).toHaveBeenCalledWith('emp-1', 0.25, '2026-09');
+      });
+
+      it('HR rejection moves PENDING_HR -> REJECTED', async () => {
+        const tenantPrisma = buildFakeTenantPrisma({
+          overtimeClaim: {
+            findUniqueOrThrow: jest.fn().mockResolvedValue(pendingHr),
+            update: jest.fn((args: any) => ({ ...pendingHr, ...args.data, id: args.where.id })),
+          },
+        });
+        const service = new AttendanceService(
+          tenantPrisma as any,
+          fakeLeave() as any,
+          fakeDocuments(),
+          fakeNotifications(),
+          fakeAudit(tenantPrisma),
+        );
+        const updated = await service.decideOvertimeClaim(
+          'ot-1',
+          'REJECT',
+          user({ role: 'HR_MANAGER' }),
+        );
+        expect(updated.status).toBe('REJECTED');
+      });
+
+      it('rejects deciding a claim that is already APPROVED/REJECTED', async () => {
+        const tenantPrisma = buildFakeTenantPrisma({
+          overtimeClaim: {
+            findUniqueOrThrow: jest.fn().mockResolvedValue({ ...pendingHr, status: 'APPROVED' }),
+          },
+        });
+        const service = new AttendanceService(
+          tenantPrisma as any,
+          fakeLeave() as any,
+          fakeDocuments(),
+          fakeNotifications(),
+          fakeAudit(tenantPrisma),
+        );
+        await expect(
+          service.decideOvertimeClaim('ot-1', 'APPROVE', user({ role: 'COMPANY_ADMIN' })),
+        ).rejects.toThrow(BadRequestException);
+      });
+    });
+
+    describe('getApprovedOvertime() / getApprovedOvertimeBatch()', () => {
+      it('returns 0 when there is no claim, it is not APPROVED, or it is COMP_OFF', async () => {
+        const tenantPrisma = buildFakeTenantPrisma({
+          overtimeClaim: { findUnique: jest.fn().mockResolvedValue(null) },
+        });
+        const service = new AttendanceService(
+          tenantPrisma as any,
+          fakeLeave() as any,
+          fakeDocuments(),
+          fakeNotifications(),
+          fakeAudit(tenantPrisma),
+        );
+        expect(await service.getApprovedOvertime('emp-1', '2026-09')).toBe(0);
+      });
+
+      it('returns the hours for an APPROVED CASH claim', async () => {
+        const tenantPrisma = buildFakeTenantPrisma({
+          overtimeClaim: {
+            findUnique: jest
+              .fn()
+              .mockResolvedValue({ status: 'APPROVED', payoutMode: 'CASH', hours: 3.5 }),
+          },
+        });
+        const service = new AttendanceService(
+          tenantPrisma as any,
+          fakeLeave() as any,
+          fakeDocuments(),
+          fakeNotifications(),
+          fakeAudit(tenantPrisma),
+        );
+        expect(await service.getApprovedOvertime('emp-1', '2026-09')).toBe(3.5);
+      });
+
+      it('batches approved CASH hours per employee for a tenant-wide run', async () => {
+        const tenantPrisma = buildFakeTenantPrisma({
+          overtimeClaim: {
+            findMany: jest.fn().mockResolvedValue([
+              { employeeId: 'emp-1', hours: 2 },
+              { employeeId: 'emp-2', hours: 4.5 },
+            ]),
+          },
+        });
+        const service = new AttendanceService(
+          tenantPrisma as any,
+          fakeLeave() as any,
+          fakeDocuments(),
+          fakeNotifications(),
+          fakeAudit(tenantPrisma),
+        );
+        const result = await service.getApprovedOvertimeBatch('2026-09');
+        expect(result.get('emp-1')).toBe(2);
+        expect(result.get('emp-2')).toBe(4.5);
       });
     });
   });
