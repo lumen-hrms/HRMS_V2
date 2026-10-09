@@ -3,10 +3,11 @@
 > **This file is the authoritative, detailed spec for further development of
 > this module.** `docs/MODULE_SPECS.md` §11 is the one-page summary.
 >
-> **Status:** 🟡 50% — the Payroll-independent slice is built: headcount,
-> joiners/leavers, attrition, and CSV/XLSX export of each.
-> Payroll-cost (FR-RPT-002) and statutory registers (FR-RPT-004) remain
-> blocked on Payroll — see §1.1. The 2026-09-24 sequencing call (§8) was
+> **Status:** ✅ 100% (code) — headcount, joiners/leavers, attrition,
+> payroll cost (FR-RPT-002) and Salary/PF/ESI/Gratuity registers
+> (FR-RPT-004), all with CSV/XLSX export. Payroll landed 2026-10-09, which
+> unblocked §1.1; the payroll-backed reports read the latest
+> PROCESSED/DISBURSED run per period. The 2026-09-24 sequencing call (§8) was
 > revisited on 2026-10-05 at the owner's request to finish what was
 > buildable now.
 > **Code location:** `apps/api/src/reports` (backend; `reports.calculations.ts`
@@ -17,7 +18,7 @@
 > `08_STATUTORY_COMPLIANCE.md` (the statutory registers this module
 > exports depend on the same Payroll data) · `CLAUDE.md`'s "V1 module
 > scope" (Payroll: "not started").
-> **Last synced to code:** 2026-10-05 (Payroll-independent slice landed).
+> **Last synced to code:** 2026-10-09 (payroll cost + statutory registers landed).
 
 ---
 
@@ -91,9 +92,9 @@ merged — starts from a real plan instead of a blank slate.
 | Feature | SRS | Status | Depends on |
 |---|---|---|---|
 | Headcount: active vs separated, joiners/leavers, dept-wise | FR-RPT-001 | ✅ as-of headcount + dept breakdown; monthly joiners/leavers with net change | Employee Master only |
-| Payroll cost: monthly cost, CTC vs actual, dept-wise salary | FR-RPT-002 | 🔴 | Payroll (not built) |
+| Payroll cost: monthly cost, CTC vs actual, dept-wise salary | FR-RPT-002 | ✅ `payroll-cost` | Payroll (built) |
 | Attrition: monthly rate, avg tenure, voluntary vs involuntary | FR-RPT-003 | ✅ | Employee Master's `lastWorkingDate`/lifecycle history for rate + tenure; voluntary/involuntary split needs a structured separation-reason field not currently on `Employee` (today `transitionLifecycle`'s `reason` is free text, module 03 §4.4) — buildable *with a small schema addition*, not blocked on Payroll |
-| Statutory registers: Salary, PF, ESI, Gratuity | FR-RPT-004 | 🔴 | Payroll (Salary/PF/ESI) + Payroll's gratuity calc (Gratuity) |
+| Statutory registers: Salary, PF, ESI, Gratuity | FR-RPT-004 | ✅ `salary-register` · `pf-register` · `esi-register` (one pay month) · `gratuity-register` (from APPROVED/PAID F&F settlements in a date range) | Payroll (built) |
 | `[SHOULD]` drag-drop custom report builder + scheduled email | FR-RPT-005 | 🔴 | All of the above existing first |
 | `[SHOULD]` export PDF / XLSX / CSV everywhere | FR-RPT-006 | 🟡 CSV + XLSX for the three built reports; no PDF, no generic export | Per-report export ships with that report; this is the later generalization |
 

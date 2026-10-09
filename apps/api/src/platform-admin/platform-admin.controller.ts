@@ -7,7 +7,9 @@ import { PlansService } from './plans.service';
 import {
   AdjustPricingDto,
   ChangeTenantPlanDto,
+  ConvertTenantDto,
   CreateTenantDto,
+  SetTrialEndDto,
   PlatformAuditQueryDto,
   PlatformSessionDto,
   RequestBreakGlassDto,
@@ -76,6 +78,26 @@ export class PlatformAdminController {
     @Req() req: Request & { user?: AuthenticatedPlatformAdmin },
   ) {
     return this.service.changeTenantPlan(id, dto, req.user?.email);
+  }
+
+  @UseGuards(PlatformJwtAuthGuard)
+  @Patch('tenants/:id/trial')
+  setTrialEnd(
+    @Param('id') id: string,
+    @Body() dto: SetTrialEndDto,
+    @Req() req: Request & { user?: AuthenticatedPlatformAdmin },
+  ) {
+    return this.service.setTrialEnd(id, dto, req.user?.email);
+  }
+
+  @UseGuards(PlatformJwtAuthGuard)
+  @Post('tenants/:id/convert')
+  convertTenant(
+    @Param('id') id: string,
+    @Body() dto: ConvertTenantDto,
+    @Req() req: Request & { user?: AuthenticatedPlatformAdmin },
+  ) {
+    return this.service.convertTenant(id, dto, req.user?.email);
   }
 
   @UseGuards(PlatformJwtAuthGuard)

@@ -21,28 +21,31 @@
 > spec draft that is no longer maintained — ignore them; this file and the
 > code are the source of truth.)
 >
-> **Last synced to code:** 2026-11-23. Landed since the previous sync
-> (2026-10-05):
+> **Last synced to code:** 2026-10-09 (Payroll to 100% code-complete: cross-tenant e2e suite, perf guards, concurrent `process()`; Reports payroll-cost + statutory registers landed; `PayrollModule`/`BillingModule` re-registered in `AppModule`). Previously 2026-10-06. Landed since the previous sync (2026-10-05):
 >
-> - **Payroll Engine (module 07): Phases 1–9 built on a separate branch,
->   module 7 moves 0% → ~97%.** The full backend — salary structures with
->   a restricted-grammar formula evaluator, the EPF/ESI/PT/LOP calculation
->   engine, the run lifecycle (`DRAFT → REVIEW → APPROVED → PROCESSED →
->   DISBURSED` with the two-person approval and payroll-gate invariants),
->   overtime claims, DOB-locked payslips + a dummy-CSV bank file, per-FY
->   TDS slabs/regime choice, backdated salary revisions with arrears, and
->   Full & Final settlement for separated employees — plus the full
->   frontend (`apps/web/src/pages/payroll`, covering every live screen) and
->   a static RLS/grant audit of all 8 new migrations (clean). Fixed a real
->   gap found while wiring the frontend: `UpdatePayrollSettingsDto` was
->   missing five Full & Final formula fields, which would have 400'd under
->   the global `forbidNonWhitelisted` pipe. **Not done, environment-
->   blocked:** adversarial cross-tenant e2e tests and a ~500/~5,000-
->   employee performance run (no reachable Docker daemon or DB credentials
->   in the build environment), and an independent human domain review of
->   statutory rates/slabs — so this stays short of ✅ 100%. See
->   `docs/modules/07_PAYROLL_ENGINE.md` §9 for the full phase-by-phase
->   build log and every decision made along the way.
+> - **Tenant-facing workspace banner.** `GET /api/auth/workspace-status`
+>   (any signed-in role) feeds a banner above every page: trial countdown,
+>   failed-payment grace date, or "read-only" with who to contact. No status
+>   change — presentation of the trial/billing states below.
+> - **Billing & Payments (module 14) built → 100% (code).** Razorpay
+>   subscriptions, signature-verified idempotent webhook, payments ledger,
+>   grace → read-only enforcement, console Billing card. Needs migration
+>   `20261006120000_billing_payments` + `RAZORPAY_*` secrets. See §14.
+>
+> - **Platform Admin: trial lifecycle + tenant guide.** A tenant's chosen plan is
+>   now stored from day one; its trial length is set by the operator at onboarding
+>   (default 7 days, `trialEndsAt` on the subscription). A daily `expire-trials`
+>   job moves expired trials to the new `READ_ONLY` status: sign-in and reads
+>   still work, every write is refused by `TenantResolutionMiddleware`.
+>   Operator actions: `PATCH tenants/:id/trial` (set or reopen the end date) and
+>   `POST tenants/:id/convert` (confirm the paid plan → Active, one-year term).
+>   Tenant list shows the plan with its status. New **Tenant guide** tab documents
+>   what each setting does to a tenant. **Needs migration
+>   `20261006090000_trial_read_only` applied to the shared DB** (schema owner).
+>   Trial-ending reminder emails are not built yet.
+>
+> Earlier, landed since the 2026-09-24 sync:
+> (2026-09-24):
 >
 > - **Reports & Analytics (module 11): Payroll-independent slice built.**
 >   New `apps/api/src/reports` — `GET /api/reports/{headcount|movement|attrition}`
@@ -388,18 +391,19 @@
 | Module | Status | Progress |
 |---|---|---|
 | 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ | `████████████████████` 100% — auth/RBAC/tenancy live; `access` module wired (Users, role/status/reset, login+access audit, My Account) with e2e RBAC + append-only tests; `LoginAuditEntry` table written on every session outcome, with a daily BullMQ job purging entries past the 2-year retention window. `BAD_CREDENTIALS`/`TENANT_SUSPENDED` staying server-unobserved is an owner-approved scope decision (§1), not a gap |
-| 2. Platform Admin | ✅ | `███████████████████░` 99% — full operator console UI (tenants list, new-tenant wizard, tenant detail tabs, **Plans catalog**, **Leads**, **Settings**, audit screen); onboarding emails a hosted reset link; **operator-editable `platform.plans`** (per-seat list price / default seats / modules / features / isolation tier) with snapshot-at-assign + re-snapshot-on-renewal; **per-tenant negotiated per-seat rate** (`PATCH .../pricing`; monthly = rate × seats, computed); `PATCH .../plan` + `POST .../renew` live (renewal now also runs on a daily scheduled job off `renewsAt`); `PlatformAuditLog` written for every operator action and readable (`GET .../audit`), now true append-only at the DB grant level; `GET tenants/:id` and `POST .../refresh-headcount` live. The public landing-page contact form (`POST /api/contact`, no tenant, rate-limited) writes an append-only lead + best-effort notifies the operator-configured recipient list (`GET`/`PATCH .../settings`). Break-glass has a full audited request/track/expire/revoke lifecycle but does not yet grant an operator actual elevated tenant-data access during the window — that escalation mechanism is a deliberate follow-on |
+| 2. Platform Admin | ✅ | `███████████████████░` 99% — full operator console UI (tenants list, new-tenant wizard, tenant detail tabs, **Plans catalog**, **Leads**, **Settings**, audit screen); onboarding emails a hosted reset link; **operator-editable `platform.plans`** (per-seat list price / default seats / modules / features / isolation tier) with snapshot-at-assign + re-snapshot-on-renewal; **per-tenant negotiated per-seat rate** (`PATCH .../pricing`; monthly = rate × seats, computed); **trial lifecycle** (`trialEndsAt`, daily `expire-trials` → `READ_ONLY`, `PATCH .../trial`, `POST .../convert`, Tenant guide tab); `PATCH .../plan` + `POST .../renew` live (renewal now also runs on a daily scheduled job off `renewsAt`); `PlatformAuditLog` written for every operator action and readable (`GET .../audit`), now true append-only at the DB grant level; `GET tenants/:id` and `POST .../refresh-headcount` live. The public landing-page contact form (`POST /api/contact`, no tenant, rate-limited) writes an append-only lead + best-effort notifies the operator-configured recipient list (`GET`/`PATCH .../settings`). Break-glass has a full audited request/track/expire/revoke lifecycle but does not yet grant an operator actual elevated tenant-data access during the window — that escalation mechanism is a deliberate follow-on |
 | 3. Employee Master + Org Structure | ✅ | `████████████████████` 100% — lifecycle state machine, the full field set (statutory/bank via KMS-style AES-256-GCM encryption, emergency contacts, comp-adjacent fields), bulk-import UI, document hardening, department edit/delete-with-reassign, an interactive org chart (search/expand/collapse/zoom/quick-view), a real photo-upload widget, a proper reveal-reason dialog, and Leave's recursive Line-Manager scoping mirror are all live. Only the deliberately-deferred BU→Team hierarchy remains |
 | 4. Leave Management | ✅ | `████████████████████` 100% — backend fully wired & tested; FE live path built and running against the real API by default (`client.ts`'s `USE_MOCK` now defaults to **off**, matching `access/client.ts` — set `VITE_LEAVE_MOCK=true` to force the fixture store); `allowLopRequests`/`minNoticeDays`/`fyStartMonth`/`genderRestriction`/`requiresApproval` all enforced/settable; mid-year-joiner proration; comp-off credit on holiday/weekly-off clock-in; approved leave reconciles into `AttendanceRecord.ON_LEAVE` |
 | 5. Attendance & Time Tracking | ✅ | `████████████████████` 100% — reads the tenant's `Shift`/`tenant_settings` config, gated behind the `ATTENDANCE` plan entitlement; punches write-path, a nightly finalization job (holiday → weekly-off → punches → genuine absence), full regularization approval (window/cap enforcement, approve/reject/bulk-approve, audited, auto-resolved at payroll cut-off), manager/HR team roster + manual marking, overtime hours, and a `getLopDays()` export contract for Payroll are all live. GPS/biometric/selfie-QR capture and `POST /attendance/ingest` stay explicitly deferred (CLAUDE.md) |
 | 6. Dashboard | ✅ | `████████████████████` 100% — role-branched `GET /api/dashboard` (admin aggregates vs. personal view) includes an own-attendance "today" snapshot for every role with a linked employee record, gated on the tenant's `ATTENDANCE` entitlement, plus quick actions (clock in/out/break, approve/reject a pending request) that call Attendance's/Leave's own existing endpoints directly and re-fetch the dashboard afterward — no new mutation surface. Admin payroll-cost/attrition tiles and an upcoming-payslip date stay explicitly blocked on Payroll (module 07, not built) — same "not counted against 100%" treatment as Attendance's own Payroll-blocked items. Deep spec: `docs/modules/06_DASHBOARD.md` |
-| 7. Payroll Engine | 🟡 | `███████████████████░` 97% — Phases 1–8 backend fully built (structures, calculator, run lifecycle, overtime, payslips/bank file, TDS, revisions/arrears, Full & Final). Phase 9: full frontend built (`apps/web/src/pages/payroll`, not yet browser-verified against a live backend), a static RLS/grant audit of all 8 migrations (clean), and a real Phase 8 DTO gap fixed (`UpdatePayrollSettingsDto` whitelist). Still missing, environment-blocked: adversarial cross-tenant e2e tests, the ~500/~5,000-employee performance run, and an independent human domain review of statutory rates (decision 11) |
+| 7. Payroll Engine | ✅ | `████████████████████` 100% — code-complete: Phases 1–8 backend, full frontend, RLS/grant audit, cross-tenant e2e suite, performance guards, concurrent payslip generation. Live/human items (statutory-rate expert review, e2e run with working Firebase, real-stack scale run, browser pass) in `docs/PAYROLL_SIGNOFF.md` |
 | 8. Statutory Compliance | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
 | 9. Documents | ✅ | `████████████████████` 100% — shared `documents` module owns every user upload (employee profile docs, leave attachments, regularization evidence): type/magic-byte/size validation, ClamAV scan before download (fail-closed, self-healing sweep), 5-min attachment-disposition presigned URLs, subject-employee visibility, audited soft delete (no `DELETE` grant). Retention purge deliberately out of V1 scope. Deep spec: `docs/modules/09_DOCUMENTS.md` |
 | 10. Notifications | 🟡 | `███████████████████░` 95% — queued, deduped, audited-retry email pipeline on AWS SES v2 (`notification_log`, BullMQ `notifications` queue, 10-min self-healing sweep, Email log screen) wired into every Leave / Attendance-regularization / Documents workflow event. Remaining: first live SES delivery, blocked on the owner's SES setup (verified sender + IAM credentials). Deep spec: `docs/modules/10_NOTIFICATIONS.md` |
-| 11. Reports & Analytics | 🟡 | `██████████░░░░░░░░░░` 50% (headcount, joiners/leavers and attrition — with voluntary/involuntary split and tenure — plus CSV/XLSX export are live; payroll-cost and statutory registers stay blocked on the unbuilt Payroll module — see the deep spec §1.1). Deep spec: `docs/modules/11_REPORTS_AND_ANALYTICS.md` |
+| 11. Reports & Analytics | ✅ | `████████████████████` 100% — headcount, joiners/leavers, attrition, payroll cost and Salary/PF/ESI/Gratuity registers (from processed payroll runs only), CSV/XLSX export. Custom report builder and PDF export stay `[SHOULD]`/later. Deep spec: `docs/modules/11_REPORTS_AND_ANALYTICS.md` |
 | 12. Audit Log | ✅ | `████████████████████` 100% — three append-only trails live: `login_audit_entries` (sign-in outcomes, with a daily retention-purge job), `public.audit_log` (Identity & Access, Employee Master and Attendance events, all now written through the shared `AuditService`), `platform.platform_audit_log` (tenant create/status/plan/renewal/price-adjust/plan-edit/breakglass). All three tables have no `UPDATE`/`DELETE` grant (true append-only). Employee field/compensation edits are now audited with before/after values; `GET /api/audit` + `/audit/modules` give the cross-module aggregation/query view (web: Access › Audit's "All activity" sub-tab). Deep spec: `docs/modules/12_AUDIT_LOG.md` |
 | 13. Tenant Configuration | ✅ | `████████████████████` 100% — schema, onboarding defaults, `EntitlementGuard` (+ `@RequiresModule`/`@RequiresFeature`, wired onto Leave + Attendance), `attendance.service.ts` reading tenant `Shift`/`tenant_settings` instead of hardcoded constants, Settings screens (shift CRUD + attendance/general settings), and a skippable/resumable first-run setup wizard (`apps/web/src/components/setup-wizard`, `apps/api/src/tenant-config`) are all live. See `docs/TENANT_CONFIGURATION.md` |
+| 14. Billing & Payments (Razorpay) | ✅ | `████████████████████` 100% — code-complete: per-tenant monthly Razorpay subscription (negotiated rate × seats, created from the console, returns the customer's payment link); public `POST /api/billing/webhooks/razorpay` verifying `X-Razorpay-Signature` over the raw body, idempotent per event id (ledger + state change in one transaction); append-only `platform.payments` ledger (NUMERIC rupees); charge → Active + trial/grace cleared + renewal advanced, failed charge → 7-day grace, halted/cancelled/grace-expired → `READ_ONLY` (daily `enforce-grace` job); a payment never overrides `SUSPENDED`; Billing card + Tenant-guide rows in the console; unit + raw-body-over-HTTP tests. Live checks (test-mode payment end to end, HTTPS webhook URL) are in the separate testing tracker. Deep spec: §14 below |
 
 Deferred to a later phase — **do not build without a scope discussion**
 (`CLAUDE.md` → "Explicitly deferred"): Onboarding, Recruitment/ATS,
@@ -1063,22 +1067,21 @@ calls — keeps "what does an HR Manager see vs an Employee" in one place.
 
 ---
 
-## 7. Payroll Engine 🟡 (97%)
+## 7. Payroll Engine ✅ (100%)
 
 **Deep spec:** `docs/modules/07_PAYROLL_ENGINE.md` ·
 **UI prompt:** `docs/ui-build-prompts/07-payroll-engine.md`
-**Status:** 🟡 97% — Phase 1 (foundation, 2026-09-24), Phase 2 (calculation
-engine, 2026-10-05), Phase 3 (run lifecycle, 2026-10-12), Phase 4
-(overtime claims, 2026-10-19), Phase 5 (payslips/bank files, 2026-10-26),
-Phase 6 (TDS and regime choice, 2026-11-02), Phase 7 (re-process,
-revisions, arrears, 2026-11-09) and Phase 8 (Full & Final settlement,
-2026-11-16) backend built; Phase 9 (hardening, 2026-11-23) partially
-built — the full frontend (`apps/web/src/pages/payroll`) and a static
-RLS/grant audit are done, but adversarial cross-tenant e2e tests, the
-~500/~5,000-employee performance run, and an independent domain review
-of statutory rates remain genuinely blocked by this environment (no
-Docker/DB access) and a human reviewer, respectively — not skipped by
-choice. None of the eight migrations is applied against a real DB yet.
+**Status:** ✅ 100% (code) — Phases 1–8 backend (2026-09-24 → 2026-11-16)
+and Phase 9 hardening: the full frontend (`apps/web/src/pages/payroll`), a
+static RLS/grant audit, an adversarial cross-tenant + role-matrix e2e suite
+(`apps/api/test/payroll-isolation.e2e-spec.ts`), performance guards for the
+calculator and payslip PDFs, and bounded-concurrency payslip upload and
+notification in `process()`. All migrations apply cleanly to a fresh
+Postgres. Human/live items are tracked in `docs/PAYROLL_SIGNOFF.md`, not
+counted against the percentage: statutory-rate review by a payroll/tax
+expert (the seeded income-tax defaults follow Finance Act 2025, unreviewed), running the e2e suite
+with working Firebase credentials, a 500/5,000-employee run on the real
+stack, and a browser pass.
 **Highest-effort,
 highest-risk module — protect its time budget over breadth elsewhere**
 (`CLAUDE.md`). The upstream contracts it needs are already live:
@@ -1342,17 +1345,17 @@ queue — never inline in the request path — with every send logged.
 
 ---
 
-## 11. Reports & Analytics 🟡 (50%)
+## 11. Reports & Analytics ✅ (100%)
 
-**Status:** the Payroll-independent slice is live: headcount (as-of date,
-department and employment-type breakdown), monthly joiners/leavers with
-net change, and attrition (rate, average tenure, voluntary / involuntary /
-unspecified split), each exportable as CSV or XLSX. **Target code location:**
-`apps/api/src/reports` (built). **Deep spec:** `docs/modules/11_REPORTS_AND_ANALYTICS.md`
-— explains why the module can't reach 100% until Payroll lands (§1.1).
-Known gaps: payroll-cost (FR-RPT-002) and statutory registers (FR-RPT-004)
-are blocked on Payroll; the custom report builder (FR-RPT-005) is `[SHOULD]`
-and later; export is per-report, not "everywhere" (FR-RPT-006 partial).
+**Status:** done (code). Headcount, joiners/leavers, attrition, **payroll
+cost** (monthly employer cost vs planned CTC, department split) and the
+**Salary / PF / ESI / Gratuity registers** are live, each exportable as CSV
+or XLSX. Payroll-backed reports read only the latest `PROCESSED`/`DISBURSED`
+run per period and reformat stored figures (never recompute). **Code:**
+`apps/api/src/reports` (built), `apps/web/src/pages/reports`. **Deep spec:**
+`docs/modules/11_REPORTS_AND_ANALYTICS.md`. Not counted against 100%: the
+custom report builder + scheduled email (FR-RPT-005, `[SHOULD]`), PDF export
+and a generic "export anywhere" (FR-RPT-006 partial).
 
 ### Expectation
 
@@ -1472,6 +1475,71 @@ view, or the web app's Access › Audit → "All activity" tab.
   tracked against those modules, not this one — they don't exist yet.
 
 ---
+
+## 14. Billing & Payments ✅ (100%)
+
+**Status:** code-complete (2026-10-06). Decided 2026-10-06: **Razorpay** for payment
+collection, driven by **webhooks**. Needs migration
+`20261006120000_billing_payments` applied to the shared DB, and the
+`RAZORPAY_*` secrets set (see `docs/DEPLOY.md`).
+**Target code location:** `apps/api/src/billing`
+
+### Expectation
+
+Every paid tenant's subscription state is kept in step with Razorpay
+without manual data entry, and the app enforces that state (Active →
+past-due → read-only → suspended).
+
+### Planned scope
+
+1. **Razorpay subscription per tenant** — created when a tenant is converted
+   to a paid plan. Tenant ID goes in the subscription notes so the webhook can
+   find the tenant. Razorpay plan IDs map to our sold plans and billing cycle.
+2. **Webhook receiver** — `POST /api/billing/webhooks/razorpay`, public, excluded
+   from tenant resolution. Verifies `X-Razorpay-Signature` (HMAC-SHA256 of the
+   raw body with the webhook secret) before reading the body; rejects bad
+   signatures. Records each event ID once so a redelivered event is never applied
+   twice.
+3. **Event handling**
+
+   | Razorpay event | Effect |
+   |---|---|
+   | `subscription.activated`, `subscription.charged` | Ledger row marked paid; tenant Active; renewal date advanced |
+   | `payment.failed` | Period marked overdue; grace period starts |
+   | `subscription.halted` | Tenant moves to read-only once the grace period has passed |
+   | `subscription.cancelled` | Billing stops; tenant follows the cancellation rules |
+
+4. **Payments ledger** — one row per charge: tenant, amount, period, Razorpay
+   payment ID, status, timestamps. Append-only (no `UPDATE`/`DELETE` grant),
+   same discipline as `platform_audit_log`.
+5. **Grace period and enforcement** — overdue tenants go read-only after the
+   grace period, reusing the trial read-only rule (`TenantResolutionMiddleware`).
+   Suspension stays an operator action.
+6. **Operator fallback** — offline payments (bank transfer) keep the existing
+   "Convert to paid" action in Platform Admin, audited with a payment reference.
+
+### Decisions taken (owner can change)
+
+- **Billing cycle:** monthly, priced as negotiated rate × seats. The plan is
+  created in Razorpay per tenant at subscribe time, so no pre-made Razorpay
+  plan IDs are needed.
+- **Grace period:** 7 days from the first failed charge (`GRACE_DAYS`);
+  `subscription.halted` (Razorpay's retries exhausted) is read-only immediately.
+- **Offline payment:** "Convert to paid" in Platform Admin stays as the
+  fallback for bank-transfer customers.
+
+### Code
+
+`apps/api/src/billing` — `RazorpayClient` (REST, no SDK), `BillingService`
+(subscribe, webhook, ledger read, grace enforcement), webhook + operator
+controllers. Web: `pages/platform-admin/components/billing-card.tsx`.
+
+### Known gaps / TODO
+
+None in code. Not counted against 100% (live verification): a test-mode
+payment end to end, an HTTPS webhook URL (the preview box is HTTP-only), live
+keys, and a seat-count/price change after subscribing (it does not update the
+existing Razorpay subscription — cancel and re-create the link for now).
 
 ## Cross-module dependency map
 

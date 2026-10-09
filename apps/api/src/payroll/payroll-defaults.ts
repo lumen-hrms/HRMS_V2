@@ -84,8 +84,11 @@ export async function seedPayrollDefaults(client: PayrollSeedClient, tenantId: s
  * Default TDS slabs and regime config (module 07 Phase 6), seeded the same
  * shape for every financial year until a Company Admin edits it — same
  * posture as DEFAULT_PT_SLABS above, and the same UNVERIFIED disclaimer
- * (§12 decision 11, Phase 9 domain review): these are best-known FY2024-25
- * figures, not yet independently reviewed.
+ * (§12 decision 11, Phase 9 domain review). Figures are the Finance Act 2025
+ * rules (FY2025-26 / AY2026-27: new regime 0–4L nil … >24L 30%, 87A rebate to
+ * ₹12L max ₹60,000 with marginal relief, standard deduction ₹75,000; old
+ * regime unchanged), assumed unchanged for FY2026-27. Not yet reviewed by a
+ * tax expert — confirm before real TDS runs.
  */
 interface TaxSlabSeed {
   from: number;
@@ -95,12 +98,13 @@ interface TaxSlabSeed {
 
 export const DEFAULT_TAX_SLABS: Record<'OLD' | 'NEW', TaxSlabSeed[]> = {
   NEW: [
-    { from: 0, to: 300000, ratePercent: 0 },
-    { from: 300000, to: 600000, ratePercent: 5 },
-    { from: 600000, to: 900000, ratePercent: 10 },
-    { from: 900000, to: 1200000, ratePercent: 15 },
-    { from: 1200000, to: 1500000, ratePercent: 20 },
-    { from: 1500000, to: null, ratePercent: 30 },
+    { from: 0, to: 400000, ratePercent: 0 },
+    { from: 400000, to: 800000, ratePercent: 5 },
+    { from: 800000, to: 1200000, ratePercent: 10 },
+    { from: 1200000, to: 1600000, ratePercent: 15 },
+    { from: 1600000, to: 2000000, ratePercent: 20 },
+    { from: 2000000, to: 2400000, ratePercent: 25 },
+    { from: 2400000, to: null, ratePercent: 30 },
   ],
   OLD: [
     { from: 0, to: 250000, ratePercent: 0 },
@@ -122,8 +126,8 @@ export const DEFAULT_TAX_REGIME_CONFIG: Record<
   NEW: {
     standardDeduction: 75000,
     cessPercent: 4,
-    rebateThreshold: 700000,
-    rebateMaxAmount: 25000,
+    rebateThreshold: 1200000,
+    rebateMaxAmount: 60000,
   },
   OLD: {
     standardDeduction: 50000,

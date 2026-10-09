@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Building2, Inbox, LogOut, Moon, ScrollText, Settings, Sun, Tag } from 'lucide-react';
+import { BookOpen, Building2, Inbox, LogOut, Moon, ScrollText, Settings, Sun, Tag } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/context/theme-context';
 import { DropdownMenu, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
@@ -10,6 +10,7 @@ const NAV = [
   { to: '/platform-admin/plans', label: 'Plans', icon: Tag, end: false },
   { to: '/platform-admin/leads', label: 'Leads', icon: Inbox, end: false },
   { to: '/platform-admin/audit', label: 'Audit log', icon: ScrollText, end: false },
+  { to: '/platform-admin/guide', label: 'Tenant guide', icon: BookOpen, end: false },
   { to: '/platform-admin/settings', label: 'Settings', icon: Settings, end: false },
 ];
 

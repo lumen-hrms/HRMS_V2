@@ -5,7 +5,15 @@
  */
 import { api, getAccessToken, getTenantSubdomain, ApiError } from '@/lib/api';
 
-export type ReportKind = 'headcount' | 'movement' | 'attrition';
+export type ReportKind =
+  | 'headcount'
+  | 'movement'
+  | 'attrition'
+  | 'payroll-cost'
+  | 'salary-register'
+  | 'pf-register'
+  | 'esi-register'
+  | 'gratuity-register';
 export type ExportFormat = 'csv' | 'xlsx';
 
 export interface ReportColumn {
@@ -54,10 +62,33 @@ export interface AttritionSummary {
   avgActiveTenureMonths: number | null;
 }
 
+export interface PayrollCostSummary {
+  months: number;
+  totalGross: number;
+  totalEmployerCost: number;
+  totalNetPay: number;
+  byDepartment: Array<{ name: string; employees: number; gross: number; employerCost: number }>;
+}
+
+export interface RegisterSummary {
+  period: string;
+  employees: number;
+  totals: Record<string, number>;
+}
+
+export interface GratuitySummary {
+  from: string;
+  to: string;
+  settlements: number;
+  totalGratuity: number;
+}
+
 export type PeriodParams = {
   from?: string;
   to?: string;
   asOf?: string;
+  /** YYYY-MM — pay period for the salary / PF / ESI registers. */
+  period?: string;
 };
 
 function toQuery(params: Record<string, string | undefined>) {
@@ -77,6 +108,21 @@ export function fetchMovement(params: PeriodParams) {
 
 export function fetchAttrition(params: PeriodParams) {
   return api.get<ReportResult<AttritionSummary>>(`/reports/attrition${toQuery(params)}`);
+}
+
+export function fetchPayrollCost(params: PeriodParams) {
+  return api.get<ReportResult<PayrollCostSummary>>(`/reports/payroll-cost${toQuery(params)}`);
+}
+
+export function fetchRegister(
+  kind: 'salary-register' | 'pf-register' | 'esi-register',
+  params: PeriodParams,
+) {
+  return api.get<ReportResult<RegisterSummary>>(`/reports/${kind}${toQuery(params)}`);
+}
+
+export function fetchGratuityRegister(params: PeriodParams) {
+  return api.get<ReportResult<GratuitySummary>>(`/reports/gratuity-register${toQuery(params)}`);
 }
 
 /** Downloads a report as CSV or XLSX. Throws ApiError on a non-2xx response. */

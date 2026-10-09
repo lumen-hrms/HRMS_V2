@@ -4,9 +4,15 @@ import { isApiError } from '@/lib/api';
 import {
   downloadReport,
   fetchAttrition,
+  fetchGratuityRegister,
   fetchHeadcount,
   fetchMovement,
+  fetchPayrollCost,
+  fetchRegister,
   type AttritionSummary,
+  type GratuitySummary,
+  type PayrollCostSummary,
+  type RegisterSummary,
   type ExportFormat,
   type HeadcountSummary,
   type MovementSummary,
@@ -26,14 +32,24 @@ const TABS: Array<{ value: ReportKind; label: string; description: string }> = [
   { value: 'headcount', label: 'Headcount', description: 'Who is employed on a given date, by department.' },
   { value: 'movement', label: 'Joiners & leavers', description: 'Month-by-month movement and net change.' },
   { value: 'attrition', label: 'Attrition', description: 'Leaver rate, tenure and voluntary vs involuntary exits.' },
+  { value: 'payroll-cost', label: 'Payroll cost', description: 'Monthly employer cost from processed runs, versus planned CTC.' },
+  { value: 'salary-register', label: 'Salary register', description: 'Per-employee earnings, deductions and net pay for one processed month.' },
+  { value: 'pf-register', label: 'PF register', description: 'EPF wages and employee / EPS / employer shares for one processed month.' },
+  { value: 'esi-register', label: 'ESI register', description: 'ESI wages and contributions for covered employees in one processed month.' },
+  { value: 'gratuity-register', label: 'Gratuity register', description: 'Gratuity from approved or paid full & final settlements in the date range.' },
 ];
+
+/** Registers drawn from a single pay period rather than a date range. */
+const PERIOD_REPORTS: ReportKind[] = ['salary-register', 'pf-register', 'esi-register'];
 
 /** Mirrors the API default: 12 whole calendar months ending this month. */
 function defaultPeriod() {
   const today = new Date();
   const to = today.toISOString().slice(0, 10);
   const start = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 11, 1));
-  return { from: start.toISOString().slice(0, 10), to, asOf: to };
+  // Last month: the current one is rarely processed yet.
+  const prev = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1));
+  return { from: start.toISOString().slice(0, 10), to, asOf: to, period: prev.toISOString().slice(0, 7) };
 }
 
 function formatCell(value: string | number | null, key: string) {
@@ -52,6 +68,11 @@ function Stat({ label, value, hint }: { label: string; value: React.ReactNode; h
       </CardContent>
     </Card>
   );
+}
+
+const inrFmt = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
+function inr(n: number) {
+  return inrFmt.format(n);
 }
 
 function months(n: number | null | undefined) {
@@ -77,7 +98,13 @@ export function ReportsPage() {
             ? await fetchHeadcount({ asOf: p.asOf })
             : kind === 'movement'
               ? await fetchMovement({ from: p.from, to: p.to })
-              : await fetchAttrition({ from: p.from, to: p.to });
+              : kind === 'attrition'
+                ? await fetchAttrition({ from: p.from, to: p.to })
+                : kind === 'payroll-cost'
+                  ? await fetchPayrollCost({ from: p.from, to: p.to })
+                  : kind === 'gratuity-register'
+                    ? await fetchGratuityRegister({ from: p.from, to: p.to })
+                    : await fetchRegister(kind, { period: p.period });
         setResult(data);
       } catch (err) {
         setResult(null);
@@ -96,7 +123,15 @@ export function ReportsPage() {
   async function handleExport(format: ExportFormat) {
     setExporting(true);
     try {
-      await downloadReport(tab, format, tab === 'headcount' ? { asOf: period.asOf } : { from: period.from, to: period.to });
+      await downloadReport(
+        tab,
+        format,
+        tab === 'headcount'
+          ? { asOf: period.asOf }
+          : PERIOD_REPORTS.includes(tab)
+            ? { period: period.period }
+            : { from: period.from, to: period.to },
+      );
     } catch (err) {
       toast({ title: 'Export failed', description: isApiError(err) ? err.message : 'Try again.', tone: 'error' });
     } finally {
@@ -110,7 +145,7 @@ export function ReportsPage() {
     <div className="flex flex-col gap-5">
       <PageHeader
         title="Reports"
-        description="Org-wide headcount and workforce movement. Payroll-cost and statutory registers arrive with Payroll."
+        description="Workforce movement, payroll cost and statutory registers. Payroll figures come from processed runs only."
         actions={
           <>
             <Button variant="outline" disabled={exporting || !result} onClick={() => handleExport('csv')}>
@@ -142,6 +177,15 @@ export function ReportsPage() {
                     type="date"
                     value={period.asOf}
                     onChange={(e) => setPeriod((p) => ({ ...p, asOf: e.target.value }))}
+                  />
+                </Field>
+              ) : PERIOD_REPORTS.includes(t.value) ? (
+                <Field label="Pay month" htmlFor="rpt-period">
+                  <Input
+                    id="rpt-period"
+                    type="month"
+                    value={period.period}
+                    onChange={(e) => setPeriod((p) => ({ ...p, period: e.target.value }))}
                   />
                 </Field>
               ) : (
@@ -237,6 +281,39 @@ function Summary({ kind, summary }: { kind: ReportKind; summary: unknown }) {
         <Stat label="Leavers" value={s.leavers} />
         <Stat label="Closing" value={s.closingHeadcount} />
         <Stat label="Net change" value={s.netChange > 0 ? `+${s.netChange}` : s.netChange} />
+      </div>
+    );
+  }
+  if (kind === 'payroll-cost') {
+    const s = summary as PayrollCostSummary;
+    return (
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Stat label="Employer cost" value={inr(s.totalEmployerCost)} hint={`${s.months} processed month(s)`} />
+        <Stat label="Gross earnings" value={inr(s.totalGross)} />
+        <Stat label="Net pay" value={inr(s.totalNetPay)} />
+        <Stat label="Departments" value={s.byDepartment.length} />
+      </div>
+    );
+  }
+  if (kind === 'gratuity-register') {
+    const s = summary as GratuitySummary;
+    return (
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Stat label="Settlements" value={s.settlements} />
+        <Stat label="Total gratuity" value={inr(s.totalGratuity)} />
+      </div>
+    );
+  }
+  if (PERIOD_REPORTS.includes(kind)) {
+    const s = summary as RegisterSummary;
+    return (
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Stat label="Employees" value={s.employees} hint={s.period} />
+        {Object.entries(s.totals)
+          .slice(0, 3)
+          .map(([k, v]) => (
+            <Stat key={k} label={k.replace(/([A-Z])/g, ' $1').toLowerCase()} value={inr(v)} />
+          ))}
       </div>
     );
   }

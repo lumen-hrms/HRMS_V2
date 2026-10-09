@@ -223,6 +223,24 @@ this doc works around the bug, it doesn't fix it.)
      invite emails (also sent via SES) use it as the "back to sign-in" link
      after a password is set; without it they still work, just without the
      redirect.
+- **Billing (module 14 — Razorpay).** Without keys the Billing card's
+  "Create payment link" refuses and the webhook rejects every call; nothing
+  else breaks. To turn it on:
+  1. Razorpay dashboard (test mode first) → Settings → API keys: generate a
+     key ID + secret.
+  2. Settings → Webhooks → add `https://<api-host>/api/billing/webhooks/razorpay`
+     (the API box, not Vercel — the webhook is server-to-server), choose a
+     secret, and tick: `subscription.activated`, `subscription.charged`,
+     `subscription.pending`, `subscription.halted`, `subscription.cancelled`.
+  3. GitHub repo secrets: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`,
+     `RAZORPAY_WEBHOOK_SECRET` (the CD workflow forwards them). Redeploy.
+  4. Apply migration `20261006120000_billing_payments` (schema owner).
+  5. Test: Platform Admin → tenant → Billing → Create payment link, pay with a
+     Razorpay test card, and confirm the payment appears and the tenant turns
+     Active. Switch to live keys + a live webhook only after that.
+  The webhook endpoint must be reachable over HTTPS from Razorpay; the preview
+  box serves plain HTTP on port 80, so Razorpay will only deliver once it sits
+  behind HTTPS (e.g. the Cloudflare Tunnel noted below).
 - **ClamAV (document scanning, module 09).** Every upload stays
   `PENDING_SCAN` — shown as "Scanning…", not downloadable — until clamd has
   scanned it; scanning fails closed. The CD workflow

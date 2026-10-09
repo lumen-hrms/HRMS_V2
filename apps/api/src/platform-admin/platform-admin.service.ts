@@ -23,7 +23,9 @@ import { PlansService } from './plans.service';
 import type {
   AdjustPricingDto,
   ChangeTenantPlanDto,
+  ConvertTenantDto,
   CreateTenantDto,
+  SetTrialEndDto,
   PlatformAuditQueryDto,
   RequestBreakGlassDto,
 } from './dto/platform-admin.dto';
@@ -127,6 +129,10 @@ function mapAuditRow(row: {
     note,
   };
 }
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** Trial length when the operator doesn't choose one at onboarding. */
+const DEFAULT_TRIAL_DAYS = 7;
 
 @Injectable()
 export class PlatformAdminService {
@@ -271,6 +277,8 @@ export class PlatformAdminService {
     // `dto.pricePerSeat` is the negotiated rate for this deal; omitted → the
     // plan's list price.
     const snap = await this.plans.snapshotFor(plan, dto.seats, dto.pricePerSeat);
+    const trialDays = dto.trialDays ?? DEFAULT_TRIAL_DAYS;
+    const trialEndsAt = new Date(Date.now() + trialDays * DAY_MS);
 
     const tenant = await this.platformPrisma.tenant.create({
       data: {
@@ -285,6 +293,7 @@ export class PlatformAdminService {
             features: snap.features,
             pricePerSeat: snap.pricePerSeat,
             isolationTier: snap.isolationTier,
+            trialEndsAt,
           },
         },
       },
@@ -319,6 +328,7 @@ export class PlatformAdminService {
             plan,
             seats: snap.seats,
             pricePerSeat: snap.pricePerSeat.toFixed(2),
+            trialEndsAt: trialEndsAt.toISOString(),
           },
         },
       });
@@ -358,6 +368,165 @@ export class PlatformAdminService {
    * prior negotiated rate is dropped — re-negotiate afterwards via
    * `adjustPricing`). Audits `tenant.plan_changed`.
    */
+  /**
+   * `PATCH /tenants/:id/trial` — sets when the trial ends. A date in the
+   * future on a READ_ONLY tenant reopens its trial. Converted (ACTIVE) and
+   * SUSPENDED tenants are refused: a converted tenant has no trial, and a
+   * suspended one is changed through its status instead.
+   */
+  async setTrialEnd(tenantId: string, dto: SetTrialEndDto, actorEmail?: string) {
+    const current = await this.platformPrisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { status: true, subscription: { select: { trialEndsAt: true } } },
+    });
+    if (!current) throw new BadRequestException('Tenant not found');
+    if (!current.subscription) throw new BadRequestException('Tenant has no subscription');
+    if (current.status === 'ACTIVE' || current.status === 'SUSPENDED') {
+      throw new BadRequestException(
+        current.status === 'ACTIVE'
+          ? 'This tenant is already converted to a paid plan; it has no trial to change.'
+          : 'A suspended tenant’s trial cannot be changed. Resume the tenant first.',
+      );
+    }
+
+    const trialEndsAt = new Date(dto.trialEndsAt);
+    if (Number.isNaN(trialEndsAt.getTime())) {
+      throw new BadRequestException('trialEndsAt must be a valid date');
+    }
+    if (trialEndsAt.getTime() <= Date.now()) {
+      throw new BadRequestException('The trial end date must be in the future.');
+    }
+
+    const reopening = current.status === 'READ_ONLY';
+    await this.platformPrisma.$transaction([
+      this.platformPrisma.subscription.update({
+        where: { tenantId },
+        data: { trialEndsAt },
+      }),
+      ...(reopening
+        ? [
+            this.platformPrisma.tenant.update({
+              where: { id: tenantId },
+              data: { status: 'TRIAL' },
+            }),
+          ]
+        : []),
+    ]);
+
+    await this.bestEffortAudit({
+      actorEmail: actorEmail ?? 'unknown',
+      action: 'tenant.trial_updated',
+      targetType: 'tenant',
+      targetId: tenantId,
+      reason: dto.reason,
+      metadata: {
+        before: current.subscription.trialEndsAt?.toISOString() ?? null,
+        after: trialEndsAt.toISOString(),
+        reopened: reopening,
+      },
+    });
+    return { trialEndsAt: trialEndsAt.toISOString(), status: reopening ? 'TRIAL' : current.status };
+  }
+
+  /**
+   * `POST /tenants/:id/convert` — the operator confirms the paid plan after
+   * payment (payment itself is outside the app). Ends the trial, sets the
+   * tenant ACTIVE and starts a one-year term. A plan different from the
+   * current one goes through `changeTenantPlan`, so entitlements and pricing
+   * re-snapshot exactly as a normal plan change would.
+   */
+  async convertTenant(tenantId: string, dto: ConvertTenantDto, actorEmail?: string) {
+    const current = await this.platformPrisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { status: true, subscription: { select: { plan: true } } },
+    });
+    if (!current) throw new BadRequestException('Tenant not found');
+    if (!current.subscription) throw new BadRequestException('Tenant has no subscription');
+    if (current.status === 'ACTIVE') {
+      throw new BadRequestException(
+        'This tenant is already converted. Use the plan change instead.',
+      );
+    }
+    if (current.status === 'SUSPENDED') {
+      throw new BadRequestException('Resume the tenant before converting it to a paid plan.');
+    }
+
+    if (current.subscription.plan !== dto.plan) {
+      await this.changeTenantPlan(tenantId, { plan: dto.plan, reason: dto.reason }, actorEmail);
+    }
+
+    const renewsAt = new Date();
+    renewsAt.setFullYear(renewsAt.getFullYear() + 1);
+    await this.platformPrisma.$transaction([
+      this.platformPrisma.tenant.update({ where: { id: tenantId }, data: { status: 'ACTIVE' } }),
+      this.platformPrisma.subscription.update({
+        where: { tenantId },
+        data: { trialEndsAt: null, renewsAt },
+      }),
+    ]);
+
+    await this.bestEffortAudit({
+      actorEmail: actorEmail ?? 'unknown',
+      action: 'tenant.converted',
+      targetType: 'tenant',
+      targetId: tenantId,
+      reason: dto.reason,
+      metadata: {
+        fromStatus: current.status,
+        plan: dto.plan,
+        renewsAt: renewsAt.toISOString(),
+      },
+    });
+    return { status: 'ACTIVE', plan: dto.plan, renewsAt: renewsAt.toISOString() };
+  }
+
+  /**
+   * Daily job: every TRIAL tenant whose window has passed goes READ_ONLY.
+   * Returns how many tenants were moved (for the job log and tests).
+   */
+  async expireTrials(now: Date = new Date()): Promise<number> {
+    const expired = await this.platformPrisma.tenant.findMany({
+      where: { status: 'TRIAL', subscription: { is: { trialEndsAt: { lte: now } } } },
+      select: { id: true, subscription: { select: { trialEndsAt: true } } },
+    });
+    for (const tenant of expired) {
+      await this.platformPrisma.tenant.update({
+        where: { id: tenant.id },
+        data: { status: 'READ_ONLY' },
+      });
+      await this.bestEffortAudit({
+        actorEmail: 'system:trial-expiry',
+        action: 'tenant.trial_expired',
+        targetType: 'tenant',
+        targetId: tenant.id,
+        metadata: { trialEndsAt: tenant.subscription?.trialEndsAt?.toISOString() ?? null },
+      });
+    }
+    return expired.length;
+  }
+
+  /** Audit write that never fails the operation it describes (same policy as the rest of this file). */
+  private async bestEffortAudit(entry: {
+    actorEmail: string;
+    action: string;
+    targetType: string;
+    targetId: string;
+    reason?: string;
+    metadata: Record<string, unknown>;
+  }) {
+    const { reason, ...rest } = entry;
+    try {
+      await this.platformPrisma.platformAuditLog.create({
+        data: {
+          ...rest,
+          metadata: { ...rest.metadata, reason: reason ?? null } as Prisma.InputJsonValue,
+        },
+      });
+    } catch {
+      // best-effort — the change itself already succeeded.
+    }
+  }
+
   async changeTenantPlan(tenantId: string, dto: ChangeTenantPlanDto, actorEmail?: string) {
     const sub = await this.platformPrisma.subscription.findUnique({
       where: { tenantId },

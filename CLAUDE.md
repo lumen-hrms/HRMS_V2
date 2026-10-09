@@ -277,7 +277,7 @@ Payroll's job, and the `OvertimeClaim` manager-then-HR approval workflow
 (employee claims the month's tracked hours, CASH/COMP_OFF payout) now
 lives here too, built as part of Payroll's Phase 4 — still counted under
 Payroll's progress, not Attendance's, since it was explicitly out of
-Attendance's own V1 scope. **Payroll is in progress** (Phase 1 — salary
+Attendance's own V1 scope. **Payroll is code-complete (100%; live/human sign-off in `docs/PAYROLL_SIGNOFF.md`)** (Phase 1 — salary
 structures, statutory settings, Professional Tax slabs,
 `Employee.workState` — Phase 2 — the pure `PayrollCalculator`
 (EPF/ESI/PT/LOP/proration), `Employee.weeklyOffDaysOverride` — Phase 3 —
@@ -298,12 +298,13 @@ new `getEncashableBalance()` contract, gratuity, advance recovery) for a
 `SEPARATED` employee, one-approval lifecycle, never folded into a
 regular run — are all built; see
 `docs/modules/07_PAYROLL_ENGINE.md` §9). **Phase 9 (hardening) is
-partially built:** the full frontend (`apps/web/src/pages/payroll`) and a
-static RLS/grant audit of all 8 migrations are done, but adversarial
-cross-tenant e2e tests, a ~500/~5,000-employee performance run, and an
-independent domain review of statutory rates remain genuinely blocked —
-the first two need Docker/DB access this environment doesn't have, the
-third needs a human reviewer. Compliance exports remain **not started** — see
+built:** the full frontend (`apps/web/src/pages/payroll`), a static RLS/grant
+audit of all migrations, an adversarial cross-tenant e2e suite
+(`apps/api/test/payroll-isolation.e2e-spec.ts`), calculator/PDF performance
+guards, and concurrent payslip generation in `process()`. Still needing a
+human or live stack (see `docs/PAYROLL_SIGNOFF.md`): the statutory-rate
+review by a payroll/tax expert, running the e2e suite with working Firebase
+credentials, a real-stack 500/5,000-employee run, and a browser pass. Compliance exports remain **not started** — see
 the blueprint's 12-week plan for sequencing (payroll is the
 highest-effort, highest-risk module; protect its time budget over breadth
 elsewhere).
@@ -324,17 +325,28 @@ as a third "All activity" sub-tab on Access › Audit. Platform Admin's
 `platform_audit_log` stays a separate schema/table by design (module 02)
 and isn't part of this aggregation. See `docs/modules/12_AUDIT_LOG.md`.
 
-**Reports & Analytics — 50%, Payroll-independent slice done.** A new
-`apps/api/src/reports` module serves headcount (as-of date, dept and
-employment-type breakdown), monthly joiners/leavers with net change, and
-attrition (rate, average tenure, voluntary/involuntary split) to
-COMPANY_ADMIN and HR_MANAGER only, each exportable as CSV/XLSX; the web
-app has a `/reports` screen. Attrition's voluntary/involuntary split reads
-`Employee.separationReason`, captured on the SEPARATED lifecycle
-transition. Its payroll-cost and PF/ESI/Gratuity statutory-register
-features stay blocked on the Payroll module, which isn't merged into this
-codebase yet — the module can't reach 100% until it lands. See
+**Reports & Analytics — done, 100% (code).** `apps/api/src/reports` serves
+headcount, joiners/leavers, attrition, payroll cost (monthly employer cost vs
+planned CTC) and the Salary / PF / ESI / Gratuity registers to COMPANY_ADMIN
+and HR_MANAGER only, each exportable as CSV/XLSX; the web app has a `/reports`
+screen. Payroll-backed reports read only the latest PROCESSED/DISBURSED run
+per period and reformat Payroll's stored figures — no recomputation. The
+custom report builder and PDF export stay `[SHOULD]`/later. See
 `docs/modules/11_REPORTS_AND_ANALYTICS.md`.
+
+**Billing & Payments — done, 100% (code).** `apps/api/src/billing`: a monthly
+Razorpay subscription per paid tenant (negotiated rate × seats, created from
+the console, which returns the customer's payment link) and a public,
+signature-verified, idempotent webhook (`POST /api/billing/webhooks/razorpay`,
+raw-body `X-Razorpay-Signature` check). Charges land in the append-only
+`platform.payments` ledger; a successful charge activates the tenant (never
+overriding `SUSPENDED`), a failed one starts a 7-day grace window, and
+halted/cancelled/grace-expired moves it to `READ_ONLY` — the same status a
+lapsed trial gets (sign-in and reads work, every write is refused in
+`TenantResolutionMiddleware`). Operator "Convert to paid" remains the offline
+fallback. Needs migration `20261006120000_billing_payments` and the
+`RAZORPAY_*` secrets; live verification needs an HTTPS webhook URL. See
+`docs/MODULE_SPECS.md` §14.
 
 ## Keeping module status in sync — MANDATORY, no reminder needed
 

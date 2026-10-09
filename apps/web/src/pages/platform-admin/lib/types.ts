@@ -9,7 +9,7 @@
  * metadata — name, subdomain, plan, seats, employee *count*, status, dates.
  */
 
-export type TenantStatus = 'ACTIVE' | 'SUSPENDED' | 'TRIAL';
+export type TenantStatus = 'ACTIVE' | 'SUSPENDED' | 'TRIAL' | 'READ_ONLY';
 
 /** Sold plans + the TRIAL enum value (which is really a status). */
 export type PlanKey = 'TRIAL' | 'STARTER' | 'GROWTH' | 'ENTERPRISE';
@@ -23,6 +23,12 @@ export interface Subscription {
   enabledModules: string[];
   features: Record<string, boolean>;
   renewsAt: string | null;
+  /** End of the trial window; null once converted or never trialled. */
+  trialEndsAt: string | null;
+  /** Razorpay subscription billing this tenant monthly; null = billed offline. */
+  razorpaySubscriptionId?: string | null;
+  /** Set after a failed charge; read-only once it passes. */
+  graceEndsAt?: string | null;
   /**
    * NEGOTIATED per-seat / month rate, snapshotted at assign / renewal.
    * Decimal serialises as string. Effective monthly = pricePerSeat × seats.
@@ -117,6 +123,18 @@ export interface CreateTenantInput {
   pricePerSeat?: number;
   firstAdminName: string;
   firstAdminEmail: string;
+  /** Trial length in days (1–90). Omitted → 7. */
+  trialDays?: number;
+}
+
+export interface TenantPayment {
+  id: string;
+  razorpayPaymentId: string;
+  /** Decimal serialised as a string, in the currency's major unit. */
+  amount: string;
+  currency: string;
+  paidAt: string;
+  periodEnd: string | null;
 }
 
 export interface BreakGlassGrant {
@@ -135,6 +153,7 @@ export const TENANT_STATUS_LABEL: Record<TenantStatus, string> = {
   ACTIVE: 'Active',
   TRIAL: 'Trial',
   SUSPENDED: 'Suspended',
+  READ_ONLY: 'Read-only',
 };
 
 export const PLAN_LABEL: Record<PlanKey, string> = {
@@ -175,9 +194,8 @@ export interface PlatformSettings {
   contactNotifyEmails: string[];
 }
 
-/** Effective plan for display — TRIAL status wins over the stored plan. */
+/** The sold plan the tenant is on. Trial and read-only are statuses, shown separately. */
 export function effectivePlan(t: Pick<TenantRow, 'status' | 'subscription'>): PlanKey {
-  if (t.status === 'TRIAL') return 'TRIAL';
   return t.subscription?.plan ?? 'STARTER';
 }
 

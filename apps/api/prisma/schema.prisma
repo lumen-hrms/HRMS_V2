@@ -31,7 +31,12 @@ datasource db {
 enum TenantStatus {
   ACTIVE
   SUSPENDED
+  // In its trial window (Subscription.trialEndsAt). The subscription's plan
+  // is the chosen sold plan from day one — TRIAL is a state, not a plan.
   TRIAL
+  // Trial ended without an operator converting it: the tenant can sign in
+  // and read its data, but every write is refused (TenantResolutionMiddleware).
+  READ_ONLY
 
   @@schema("platform")
 }
@@ -114,6 +119,15 @@ model Subscription {
   plan     SubscriptionPlan @default(TRIAL)
   seats    Int              @default(50)
   renewsAt DateTime?        @map("renews_at")
+  // End of the trial window set by the operator at onboarding. Null once the
+  // tenant is converted to a paid plan (or for tenants that never had a trial).
+  trialEndsAt DateTime?     @map("trial_ends_at")
+  // Razorpay subscription driving this tenant's monthly charge (module 14).
+  // Null for tenants billed offline (operator "Convert to paid").
+  razorpaySubscriptionId String?  @unique @map("razorpay_subscription_id")
+  // Set when a charge fails; the daily job moves the tenant READ_ONLY once it
+  // passes. Cleared by the next successful charge.
+  graceEndsAt DateTime?     @map("grace_ends_at")
 
   // NEGOTIATED per-seat rate for THIS tenant (every deal is bespoke).
   // Effective monthly = pricePerSeat * seats. Snapshotted at assign-time,
@@ -1706,4 +1720,39 @@ model TdsRegimeChoice {
   @@index([tenantId])
   @@map("tds_regime_choices")
   @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Billing & Payments (module 14). Both tables are append-only for
+// `hrms_platform` (SELECT + INSERT) — a payment record is never edited.
+// ─────────────────────────────────────────────────────────────────────────
+
+// One row per captured Razorpay charge.
+model Payment {
+  id                     String   @id @default(uuid()) @db.Uuid
+  tenantId               String   @map("tenant_id") @db.Uuid
+  razorpayPaymentId      String   @unique @map("razorpay_payment_id")
+  razorpaySubscriptionId String   @map("razorpay_subscription_id")
+  // Money is NUMERIC, never float. Razorpay sends paise; stored in rupees.
+  amount                 Decimal  @db.Decimal(12, 2)
+  currency               String   @default("INR")
+  paidAt                 DateTime @map("paid_at")
+  // End of the period this charge covers (becomes Subscription.renewsAt).
+  periodEnd              DateTime? @map("period_end")
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, paidAt])
+  @@map("payments")
+  @@schema("platform")
+}
+
+// Idempotency ledger: every webhook event id is applied at most once.
+model BillingEvent {
+  eventId   String   @id @map("event_id")
+  type      String
+  tenantId  String?  @map("tenant_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("billing_events")
+  @@schema("platform")
 }

@@ -20,6 +20,7 @@ import { AuditModule } from './audit/audit.module';
 import { ContactModule } from './contact/contact.module';
 import { ReportsModule } from './reports/reports.module';
 import { PayrollModule } from './payroll/payroll.module';
+import { BillingModule } from './billing/billing.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { PayrollModule } from './payroll/payroll.module';
     ContactModule,
     ReportsModule,
     PayrollModule,
+    BillingModule,
   ],
   controllers: [HealthController],
 })
@@ -61,6 +63,7 @@ export class AppModule implements NestModule {
         { path: 'platform-admin/(.*)', method: RequestMethod.ALL },
         { path: 'health', method: RequestMethod.ALL },
         { path: 'contact', method: RequestMethod.ALL },
+        { path: 'billing/webhooks/(.*)', method: RequestMethod.ALL },
       )
       .forRoutes('*');
   }
