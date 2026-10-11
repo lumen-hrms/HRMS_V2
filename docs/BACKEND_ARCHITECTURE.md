@@ -164,8 +164,13 @@ Mirrors the tenant auth flow (own bcrypt/lockout/MFA logic against `platform_adm
 
 ### `employees/` — `EmployeesService`, plus `EmployeesController` / `DepartmentsController`
 - CRUD on `Employee` and `Department`, with the `scopeFor()` row-scoping described in §4.
+<<<<<<< Updated upstream
 - `orgChart()` — fetches all employees for the tenant, builds a manager→reports tree in memory (not a recursive SQL CTE — fine at hundreds of employees, revisit if a tenant gets large).
 - Document routes (`GET`/`POST /employees/:id/documents`) delegate to `DocumentsService` (below).
+=======
+- `orgChart()` — fetches all non-SEPARATED employees for the tenant (with department + linked-login email for the hover card — never `personalEmail`), builds a manager→reports tree in memory with direct/total report counts, and prunes any `reportingManagerId` cycle (not a recursive SQL CTE — fine at hundreds of employees, revisit if a tenant gets large).
+- Document upload: `uploadDocument()` writes the file to S3/MinIO under `tenants/<tenantId>/employees/<employeeId>/<uuid>-<filename>` (via `StorageService`) and records metadata in `public.documents`; downloads only ever hand back a 5-minute presigned URL (`getDocumentDownloadUrl`), never a direct object reference.
+>>>>>>> Stashed changes
 - `bulkImport()` — parses an uploaded `.xlsx` (via `exceljs`), requires `employeeCode`/`firstName`/`lastName` columns, inserts row-by-row and returns a per-row success/error report rather than failing the whole batch on one bad row.
 
 ### `documents/` — `DocumentsService`, `DocumentsController`, `DocumentScanProcessor`, `ClamAvScanner` (module 09)

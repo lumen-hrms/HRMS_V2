@@ -7,14 +7,14 @@
 > **Status:** 🟡 — the full field set (identity/personal, employment,
 > compensation-adjacent, statutory with KMS encryption, bank, emergency
 > contacts), the lifecycle state machine, bulk-import UI, document
-> hardening, and department edit/delete-with-reassign are all live. Only
-> the org chart's client-side polish (search/expand/zoom) and the
+> hardening, department edit/delete-with-reassign, and the interactive org
+> chart are all live. Only photo-upload / reveal-modal polish and the
 > deliberately-deferred BU→Dept→Team hierarchy remain.
-> **Progress:** ~97% (see `docs/MODULE_SPECS.md` status table — keep in sync).
+> **Progress:** ~99% (see `docs/MODULE_SPECS.md` status table — keep in sync).
 > **Code:** `apps/api/src/employees` (`EmployeesService`,
 > `EmployeesController`, `DocumentsController`, `DepartmentsController`),
 > `apps/api/src/storage`, `apps/api/src/crypto` (`FieldEncryptionService`),
-> `apps/web/src/pages/employees`, `apps/web/src/pages/{departments,org-chart}.tsx`.
+> `apps/web/src/pages/employees`, `apps/web/src/pages/departments.tsx`, `apps/web/src/pages/org-chart/`.
 > **Related:** `docs/MODULE_SPECS.md` §3, §9 · `docs/BACKEND_ARCHITECTURE.md`
 > §4 (`scopeFor`), §5 (`employees/`), §6 (data model) ·
 > module `01_IDENTITY_AND_ACCESS.md` (linked-login provisioning; the
@@ -47,8 +47,8 @@ Attendance, Payroll, Compliance, Dashboard, Org Chart) references an
 **In scope (V1):** full field set, in the UI and persisted — identity/personal,
 employment, compensation-adjacent, statutory (KMS-encrypted PAN, bank),
 emergency contacts; Department (with edit/delete-and-reassign) + single
-reporting line; org chart (rooted per role; search/expand/zoom still
-pending); bulk import (both API and UI); documents (upload/list/download/
+reporting line; org chart (rooted per role, searchable, pan/zoom,
+hover contact card); bulk import (both API and UI); documents (upload/list/download/
 delete/category, MIME+size enforced server-side).
 
 **Out of scope / deferred:** no-code custom field builder (`FR-EMP-008`),
@@ -114,13 +114,15 @@ penny-drop bank verification, background-verification workflow.
    **and logged** (`employee.field_revealed` audit row, value never
    included in the metadata). Aadhaar: **last 4 digits only** — the full 12
    is never accepted or stored.
-7. **Org chart is correctly rooted per role — built; polish pending.**
+7. **Org chart is correctly rooted per role and interactive — built.**
    Reflects `reportingManagerId`; Employee/Line Manager get a subtree
    rooted at themselves, HR/Admin/Auditor get the whole tree
-   (`EmployeesService.orgChart`). Expand/collapse, search-to-focus, and
-   PNG/PDF export are **not built** — the frontend renders a plain nested
-   list (`apps/web/src/pages/org-chart.tsx`); PNG/PDF export is explicitly
-   deferred (§1).
+   (`EmployeesService.orgChart`, SEPARATED excluded, cycles pruned). Each
+   node carries work email (linked login — never `personalEmail`), phone,
+   department, location, joining date and report counts for the hover
+   card. `apps/web/src/pages/org-chart/` renders a pan/zoom canvas with
+   expand/collapse, search-to-reveal, subtree focus, department highlight
+   and a click-to-drawer quick view. PNG/PDF export stays deferred (§1).
 8. **Linked-login provisioning is transactional with the employee** — create
    employee + Firebase user + claims + `users` row in one flow (module 01
    §5.3); privilege ceiling enforced.
@@ -382,16 +384,19 @@ lists a bucket or returns a raw key.
    `employee.field_revealed` audit row — actor, field, employeeId, reason,
    timestamp; **the decrypted value is never written to the audit row**.
 
-### 5.7 Org chart — rooted per role (built); focus/search not built
+### 5.7 Org chart — rooted per role, interactive (built)
 
 1. Any persona opens **Org Chart** — `GET /employees/org-chart` roots the
    tree per role: Employee/Line Manager get their own subtree, HR/Admin/
-   Auditor get the whole company from the top.
-2. *(Not built)* Search-to-focus, expand/collapse controls, zoom, and a
-   click-to-drawer quick view — `apps/web/src/pages/org-chart.tsx` today
-   renders a plain nested list with no interactivity beyond what the tree
-   structure itself shows. PNG/PDF export is explicitly deferred (§1), but
-   this interactivity gap is a genuine remaining item (§9).
+   Auditor get the whole company from the top. The root's team is shown
+   expanded; everything deeper is one click away (expanding re-centres).
+2. Hovering (or keyboard-focusing) a person shows a contact card — work
+   email + phone (copy, `mailto:`/`tel:`), location, manager, team size,
+   tenure; clicking opens the quick-view drawer (→ full profile).
+3. Search (name/title/code/email/department) opens the path to the match,
+   pans to it and pulses it; the department filter dims everyone else;
+   double-click (or "Team") focuses a manager's subtree with a breadcrumb
+   back up. PNG/PDF export is explicitly deferred (§1).
 
 ---
 
@@ -463,11 +468,8 @@ not direct reports only.
 
 What's left, in priority order:
 
-1. **Org chart interactivity** — search-to-focus, expand/collapse, zoom, a
-   click-to-drawer quick view. The tree is correctly rooted per role
-   (§5.7) but `apps/web/src/pages/org-chart.tsx` renders it as a plain
-   nested list with none of that. PNG/PDF export stays explicitly deferred
-   (§1) and is not counted against this.
+1. ~~**Org chart interactivity**~~ — **closed 2026-10-11** (§5.7).
+   PNG/PDF export stays explicitly deferred (§1).
 2. **Photo upload** — `photoUrl` is a settable URL string (edit dialog),
    not an actual image-upload widget wired to Storage (module 09). Low
    priority; no persona flow depends on it yet.
@@ -522,7 +524,7 @@ Supabase dev DB** via `./scripts/dev.sh migrate`):
   / In Probation / Notice-Separated) plus search + department/lifecycle
   filters. No API changes — same endpoints, different layout. Org chart
   (`org-chart.tsx`) was **not** part of this pass; its interactivity gap
-  (item 1 above) is unchanged.
+  was closed separately (2026-10-11, `pages/org-chart/`).
 
 ---
 
