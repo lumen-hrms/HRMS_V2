@@ -15,7 +15,7 @@ and the per-role screen map. Pair it with:
 - `docs/BACKEND_ARCHITECTURE.md` — how the backend is wired.
 - `apps/api/src/employees` + `apps/web/src/pages/employees` — current code.
 
-**Output target:** `apps/web/src/pages/employees/` (+ `org-chart.tsx`,
+**Output target:** `apps/web/src/pages/employees/` (+ `org-chart/`,
 `departments.tsx`).
 
 > **Field scope note (updated 2026-09-11):** the full SRS-driven field set
@@ -26,9 +26,9 @@ and the per-role screen map. Pair it with:
 > 03_EMPLOYEE_MASTER.md` §4). `apps/web/src/pages/employees/{detail,list}.tsx`
 > now render this prompt's target header-banner + internal-tabs detail page
 > and stat-tile + filter directory (§5.1/§5.2 below) — that part of the
-> redesign is **done**. `org-chart.tsx` is the one page still on the old
-> plain-nested-list rendering (§5.6) — its search/expand/zoom/export
-> interactivity is the remaining redesign work. Only two things below are still
+> redesign is **done**, and so is the org chart (§5.6, now
+> `apps/web/src/pages/org-chart/` — search/expand/zoom/focus/hover card;
+> only export remains, deferred). Only two things below are still
 > genuinely `TODO(api)`: BU→Dept→Team hierarchy (`parentDepartmentId` —
 > deliberately deferred, not planned for V1) and org-chart PNG/PDF export
 > (deferred). Everything else marked `TODO(api)` in earlier drafts of this
@@ -521,10 +521,8 @@ apps/web/src/pages/employees/
                   # out — detail.tsx/list.tsx keep every dialog inline
                   # today; extracting is a nice-to-have, not required]
 apps/web/src/pages/departments.tsx   # edit/delete already live
-apps/web/src/pages/org-chart.tsx   # tree, search, zoom, focus, export —
-                                     # rooting-per-role is live; the
-                                     # interactivity (search/zoom/focus) and
-                                     # PNG/PDF export are the redesign's job
+apps/web/src/pages/org-chart/      # tree, search, zoom, focus, hover card —
+                                     # live; PNG/PDF export still deferred
 ```
 
 Constraints recap: React 19 + TS strict (no enums), Tailwind v4 tokens only,

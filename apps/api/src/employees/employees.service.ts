@@ -760,31 +760,89 @@ export class EmployeesService {
    * the top. Building the full map first (one query, RLS already scopes it
    * to the tenant) and then picking the root is the same "fine at hundreds"
    * approach as before — just returning a different slice of it now.
+   *
+   * Each node carries what the org-chart hover card shows: work email (the
+   * linked login's email — never `personalEmail`, the chart is visible to
+   * too many people for that), phone, department, location, a presigned photo URL, and
+   * report counts. SEPARATED employees are left out — an ex-employee isn't
+   * part of the org; their former reports surface as roots until HR
+   * reassigns them, which is the correct "needs fixing" signal.
    */
   async orgChart(user: AuthenticatedUser) {
     const employees = await this.tenantPrisma.client.employee.findMany({
+      where: { lifecycleState: { not: 'SEPARATED' } },
       select: {
         id: true,
+        employeeCode: true,
         firstName: true,
         lastName: true,
         designation: true,
+        photoKey: true,
+        phone: true,
+        workLocation: true,
+        lifecycleState: true,
+        dateOfJoining: true,
         reportingManagerId: true,
+        department: { select: { id: true, name: true } },
+        user: { select: { email: true } },
       },
+      orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
     });
-    const byId = new Map(employees.map((e) => [e.id, { ...e, directReports: [] as any[] }]));
-    const roots: any[] = [];
-    for (const e of byId.values()) {
-      if (e.reportingManagerId && byId.has(e.reportingManagerId)) {
-        byId.get(e.reportingManagerId)!.directReports.push(e);
+
+    type OrgNode = Omit<(typeof employees)[number], 'user' | 'photoKey'> & {
+      photoUrl: string | null;
+      workEmail: string | null;
+      manager: { id: string; firstName: string; lastName: string } | null;
+      directReportCount: number;
+      totalReportCount: number;
+      directReports: OrgNode[];
+    };
+
+    // Avatars live in a private bucket — `resolvedPhotoUrl` signs a
+    // short-lived URL only for people who have one (same as `get()`).
+    const nodes = await Promise.all(
+      employees.map(async ({ user: login, photoKey, ...e }): Promise<OrgNode> => ({
+        ...e,
+        photoUrl: await this.resolvedPhotoUrl(photoKey),
+        workEmail: login?.email ?? null,
+        manager: null,
+        directReportCount: 0,
+        totalReportCount: 0,
+        directReports: [],
+      })),
+    );
+    const byId = new Map<string, OrgNode>(nodes.map((n) => [n.id, n]));
+    const roots: OrgNode[] = [];
+    for (const node of byId.values()) {
+      const manager = node.reportingManagerId ? byId.get(node.reportingManagerId) : undefined;
+      if (manager) {
+        manager.directReports.push(node);
+        node.manager = { id: manager.id, firstName: manager.firstName, lastName: manager.lastName };
       } else {
-        roots.push(e);
+        roots.push(node);
       }
     }
 
+    // Post-order count of every descendant. A bad reportingManagerId cycle
+    // never reaches `roots`, but a Line Manager/Employee rooted inside one
+    // would recurse forever (and fail JSON serialization) — so the edge that
+    // closes the cycle is pruned rather than followed.
+    const visited = new Set<string>();
+    const countReports = (node: OrgNode): number => {
+      visited.add(node.id);
+      node.directReports = node.directReports.filter((r) => !visited.has(r.id));
+      node.directReportCount = node.directReports.length;
+      node.totalReportCount = node.directReports.reduce((sum, r) => sum + 1 + countReports(r), 0);
+      return node.totalReportCount;
+    };
+
     if ((user.role === 'EMPLOYEE' || user.role === 'LINE_MANAGER') && user.employeeId) {
       const self = byId.get(user.employeeId);
-      return self ? [self] : [];
+      if (!self) return [];
+      countReports(self);
+      return [self];
     }
+    roots.forEach(countReports);
     return roots;
   }
 

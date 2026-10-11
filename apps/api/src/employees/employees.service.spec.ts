@@ -707,3 +707,120 @@ describe('EmployeesService.uploadPhoto', () => {
     ).rejects.toThrow('Employee not found');
   });
 });
+
+describe('EmployeesService.orgChart', () => {
+  // ceo -> (cto -> (dev1, dev2), hr). `findMany` returns the select shape.
+  function row(id: string, managerId: string | null, extra: Record<string, any> = {}) {
+    return {
+      id,
+      employeeCode: id.toUpperCase(),
+      firstName: id,
+      lastName: 'Test',
+      designation: null,
+      photoKey: null,
+      phone: null,
+      workLocation: null,
+      lifecycleState: 'CONFIRMED',
+      dateOfJoining: null,
+      reportingManagerId: managerId,
+      department: null,
+      user: null,
+      ...extra,
+    };
+  }
+  const rows = [
+    row('ceo', null, { user: { email: 'ceo@work.test' }, department: { id: 'd1', name: 'Exec' } }),
+    row('cto', 'ceo', { phone: '+91 90000 00001' }),
+    row('hr', 'ceo'),
+    row('dev1', 'cto'),
+    row('dev2', 'cto'),
+  ];
+
+  function serviceWith(data: any[]) {
+    const { service, tenantPrisma } = buildService({});
+    tenantPrisma.client.employee.findMany.mockResolvedValue(data);
+    return { service, findMany: tenantPrisma.client.employee.findMany };
+  }
+
+  it('returns the whole tree from the top for HR/Admin/Auditor, with counts and contact fields', async () => {
+    for (const role of ['HR_MANAGER', 'COMPANY_ADMIN', 'AUDITOR'] as const) {
+      const { service } = serviceWith(rows.map((r) => ({ ...r })));
+      const roots = await service.orgChart(actor({ role }));
+
+      expect(roots.map((r) => r.id)).toEqual(['ceo']);
+      const [ceo] = roots;
+      expect(ceo.workEmail).toBe('ceo@work.test');
+      expect(ceo.department).toEqual({ id: 'd1', name: 'Exec' });
+      expect(ceo.manager).toBeNull();
+      expect(ceo.directReportCount).toBe(2);
+      expect(ceo.totalReportCount).toBe(4);
+      expect(ceo).not.toHaveProperty('user');
+
+      const cto = ceo.directReports.find((r) => r.id === 'cto')!;
+      expect(cto.phone).toBe('+91 90000 00001');
+      expect(cto.manager).toEqual({ id: 'ceo', firstName: 'ceo', lastName: 'Test' });
+      expect(cto.directReportCount).toBe(2);
+      expect(cto.totalReportCount).toBe(2);
+    }
+  });
+
+  it('signs a photo URL only for people who have an uploaded photo, never exposing the key', async () => {
+    const { service, tenantPrisma, storage } = buildService({});
+    tenantPrisma.client.employee.findMany.mockResolvedValue([
+      row('ceo', null, { photoKey: 'tenants/t/photos/ceo.jpg' }),
+      row('cto', 'ceo'),
+    ]);
+    const [ceo] = await service.orgChart(actor());
+
+    expect(ceo.photoUrl).toBe('https://signed.example/photo');
+    expect(ceo.directReports[0].photoUrl).toBeNull();
+    expect(ceo).not.toHaveProperty('photoKey');
+    expect(storage.getPresignedDownloadUrl).toHaveBeenCalledTimes(1);
+    expect(storage.getPresignedDownloadUrl).toHaveBeenCalledWith('tenants/t/photos/ceo.jpg', 3600);
+  });
+
+  it('never selects personalEmail and excludes SEPARATED employees', async () => {
+    const { service, findMany } = serviceWith(rows);
+    await service.orgChart(actor());
+
+    const args = findMany.mock.calls[0][0];
+    expect(args.where).toEqual({ lifecycleState: { not: 'SEPARATED' } });
+    expect(args.select).not.toHaveProperty('personalEmail');
+    expect(args.select.user).toEqual({ select: { email: true } });
+  });
+
+  it('roots a Line Manager at their own subtree', async () => {
+    const { service } = serviceWith(rows.map((r) => ({ ...r })));
+    const roots = await service.orgChart(actor({ role: 'LINE_MANAGER', employeeId: 'cto' }));
+
+    expect(roots.map((r) => r.id)).toEqual(['cto']);
+    expect(roots[0].directReports.map((r) => r.id).sort()).toEqual(['dev1', 'dev2']);
+    expect(roots[0].totalReportCount).toBe(2);
+  });
+
+  it('roots an Employee at themselves only', async () => {
+    const { service } = serviceWith(rows.map((r) => ({ ...r })));
+    const roots = await service.orgChart(actor({ role: 'EMPLOYEE', employeeId: 'dev1' }));
+
+    expect(roots.map((r) => r.id)).toEqual(['dev1']);
+    expect(roots[0].directReports).toEqual([]);
+  });
+
+  it('returns nothing for an Employee/Line Manager with no linked employee in the tree', async () => {
+    const { service } = serviceWith(rows.map((r) => ({ ...r })));
+    await expect(
+      service.orgChart(actor({ role: 'LINE_MANAGER', employeeId: 'not-here' })),
+    ).resolves.toEqual([]);
+  });
+
+  it('prunes a reportingManagerId cycle instead of recursing forever', async () => {
+    const { service } = serviceWith([row('a', 'b'), row('b', 'a')]);
+    const roots = await service.orgChart(actor({ role: 'LINE_MANAGER', employeeId: 'a' }));
+
+    expect(roots[0].id).toBe('a');
+    expect(roots[0].directReports.map((r) => r.id)).toEqual(['b']);
+    expect(roots[0].directReports[0].directReports).toEqual([]);
+    expect(roots[0].totalReportCount).toBe(1);
+    expect(() => JSON.stringify(roots)).not.toThrow();
+  });
+});

@@ -24,7 +24,7 @@ import { seedPayrollDefaults } from '../src/payroll/payroll-defaults';
 
 const prisma = new PrismaClient();
 
-const DEMO_PASSWORD = 'Passw0rd!123'; // dev-only, printed to console at the end
+export const DEMO_PASSWORD = 'Passw0rd!123'; // dev-only, printed to console at the end
 
 if (!admin.apps.length) {
   const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
@@ -88,9 +88,16 @@ interface SeedEmployeeSpec {
   managerCode?: string;
   loginEmail: string;
   role: 'COMPANY_ADMIN' | 'HR_MANAGER' | 'LINE_MANAGER' | 'EMPLOYEE' | 'AUDITOR';
+  // Optional profile fields (used by seed-demo-org.ts). When given they're
+  // written on create AND re-applied on re-run, so the demo roster can be
+  // refreshed in place; specs that omit them keep the old create-only shape.
+  phone?: string;
+  workLocation?: string;
+  dateOfJoining?: Date;
+  lifecycleState?: 'PRE_JOINING' | 'PROBATION' | 'CONFIRMED' | 'NOTICE_PERIOD';
 }
 
-async function seedTenant(name: string, subdomain: string, employees: SeedEmployeeSpec[]) {
+export async function seedTenant(name: string, subdomain: string, employees: SeedEmployeeSpec[]) {
   const growth = entitlementsForPlan('GROWTH');
   const tenant = await prisma.tenant.upsert({
     where: { subdomain },
@@ -154,9 +161,15 @@ async function seedTenant(name: string, subdomain: string, employees: SeedEmploy
           role: spec.role,
         },
       });
+      const profile = {
+        ...(spec.phone !== undefined && { phone: spec.phone }),
+        ...(spec.workLocation !== undefined && { workLocation: spec.workLocation }),
+        ...(spec.dateOfJoining !== undefined && { dateOfJoining: spec.dateOfJoining }),
+        ...(spec.lifecycleState !== undefined && { lifecycleState: spec.lifecycleState }),
+      };
       const employee = await tx.employee.upsert({
         where: { tenantId_employeeCode: { tenantId: tenant.id, employeeCode: spec.code } },
-        update: {},
+        update: profile,
         create: {
           tenantId: tenant.id,
           userId: user.id,
@@ -167,6 +180,7 @@ async function seedTenant(name: string, subdomain: string, employees: SeedEmploy
           departmentId: deptByName.get(spec.dept),
           dateOfJoining: new Date('2024-01-15'),
           lifecycleState: 'CONFIRMED',
+          ...profile,
         },
       });
       idByCode.set(spec.code, employee.id);
@@ -469,11 +483,17 @@ All seeded users share the password: ${DEMO_PASSWORD}
 `);
 }
 
-main()
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+// Only run the full seed when executed directly — seed-demo-org.ts imports
+// `seedTenant` from here and must not re-seed acme/beta/gamma as a side effect.
+if (require.main === module) {
+  main()
+    .catch((e) => {
+      console.error(e);
+      process.exit(1);
+    })
+    .finally(async () => {
+      await prisma.$disconnect();
+    });
+}
+
+export { prisma };

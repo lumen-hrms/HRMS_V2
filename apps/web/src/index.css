@@ -451,3 +451,148 @@
     transform: none;
   }
 }
+
+/* ---------------------------------------------------------------------
+ * Org chart (pages/org-chart). Department accent hues + tree connectors.
+ * Hues are picked to stay >= 4.5:1 as text on --card in each theme, so
+ * one token drives the avatar tint, the card's top rule and the dept chip.
+ * ------------------------------------------------------------------- */
+:root {
+  --org-line: #c9d0da;
+  --org-hue-0: #2463a6;
+  --org-hue-1: #0f7a63;
+  --org-hue-2: #7347b8;
+  --org-hue-3: #b4531c;
+  --org-hue-4: #b03a6f;
+  --org-hue-5: #2f7d32;
+  --org-hue-6: #8f6a0e;
+  --org-hue-7: #4552c4;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --org-line: #34404f;
+    --org-hue-0: #6ea8e8;
+    --org-hue-1: #45c7a6;
+    --org-hue-2: #b39af0;
+    --org-hue-3: #f0955c;
+    --org-hue-4: #ec80b0;
+    --org-hue-5: #78c97b;
+    --org-hue-6: #e2b54a;
+    --org-hue-7: #8f9cf2;
+  }
+}
+:root[data-theme='dark'] {
+  --org-line: #34404f;
+  --org-hue-0: #6ea8e8;
+  --org-hue-1: #45c7a6;
+  --org-hue-2: #b39af0;
+  --org-hue-3: #f0955c;
+  --org-hue-4: #ec80b0;
+  --org-hue-5: #78c97b;
+  --org-hue-6: #e2b54a;
+  --org-hue-7: #8f9cf2;
+}
+
+/* Classic nested-list tree: every <li> draws the horizontal rail above it
+ * (::before = left half, ::after = right half + the drop into the card),
+ * every nested <ul> draws the drop out of its parent card. */
+.org-tree ul {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  margin: 0;
+  padding: 28px 0 0;
+  list-style: none;
+}
+.org-tree li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 28px 10px 0;
+}
+.org-tree li::before,
+.org-tree li::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 50%;
+  width: 50%;
+  height: 28px;
+  border-top: 1.5px solid var(--org-line);
+}
+.org-tree li::after {
+  right: auto;
+  left: 50%;
+  border-left: 1.5px solid var(--org-line);
+}
+.org-tree li:only-child {
+  padding-top: 0;
+}
+.org-tree li:only-child::before,
+.org-tree li:only-child::after {
+  display: none;
+}
+.org-tree li:first-child::before,
+.org-tree li:last-child::after {
+  border: 0 none;
+}
+.org-tree li:last-child::before {
+  border-right: 1.5px solid var(--org-line);
+  border-radius: 0 10px 0 0;
+}
+.org-tree li:first-child::after {
+  border-radius: 10px 0 0 0;
+}
+.org-tree ul ul::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  height: 28px;
+  border-left: 1.5px solid var(--org-line);
+}
+/* Top level: separate root trees side by side, no rail between them. */
+.org-tree > ul {
+  padding-top: 0;
+  gap: 48px;
+}
+.org-tree > ul > li {
+  padding-top: 0;
+}
+.org-tree > ul > li::before,
+.org-tree > ul > li::after {
+  display: none;
+}
+
+@keyframes orgPop {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.org-pop {
+  animation: orgPop 140ms ease-out;
+}
+@keyframes orgPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ring) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--ring) 0%, transparent);
+  }
+}
+.org-pulse {
+  animation: orgPulse 1.2s ease-out 2;
+}
+@media (prefers-reduced-motion: reduce) {
+  .org-pop,
+  .org-pulse {
+    animation: none;
+  }
+}
