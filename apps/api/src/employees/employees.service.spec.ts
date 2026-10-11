@@ -640,7 +640,6 @@ describe('EmployeesService emergency-contact write authorization', () => {
   });
 });
 
-<<<<<<< Updated upstream
 describe('EmployeesService.uploadPhoto', () => {
   const file = {
     originalname: 'me.jpg',
@@ -706,7 +705,9 @@ describe('EmployeesService.uploadPhoto', () => {
     await expect(
       service.uploadPhoto('missing', file, actor({ role: 'HR_MANAGER' })),
     ).rejects.toThrow('Employee not found');
-=======
+  });
+});
+
 describe('EmployeesService.orgChart', () => {
   // ceo -> (cto -> (dev1, dev2), hr). `findMany` returns the select shape.
   function row(id: string, managerId: string | null, extra: Record<string, any> = {}) {
@@ -716,7 +717,7 @@ describe('EmployeesService.orgChart', () => {
       firstName: id,
       lastName: 'Test',
       designation: null,
-      photoUrl: null,
+      photoKey: null,
       phone: null,
       workLocation: null,
       lifecycleState: 'CONFIRMED',
@@ -763,6 +764,21 @@ describe('EmployeesService.orgChart', () => {
     }
   });
 
+  it('signs a photo URL only for people who have an uploaded photo, never exposing the key', async () => {
+    const { service, tenantPrisma, storage } = buildService({});
+    tenantPrisma.client.employee.findMany.mockResolvedValue([
+      row('ceo', null, { photoKey: 'tenants/t/photos/ceo.jpg' }),
+      row('cto', 'ceo'),
+    ]);
+    const [ceo] = await service.orgChart(actor());
+
+    expect(ceo.photoUrl).toBe('https://signed.example/photo');
+    expect(ceo.directReports[0].photoUrl).toBeNull();
+    expect(ceo).not.toHaveProperty('photoKey');
+    expect(storage.getPresignedDownloadUrl).toHaveBeenCalledTimes(1);
+    expect(storage.getPresignedDownloadUrl).toHaveBeenCalledWith('tenants/t/photos/ceo.jpg', 3600);
+  });
+
   it('never selects personalEmail and excludes SEPARATED employees', async () => {
     const { service, findMany } = serviceWith(rows);
     await service.orgChart(actor());
@@ -806,6 +822,5 @@ describe('EmployeesService.orgChart', () => {
     expect(roots[0].directReports[0].directReports).toEqual([]);
     expect(roots[0].totalReportCount).toBe(1);
     expect(() => JSON.stringify(roots)).not.toThrow();
->>>>>>> Stashed changes
   });
 });

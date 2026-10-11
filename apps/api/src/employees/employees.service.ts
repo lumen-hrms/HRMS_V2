@@ -763,7 +763,7 @@ export class EmployeesService {
    *
    * Each node carries what the org-chart hover card shows: work email (the
    * linked login's email — never `personalEmail`, the chart is visible to
-   * too many people for that), phone, department, location, photo, and
+   * too many people for that), phone, department, location, a presigned photo URL, and
    * report counts. SEPARATED employees are left out — an ex-employee isn't
    * part of the org; their former reports surface as roots until HR
    * reassigns them, which is the correct "needs fixing" signal.
@@ -777,7 +777,7 @@ export class EmployeesService {
         firstName: true,
         lastName: true,
         designation: true,
-        photoUrl: true,
+        photoKey: true,
         phone: true,
         workLocation: true,
         lifecycleState: true,
@@ -789,7 +789,8 @@ export class EmployeesService {
       orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
     });
 
-    type OrgNode = Omit<(typeof employees)[number], 'user'> & {
+    type OrgNode = Omit<(typeof employees)[number], 'user' | 'photoKey'> & {
+      photoUrl: string | null;
       workEmail: string | null;
       manager: { id: string; firstName: string; lastName: string } | null;
       directReportCount: number;
@@ -797,17 +798,20 @@ export class EmployeesService {
       directReports: OrgNode[];
     };
 
-    const byId = new Map<string, OrgNode>();
-    for (const { user: login, ...e } of employees) {
-      byId.set(e.id, {
+    // Avatars live in a private bucket — `resolvedPhotoUrl` signs a
+    // short-lived URL only for people who have one (same as `get()`).
+    const nodes = await Promise.all(
+      employees.map(async ({ user: login, photoKey, ...e }): Promise<OrgNode> => ({
         ...e,
+        photoUrl: await this.resolvedPhotoUrl(photoKey),
         workEmail: login?.email ?? null,
         manager: null,
         directReportCount: 0,
         totalReportCount: 0,
         directReports: [],
-      });
-    }
+      })),
+    );
+    const byId = new Map<string, OrgNode>(nodes.map((n) => [n.id, n]));
     const roots: OrgNode[] = [];
     for (const node of byId.values()) {
       const manager = node.reportingManagerId ? byId.get(node.reportingManagerId) : undefined;

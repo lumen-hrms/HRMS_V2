@@ -7,10 +7,10 @@
 > **Status:** 🟡 — the full field set (identity/personal, employment,
 > compensation-adjacent, statutory with KMS encryption, bank, emergency
 > contacts), the lifecycle state machine, bulk-import UI, document
-> hardening, department edit/delete-with-reassign, and the interactive org
-> chart are all live. Only photo-upload / reveal-modal polish and the
-> deliberately-deferred BU→Dept→Team hierarchy remain.
-> **Progress:** ~99% (see `docs/MODULE_SPECS.md` status table — keep in sync).
+> hardening, department edit/delete-with-reassign, the interactive org
+> chart, a real photo upload and the reveal-reason confirm dialog are all
+> live. Only the deliberately-deferred BU→Dept→Team hierarchy remains.
+> **Progress:** 100% (see `docs/MODULE_SPECS.md` status table — keep in sync).
 > **Code:** `apps/api/src/employees` (`EmployeesService`,
 > `EmployeesController`, `DocumentsController`, `DepartmentsController`),
 > `apps/api/src/storage`, `apps/api/src/crypto` (`FieldEncryptionService`),
@@ -470,13 +470,11 @@ What's left, in priority order:
 
 1. ~~**Org chart interactivity**~~ — **closed 2026-10-11** (§5.7).
    PNG/PDF export stays explicitly deferred (§1).
-2. **Photo upload** — `photoUrl` is a settable URL string (edit dialog),
-   not an actual image-upload widget wired to Storage (module 09). Low
-   priority; no persona flow depends on it yet.
-3. **Reveal UX polish** — the reveal reason is collected via
-   `window.prompt` (`MaskedRow` in `detail.tsx`), not the target confirm
-   modal with a "this is logged" notice. Functionally complete (the audit
-   row is written correctly either way); this is a frontend-polish item.
+2. ~~**Photo upload**~~ — **closed 2026-09-18**: `Employee.photoKey`
+   (private object storage) + `POST /employees/:id/photo`, resolved to a
+   presigned `photoUrl` on read (also on org-chart nodes).
+3. ~~**Reveal UX polish**~~ — **closed 2026-09-18**: a reveal-reason confirm
+   dialog replaced `window.prompt`.
 4. **Generic audit interceptor** (module 12) — lifecycle transitions,
    sensitive-field updates, and reveals each hand-write their own
    `audit_log` row today, same pattern every other module uses; nothing

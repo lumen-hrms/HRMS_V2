@@ -21,10 +21,26 @@
 > spec draft that is no longer maintained — ignore them; this file and the
 > code are the source of truth.)
 >
-<<<<<<< Updated upstream
 > **Last synced to code:** 2026-11-23. Landed since the previous sync
 > (2026-10-05):
 >
+> - **Employee Master — org chart rebuilt as a Teams-style canvas.**
+>   `apps/web/src/pages/org-chart/` replaces the searchable nested list
+>   (`org-chart.tsx`, removed): pan/zoom canvas with connector lines,
+>   all-IC teams stacked compactly, expand/collapse (+ all, re-centres on
+>   expand), a hover contact card (work email/phone with copy +
+>   `mailto:`/`tel:`, location, manager, tenure), click-to-drawer quick
+>   view, double-click/"Team" subtree focus with a breadcrumb, people
+>   search that reveals + pans, and a department highlight filter.
+>   `GET /employees/org-chart` nodes now carry `employeeCode`, `photoUrl`
+>   (presigned from `photoKey`, only for people with a photo), `phone`,
+>   `workEmail` (the linked login's email — never `personalEmail`),
+>   `workLocation`, `lifecycleState`, `dateOfJoining`, `department`,
+>   `manager` and direct/total report counts; SEPARATED employees are
+>   excluded and a `reportingManagerId` cycle is pruned (7 `orgChart` unit
+>   tests). Role rooting unchanged. Also `prisma/seed-demo-org.ts` (+
+>   `demo-org-roster.ts`): a separate 40-person "demo" tenant for client
+>   demos (`npm run prisma:seed-demo`, touches no other tenant).
 > - **Payroll Engine (module 07): Phases 1–9 built on a separate branch,
 >   module 7 moves 0% → ~97%.** The full backend — salary structures with
 >   a restricted-grammar formula evaluator, the EPF/ESI/PT/LOP calculation
@@ -272,27 +288,7 @@
 >   see `docs/TENANT_CONFIGURATION.md`.
 >
 > Landed in the 2026-09-15 sync (2026-09-11):
-=======
-> **Last synced to code:** 2026-10-11. Landed since the previous sync
-> (2026-09-15):
->>>>>>> Stashed changes
 >
-> - **Employee Master — org chart interactivity (module 03 §9 #1 closed).**
->   `GET /employees/org-chart` nodes now carry `employeeCode`, `photoUrl`,
->   `phone`, `workEmail` (the linked login's email — never `personalEmail`),
->   `workLocation`, `lifecycleState`, `dateOfJoining`, `department`,
->   `manager`, `directReportCount`/`totalReportCount`; SEPARATED employees
->   are excluded and a reportingManagerId cycle is pruned, not followed
->   (6 new `orgChart` unit tests). `apps/web/src/pages/org-chart/` replaces
->   the plain nested list with a pan/zoom canvas: connector-line tree,
->   all-IC teams stacked compactly, expand/collapse (+ all), Teams-style
->   hover contact card (email/phone with copy + mailto/tel, location,
->   manager, tenure), click-to-drawer quick view, double-click/"Team" to
->   focus a subtree with a breadcrumb, people search that reveals + pans,
->   department highlight filter. Role rooting unchanged. PNG/PDF export
->   stays deferred. Also `prisma/seed-demo-org.ts` (+ `demo-org-roster.ts`):
->   a separate 40-person "demo" tenant for client demos
->   (`npm run prisma:seed-demo`, touches no other tenant).
 > - **Platform Admin — audit read API.** `GET /api/platform-admin/audit`
 >   (`tenantId`/`action`/`from`/`to`/`q` filters) closes the last open item
 >   from module 02 §9's original "Still open" list #1 — rows were already
@@ -408,15 +404,9 @@
 
 | Module | Status | Progress |
 |---|---|---|
-<<<<<<< Updated upstream
 | 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ | `████████████████████` 100% — auth/RBAC/tenancy live; `access` module wired (Users, role/status/reset, login+access audit, My Account) with e2e RBAC + append-only tests; `LoginAuditEntry` table written on every session outcome, with a daily BullMQ job purging entries past the 2-year retention window. `BAD_CREDENTIALS`/`TENANT_SUSPENDED` staying server-unobserved is an owner-approved scope decision (§1), not a gap |
 | 2. Platform Admin | ✅ | `███████████████████░` 99% — full operator console UI (tenants list, new-tenant wizard, tenant detail tabs, **Plans catalog**, **Leads**, **Settings**, audit screen); onboarding emails a hosted reset link; **operator-editable `platform.plans`** (per-seat list price / default seats / modules / features / isolation tier) with snapshot-at-assign + re-snapshot-on-renewal; **per-tenant negotiated per-seat rate** (`PATCH .../pricing`; monthly = rate × seats, computed); `PATCH .../plan` + `POST .../renew` live (renewal now also runs on a daily scheduled job off `renewsAt`); `PlatformAuditLog` written for every operator action and readable (`GET .../audit`), now true append-only at the DB grant level; `GET tenants/:id` and `POST .../refresh-headcount` live. The public landing-page contact form (`POST /api/contact`, no tenant, rate-limited) writes an append-only lead + best-effort notifies the operator-configured recipient list (`GET`/`PATCH .../settings`). Break-glass has a full audited request/track/expire/revoke lifecycle but does not yet grant an operator actual elevated tenant-data access during the window — that escalation mechanism is a deliberate follow-on |
-| 3. Employee Master + Org Structure | ✅ | `████████████████████` 100% — lifecycle state machine, the full field set (statutory/bank via KMS-style AES-256-GCM encryption, emergency contacts, comp-adjacent fields), bulk-import UI, document hardening, department edit/delete-with-reassign, an interactive org chart (search/expand/collapse/zoom/quick-view), a real photo-upload widget, a proper reveal-reason dialog, and Leave's recursive Line-Manager scoping mirror are all live. Only the deliberately-deferred BU→Team hierarchy remains |
-=======
-| 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ | `███████████████████░` 97% — auth/RBAC/tenancy live; `access` module wired (Users, role/status/reset, login+access audit, My Account) with e2e RBAC + append-only tests; `LoginAuditEntry` table written on every session outcome. Remaining: `BAD_CREDENTIALS`/`TENANT_SUSPENDED` not server-observable (§1 gaps) |
-| 2. Platform Admin | ✅ | `███████████████████░` 97% — full operator console UI (tenants list, new-tenant wizard, tenant detail tabs, **Plans catalog**, audit screen); onboarding emails a hosted reset link; **operator-editable `platform.plans`** (per-seat list price / default seats / modules / features / isolation tier) with snapshot-at-assign + re-snapshot-on-renewal; **per-tenant negotiated per-seat rate** (`PATCH .../pricing`; monthly = rate × seats, computed); `PATCH .../plan` + `POST .../renew` live; `PlatformAuditLog` written for create / status / plan-change / renewal / price-adjust / plan-edit AND now readable — `GET .../audit`. Pending: `GET tenants/:id`, refresh-headcount route, scheduled renewal job, break-glass |
-| 3. Employee Master + Org Structure | 🟡 | `███████████████████░` 99% — lifecycle state machine, the full field set (statutory/bank via KMS-style AES-256-GCM encryption, emergency contacts, comp-adjacent fields), bulk-import UI, document hardening, department edit/delete-with-reassign, and the interactive org chart (search/expand/zoom/focus/hover contact card) are all live. Only photo-upload/reveal-modal polish and the deliberately-deferred BU→Team hierarchy remain |
->>>>>>> Stashed changes
+| 3. Employee Master + Org Structure | ✅ | `████████████████████` 100% — lifecycle state machine, the full field set (statutory/bank via KMS-style AES-256-GCM encryption, emergency contacts, comp-adjacent fields), bulk-import UI, document hardening, department edit/delete-with-reassign, an interactive org chart (pan/zoom canvas, search, expand/collapse, subtree focus, hover contact card, quick-view), a real photo-upload widget, a proper reveal-reason dialog, and Leave's recursive Line-Manager scoping mirror are all live. Only the deliberately-deferred BU→Team hierarchy remains |
 | 4. Leave Management | ✅ | `████████████████████` 100% — backend fully wired & tested; FE live path built and running against the real API by default (`client.ts`'s `USE_MOCK` now defaults to **off**, matching `access/client.ts` — set `VITE_LEAVE_MOCK=true` to force the fixture store); `allowLopRequests`/`minNoticeDays`/`fyStartMonth`/`genderRestriction`/`requiresApproval` all enforced/settable; mid-year-joiner proration; comp-off credit on holiday/weekly-off clock-in; approved leave reconciles into `AttendanceRecord.ON_LEAVE` |
 | 5. Attendance & Time Tracking | ✅ | `████████████████████` 100% — reads the tenant's `Shift`/`tenant_settings` config, gated behind the `ATTENDANCE` plan entitlement; punches write-path, a nightly finalization job (holiday → weekly-off → punches → genuine absence), full regularization approval (window/cap enforcement, approve/reject/bulk-approve, audited, auto-resolved at payroll cut-off), manager/HR team roster + manual marking, overtime hours, and a `getLopDays()` export contract for Payroll are all live. GPS/biometric/selfie-QR capture and `POST /attendance/ingest` stay explicitly deferred (CLAUDE.md) |
 | 6. Dashboard | ✅ | `████████████████████` 100% — role-branched `GET /api/dashboard` (admin aggregates vs. personal view) includes an own-attendance "today" snapshot for every role with a linked employee record, gated on the tenant's `ATTENDANCE` entitlement, plus quick actions (clock in/out/break, approve/reject a pending request) that call Attendance's/Leave's own existing endpoints directly and re-fetch the dashboard afterward — no new mutation surface. Admin payroll-cost/attrition tiles and an upcoming-payslip date stay explicitly blocked on Payroll (module 07, not built) — same "not counted against 100%" treatment as Attendance's own Payroll-blocked items. Deep spec: `docs/modules/06_DASHBOARD.md` |
@@ -664,24 +654,15 @@ future logged, time-boxed break-glass flow, not a standing grant.
 
 **Deep spec:** `docs/modules/03_EMPLOYEE_MASTER.md` ·
 **UI prompt:** `docs/ui-build-prompts/03-employee-master.md`
-<<<<<<< Updated upstream
 **Status:** ✅ 100% — full field set (statutory/bank via app-layer AES-256-GCM
 encryption, emergency contacts, comp-adjacent fields), lifecycle state
 machine, bulk-import UI, document hardening (MIME/size server-side, category,
 delete), department edit/delete-with-reassign, an org chart rooted per role
-with search/expand/collapse/zoom/click-to-drawer quick view, a real photo
+(pan/zoom canvas with search, expand/collapse, subtree focus, a hover
+contact card and a click-to-drawer quick view), a real photo
 upload (private object storage, not a hand-typed URL), a proper reveal-reason
 confirm dialog, and Leave's recursive Line-Manager scoping mirror are all
 live. Only the deliberately-deferred BU→Team hierarchy remains.
-=======
-**Status:** 🟡 99% — full field set (statutory/bank via app-layer AES-256-GCM
-encryption, emergency contacts, comp-adjacent fields), lifecycle state
-machine, bulk-import UI, document hardening (MIME/size server-side, category,
-delete), department edit/delete-with-reassign, and the org chart (rooted per
-role; search, expand/collapse, pan/zoom, subtree focus, hover contact card,
-quick-view drawer) are all live. Only photo-upload / reveal-modal polish
-and the deliberately-deferred BU→Team hierarchy remain.
->>>>>>> Stashed changes
 **Code:** `apps/api/src/employees`, `apps/api/src/crypto`
 (`FieldEncryptionService`), `apps/web/src/pages/employees`,
 `apps/web/src/pages/org-chart/`, `apps/web/src/pages/departments.tsx`
