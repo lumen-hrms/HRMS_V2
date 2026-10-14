@@ -95,8 +95,19 @@ export function StructureEditorPage() {
     try {
       const input = { ctcAnnual, effectiveFrom: effectiveDate, components };
       if (exists) {
-        await payroll.updateStructure(employeeId, input);
-        toast({ title: 'Structure updated', tone: 'success' });
+        const result = await payroll.updateStructure(employeeId, input);
+        if ('revisionId' in result) {
+          toast({
+            title: 'Structure updated as a revision',
+            description:
+              result.arrearsGenerated > 0
+                ? `This affected ${result.arrearsPeriods.join(', ')} (already processed) — arrears will be folded into the next payroll run.`
+                : 'Auto-upgraded to a revision since the effective date touched an already-processed period.',
+            tone: 'success',
+          });
+        } else {
+          toast({ title: 'Structure updated', tone: 'success' });
+        }
       } else {
         await payroll.createStructure(employeeId, input);
         toast({ title: 'Structure created', tone: 'success' });

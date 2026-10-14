@@ -33,11 +33,23 @@ export function createStructure(
 ) {
   return api.post<SalaryStructure>(`/payroll/structures/${employeeId}`, input);
 }
+// The backend auto-upgrades this to a revision (new SalaryStructure +
+// SalaryRevision + any arrears) if effectiveFrom affects an already-
+// processed period — in that case the response is a ReviseStructureResult
+// instead of a SalaryStructure. Callers should check for `revisionId`.
 export function updateStructure(
   employeeId: string,
-  input: { ctcAnnual: number; effectiveFrom: string; components: SalaryComponentInput[] },
+  input: {
+    ctcAnnual: number;
+    effectiveFrom: string;
+    components: SalaryComponentInput[];
+    reason?: string;
+  },
 ) {
-  return api.patch<SalaryStructure>(`/payroll/structures/${employeeId}`, input);
+  return api.patch<SalaryStructure | ReviseStructureResult>(
+    `/payroll/structures/${employeeId}`,
+    input,
+  );
 }
 export function reviseStructure(
   employeeId: string,

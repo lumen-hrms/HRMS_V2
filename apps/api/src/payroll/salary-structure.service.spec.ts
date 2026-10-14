@@ -222,6 +222,52 @@ describe('SalaryStructureService', () => {
       await expect(service.update(EMP, low, hr)).rejects.toThrow('at least 50%');
       expect(client.salaryStructure.update).not.toHaveBeenCalled();
     });
+
+    it('auto-upgrades to a revision (supersede + arrears) instead of a plain edit when an already-processed period is affected', async () => {
+      const { service, client, tenantPrisma } = build({
+        active: stored(),
+        settings: ZERO_RATE_SETTINGS,
+        affectedLineItems: [
+          { workingDays: 22, payableDays: 22, run: { id: 'run-1', period: '2026-04' } },
+        ],
+      });
+
+      const result = await service.update(EMP, dto({ ctcAnnual: 1320000 }), hr);
+
+      // Took the revision path, not the plain in-place edit.
+      expect(client.salaryStructure.update).toHaveBeenCalledWith({
+        where: { id: 's1' },
+        data: { status: 'SUPERSEDED' },
+      });
+      expect(tenantPrisma.transaction).toHaveBeenCalledTimes(1);
+      expect(client.arrearsLineItem.createMany).toHaveBeenCalledTimes(1);
+      const revision = client.salaryRevision.create.mock.calls[0][0].data;
+      expect(revision.reason).toMatch(/auto-upgraded/i);
+      expect(result).toMatchObject({ arrearsGenerated: 1, arrearsPeriods: ['2026-04'] });
+    });
+
+    it('uses a caller-supplied reason for the auto-upgraded revision when given', async () => {
+      const { service, client } = build({
+        active: stored(),
+        settings: ZERO_RATE_SETTINGS,
+        affectedLineItems: [
+          { workingDays: 22, payableDays: 22, run: { id: 'run-1', period: '2026-04' } },
+        ],
+      });
+
+      await service.update(EMP, dto({ reason: 'Correcting a data-entry mistake' }), hr);
+
+      const revision = client.salaryRevision.create.mock.calls[0][0].data;
+      expect(revision.reason).toBe('Correcting a data-entry mistake');
+    });
+
+    it('stays a plain in-place edit (no revision, no arrears) when no period is affected', async () => {
+      const { service, client, tenantPrisma } = build({ active: stored() });
+      await service.update(EMP, dto(), hr);
+      expect(tenantPrisma.transaction).not.toHaveBeenCalled();
+      expect(client.salaryRevision.create).not.toHaveBeenCalled();
+      expect(client.arrearsLineItem.createMany).not.toHaveBeenCalled();
+    });
   });
 
   describe('revise (module 07 §9 Phase 7)', () => {

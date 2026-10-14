@@ -69,6 +69,16 @@ export class UpsertSalaryStructureDto {
   @ValidateNested({ each: true })
   @Type(() => SalaryComponentDto)
   components!: SalaryComponentDto[];
+
+  // Only used if this update turns out to affect an already-processed
+  // period, in which case it's auto-upgraded to a revision (see
+  // SalaryStructureService.update()) and this becomes that revision's
+  // reason. Optional because most updates happen before any run exists.
+  @IsOptional()
+  @IsString()
+  @MinLength(10)
+  @MaxLength(500)
+  reason?: string;
 }
 
 export class UpdatePayrollSettingsDto {
@@ -99,6 +109,7 @@ export class UpdatePayrollSettingsDto {
   @IsOptional() @IsInt() @Min(0) gratuityEligibilityYears?: number;
   @IsOptional() @IsNumber() @Min(0) gratuityDaysPerYear?: number;
   @IsOptional() @IsNumber() @Min(1) gratuityMonthDivisor?: number;
+  @IsOptional() @IsNumber() @IsPositive() gratuityMaxAmount?: number;
 }
 
 export class PtSlabDto {

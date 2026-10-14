@@ -51,6 +51,7 @@ const SETTINGS = {
   gratuityEligibilityYears: 5,
   gratuityDaysPerYear: 15,
   gratuityMonthDivisor: 26,
+  gratuityMaxAmount: 2000000,
 };
 
 function separatedEmployee(over: Record<string, unknown> = {}) {

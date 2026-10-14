@@ -79,6 +79,7 @@ export interface PayrollSettings {
   gratuityEligibilityYears: number;
   gratuityDaysPerYear: string;
   gratuityMonthDivisor: string;
+  gratuityMaxAmount: string;
 }
 
 export interface PtSlab {
