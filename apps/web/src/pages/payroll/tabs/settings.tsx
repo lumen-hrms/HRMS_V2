@@ -134,6 +134,9 @@ export function SettingsTab({ readOnly }: { readOnly: boolean }) {
                 <Field label="Gratuity month divisor">
                   <Input type="number" step="0.01" {...num('gratuityMonthDivisor')} />
                 </Field>
+                <Field label="Gratuity max payout (₹)" hint="Statutory cap, ₹20L">
+                  <Input type="number" step="1" {...num('gratuityMaxAmount')} />
+                </Field>
               </div>
               <Field label="Leave encashment components" className="mt-3">
                 <div className="flex flex-wrap gap-3">

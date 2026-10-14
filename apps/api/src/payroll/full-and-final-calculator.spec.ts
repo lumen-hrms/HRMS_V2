@@ -5,12 +5,22 @@ import {
 } from './full-and-final-calculator';
 
 describe('completedYearsOfService', () => {
-  it('is one day short of the next full year the day before the anniversary', () => {
-    expect(completedYearsOfService(new Date('2020-01-15'), new Date('2026-01-14'))).toBe(5);
+  it('rounds up a trailing part-year of more than 6 months past the last anniversary (Act §4(2))', () => {
+    // Last (5th) anniversary 2025-01-15 -> 2026-01-14 is 11 months 30 days
+    // past it, well over 6 months, so this counts as a 6th year.
+    expect(completedYearsOfService(new Date('2020-01-15'), new Date('2026-01-14'))).toBe(6);
   });
 
   it('counts the full year exactly on the anniversary date', () => {
     expect(completedYearsOfService(new Date('2020-01-15'), new Date('2026-01-15'))).toBe(6);
+  });
+
+  it('does not round up at exactly 6 months past the last anniversary', () => {
+    expect(completedYearsOfService(new Date('2020-01-15'), new Date('2026-07-15'))).toBe(6);
+  });
+
+  it('rounds up at 6 months and 1 day past the last anniversary', () => {
+    expect(completedYearsOfService(new Date('2020-01-15'), new Date('2026-07-16'))).toBe(7);
   });
 
   it('is zero on the joining date itself', () => {
@@ -30,6 +40,7 @@ describe('calculateGratuity', () => {
       eligibilityYears: 5,
       daysPerYear: 15,
       monthDivisor: 26,
+      maxAmount: 2000000,
     });
     expect(g.toNumber()).toBe(0);
   });
@@ -42,6 +53,7 @@ describe('calculateGratuity', () => {
       eligibilityYears: 5,
       daysPerYear: 15,
       monthDivisor: 26,
+      maxAmount: 2000000,
     });
     expect(g.toNumber()).toBe(144230.77);
   });
@@ -54,8 +66,22 @@ describe('calculateGratuity', () => {
       eligibilityYears: 5,
       daysPerYear: 30,
       monthDivisor: 30,
+      maxAmount: 2000000,
     });
     expect(g.toNumber()).toBe(600000);
+  });
+
+  it('caps the payout at maxAmount (statutory ₹20L ceiling, S.O. 1420(E))', () => {
+    // Uncapped: 500,000 x 15 / 26 x 30 = 8,653,846.15 -> clamped to 2,000,000.
+    const g = calculateGratuity({
+      lastDrawnBasic: 500000,
+      completedYears: 30,
+      eligibilityYears: 5,
+      daysPerYear: 15,
+      monthDivisor: 26,
+      maxAmount: 2000000,
+    });
+    expect(g.toNumber()).toBe(2000000);
   });
 });
 

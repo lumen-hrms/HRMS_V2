@@ -1496,8 +1496,10 @@ model PayrollSettings {
   // Basic must be at least this % of CTC (FR-PAY-003).
   minBasicPercent Decimal @default(50) @map("min_basic_percent") @db.Decimal(5, 2)
 
-  // EPF: wages capped at epfCeiling unless allowEpfAboveCeiling.
-  epfCeiling           Decimal @default(15000) @map("epf_ceiling") @db.Decimal(10, 2)
+  // EPF: wages capped at epfCeiling unless allowEpfAboveCeiling. Default
+  // raised 15,000 -> 25,000 per the Sept 2026 wage-ceiling notification
+  // (S.O. 5109(E), effective 2026-09-17) — Phase 9 statutory review.
+  epfCeiling           Decimal @default(25000) @map("epf_ceiling") @db.Decimal(10, 2)
   allowEpfAboveCeiling Boolean @default(false) @map("allow_epf_above_ceiling")
   // Percentages of PF wages. Employer 12% = EPS 8.33 + EPF 3.67.
   epfEmployeeRate      Decimal @default(12) @map("epf_employee_rate") @db.Decimal(5, 2)
@@ -1529,6 +1531,9 @@ model PayrollSettings {
   gratuityEligibilityYears Int     @default(5) @map("gratuity_eligibility_years")
   gratuityDaysPerYear      Decimal @default(15) @map("gratuity_days_per_year") @db.Decimal(5, 2)
   gratuityMonthDivisor     Decimal @default(26) @map("gratuity_month_divisor") @db.Decimal(5, 2)
+  // Statutory max gratuity payout (notification S.O. 1420(E), ₹20L) —
+  // Phase 9 statutory review. Tenant-editable, not a constant.
+  gratuityMaxAmount        Decimal @default(2000000) @map("gratuity_max_amount") @db.Decimal(12, 2)
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

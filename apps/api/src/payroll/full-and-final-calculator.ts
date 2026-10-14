@@ -4,9 +4,11 @@ const D = Prisma.Decimal;
 type Decimal = Prisma.Decimal;
 
 /**
- * Completed full years between two UTC dates, calendar-anniversary based
- * (not a raw ms/365.25 division) — module 07 Phase 8 gratuity eligibility.
- * Never negative.
+ * Years of service between two UTC dates for the Payment of Gratuity Act
+ * formula — calendar-anniversary based (not a raw ms/365.25 division),
+ * and rounds the trailing partial year up to a full year once it exceeds
+ * six months (the Act's settled "> 6 months counts as a full year" rule;
+ * exactly 6 months does not round up). Never negative.
  */
 export function completedYearsOfService(from: Date, to: Date): number {
   let years = to.getUTCFullYear() - from.getUTCFullYear();
@@ -14,7 +16,22 @@ export function completedYearsOfService(from: Date, to: Date): number {
     Date.UTC(to.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()),
   );
   if (to.getTime() < anniversaryThisYear.getTime()) years--;
-  return Math.max(0, years);
+  if (years < 0) return 0;
+
+  // Six months (or more) past the latest completed anniversary rounds up.
+  const lastAnniversary = new Date(
+    Date.UTC(from.getUTCFullYear() + years, from.getUTCMonth(), from.getUTCDate()),
+  );
+  const sixMonthsAfter = new Date(
+    Date.UTC(
+      lastAnniversary.getUTCFullYear(),
+      lastAnniversary.getUTCMonth() + 6,
+      lastAnniversary.getUTCDate(),
+    ),
+  );
+  if (to.getTime() > sixMonthsAfter.getTime()) years++;
+
+  return years;
 }
 
 export interface GratuityInput {
@@ -24,21 +41,25 @@ export interface GratuityInput {
   eligibilityYears: number;
   daysPerYear: Decimal | number | string;
   monthDivisor: Decimal | number | string;
+  /** Statutory max payable under the Act (₹20,00,000 per notification S.O. 1420(E)); tenant-editable, not a constant. */
+  maxAmount: Decimal | number | string;
 }
 
 /**
  * Statutory gratuity formula (module 07 §12 decision 10): daysPerYear /
  * monthDivisor x lastDrawnBasic x completedYears, 0 below the eligibility
- * threshold. Defaults are the common 15/26, 5-year rule; both tenant-
- * editable (`PayrollSettings`), not constants.
+ * threshold, capped at `maxAmount`. Defaults are the common 15/26, 5-year
+ * rule and the ₹20L statutory ceiling; all tenant-editable
+ * (`PayrollSettings`), not constants.
  */
 export function calculateGratuity(input: GratuityInput): Decimal {
   if (input.completedYears < input.eligibilityYears) return new D(0);
-  return new D(input.lastDrawnBasic)
+  const amount = new D(input.lastDrawnBasic)
     .times(input.daysPerYear)
     .div(input.monthDivisor)
     .times(input.completedYears)
     .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
+  return D.min(amount, new D(input.maxAmount));
 }
 
 export interface LeaveEncashmentInput {

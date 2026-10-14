@@ -24,6 +24,23 @@
 > **Last synced to code:** 2026-11-24. Landed since the previous sync
 > (2026-10-05):
 >
+> - **Payroll Engine (module 07) Phase 9 follow-up: `update()`/`revise()`
+>   convergence + a best-effort public-source statutory review.**
+>   `SalaryStructureService.update()` now auto-detects when the new
+>   `effectiveFrom` would affect an already-processed period and
+>   transparently routes through the same supersede-and-arrears path
+>   `revise()` uses, instead of silently losing arrears on a plain edit
+>   (shared `applyRevision`/`findAffectedLineItems` helpers; 3 new tests).
+>   Separately, cross-checked every shipped statutory default/formula
+>   against public sources and fixed four gaps (§12 decision 29 in
+>   `docs/modules/07_PAYROLL_ENGINE.md`): the EPF wage-ceiling default
+>   (15,000 → 25,000, migration `20261124090000_statutory_rate_review`,
+>   backfills existing rows still on the old default), the NEW tax
+>   regime's seeded defaults (Budget 2025 FY2025-26/26-27 figures), a
+>   statutory ₹20L gratuity payout cap, the Payment of Gratuity Act's
+>   >6-month rounding rule, and Section 87A marginal relief in
+>   `projectAnnualTax`. This is **not** decision 11's independent human
+>   domain review — still open, still environment/people-blocked.
 > - **Employee Master — org chart rebuilt as a Teams-style canvas.**
 >   `apps/web/src/pages/org-chart/` replaces the searchable nested list
 >   (`org-chart.tsx`, removed): pan/zoom canvas with connector lines,
@@ -435,7 +452,7 @@
 | 4. Leave Management | ✅ | `████████████████████` 100% — backend fully wired & tested; FE live path built and running against the real API by default (`client.ts`'s `USE_MOCK` now defaults to **off**, matching `access/client.ts` — set `VITE_LEAVE_MOCK=true` to force the fixture store); `allowLopRequests`/`minNoticeDays`/`fyStartMonth`/`genderRestriction`/`requiresApproval` all enforced/settable; mid-year-joiner proration; comp-off credit on holiday/weekly-off clock-in; approved leave reconciles into `AttendanceRecord.ON_LEAVE` |
 | 5. Attendance & Time Tracking | ✅ | `████████████████████` 100% — reads the tenant's `Shift`/`tenant_settings` config, gated behind the `ATTENDANCE` plan entitlement; punches write-path, a nightly finalization job (holiday → weekly-off → punches → genuine absence), full regularization approval (window/cap enforcement, approve/reject/bulk-approve, audited, auto-resolved at payroll cut-off), manager/HR team roster + manual marking, overtime hours, and a `getLopDays()` export contract for Payroll are all live. GPS/biometric/selfie-QR capture and `POST /attendance/ingest` stay explicitly deferred (CLAUDE.md) |
 | 6. Dashboard | ✅ | `████████████████████` 100% — role-branched `GET /api/dashboard` (admin aggregates vs. personal view) includes an own-attendance "today" snapshot for every role with a linked employee record, gated on the tenant's `ATTENDANCE` entitlement, plus quick actions (clock in/out/break, approve/reject a pending request) that call Attendance's/Leave's own existing endpoints directly and re-fetch the dashboard afterward — no new mutation surface. Admin payroll-cost/attrition tiles and an upcoming-payslip date stay explicitly blocked on Payroll (module 07, not built) — same "not counted against 100%" treatment as Attendance's own Payroll-blocked items. Deep spec: `docs/modules/06_DASHBOARD.md` |
-| 7. Payroll Engine | ✅ | `████████████████████` 100% — code-complete: Phases 1–8 backend, full frontend, RLS/grant audit, cross-tenant e2e suite, performance guards, concurrent payslip generation. Live/human items (statutory-rate expert review, e2e run with working Firebase, real-stack scale run, browser pass) in `docs/PAYROLL_SIGNOFF.md` |
+| 7. Payroll Engine | ✅ | `████████████████████` 100% — code-complete: Phases 1–8 backend, full frontend, RLS/grant audit, cross-tenant e2e suite (its first run caught and fixed a real cross-tenant bug in `TdsService.setEmployeeRegime`/`getEmployeeRegime`), performance guards, concurrent payslip generation, `SalaryStructureService.update()` auto-upgrading to a revision when it would affect an already-processed period, and a best-effort public-source statutory review (decision 29 — EPF wage ceiling 15,000→25,000, NEW tax regime defaults + marginal relief updated to Budget 2025 figures, ₹20L gratuity cap + >6-month rounding). Live/human items (an independent *human* domain review of statutory rates — decision 11, not satisfied by the public-source pass above — e2e run with working Firebase, real-stack scale run, browser pass) in `docs/PAYROLL_SIGNOFF.md` |
 | 8. Statutory Compliance | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
 | 9. Documents | ✅ | `████████████████████` 100% — shared `documents` module owns every user upload (employee profile docs, leave attachments, regularization evidence): type/magic-byte/size validation, ClamAV scan before download (fail-closed, self-healing sweep), 5-min attachment-disposition presigned URLs, subject-employee visibility, audited soft delete (no `DELETE` grant). Retention purge deliberately out of V1 scope. Deep spec: `docs/modules/09_DOCUMENTS.md` |
 | 10. Notifications | 🟡 | `███████████████████░` 95% — queued, deduped, audited-retry email pipeline on AWS SES v2 (`notification_log`, BullMQ `notifications` queue, 10-min self-healing sweep, Email log screen) wired into every Leave / Attendance-regularization / Documents workflow event. Remaining: first live SES delivery, blocked on the owner's SES setup (verified sender + IAM credentials). Deep spec: `docs/modules/10_NOTIFICATIONS.md` |

@@ -300,11 +300,19 @@ regular run — are all built; see
 `docs/modules/07_PAYROLL_ENGINE.md` §9). **Phase 9 (hardening) is
 built:** the full frontend (`apps/web/src/pages/payroll`), a static RLS/grant
 audit of all migrations, an adversarial cross-tenant e2e suite
-(`apps/api/test/payroll-isolation.e2e-spec.ts`), calculator/PDF performance
-guards, and concurrent payslip generation in `process()`. Still needing a
+(`apps/api/test/payroll-isolation.e2e-spec.ts` — its own first run caught a
+real cross-tenant bug in `TdsService.setEmployeeRegime`/`getEmployeeRegime`,
+since fixed), calculator/PDF performance guards, concurrent payslip
+generation in `process()`, the `SalaryStructureService.update()`
+auto-upgrade-to-revision fix, and a best-effort public-source statutory
+review (§12 decision 29 — raised the EPF wage ceiling default 15,000 →
+25,000 per the Sept 2026 notification, updated the NEW tax regime's seeded
+defaults and marginal-relief handling to the Budget 2025 figures, and added
+the ₹20L gratuity cap and the Act's >6-month rounding rule). Still needing a
 human or live stack (see `docs/PAYROLL_SIGNOFF.md`): the statutory-rate
-review by a payroll/tax expert, running the e2e suite with working Firebase
-credentials, a real-stack 500/5,000-employee run, and a browser pass. Compliance exports remain **not started** — see
+review by an actual payroll/tax expert (a web search is not that), running
+the e2e suite with working Firebase credentials, a real-stack 500/5,000-
+employee run, and a browser pass. Compliance exports remain **not started** — see
 the blueprint's 12-week plan for sequencing (payroll is the
 highest-effort, highest-risk module; protect its time budget over breadth
 elsewhere).

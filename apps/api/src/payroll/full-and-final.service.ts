@@ -184,6 +184,7 @@ export class FullAndFinalService {
       eligibilityYears: settings.gratuityEligibilityYears,
       daysPerYear: settings.gratuityDaysPerYear,
       monthDivisor: settings.gratuityMonthDivisor,
+      maxAmount: settings.gratuityMaxAmount,
     });
 
     const componentsMonthlyTotal = settings.leaveEncashmentComponents.reduce(

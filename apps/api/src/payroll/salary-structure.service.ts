@@ -119,9 +119,13 @@ export class SalaryStructureService {
   }
 
   /**
-   * Edits the active structure in place. Safe only while no payroll run has
-   * used it — once runs exist (Phase 3+), changes must go through a revision
-   * (`POST .../revise`, Phase 7) so history is never rewritten.
+   * Edits the active structure. While no payroll run has used it yet, this
+   * is a plain in-place edit. If the new `effectiveFrom` falls at or before
+   * a period this employee already has a `PROCESSED`/`DISBURSED` line item
+   * for, a plain edit would silently lose the arrears those periods are
+   * owed — so this auto-upgrades to the same supersede-and-revise path
+   * `revise()` uses (see `applyRevision` below), keeping the two endpoints'
+   * behavior equivalent regardless of which one a caller uses.
    */
   async update(employeeId: string, dto: UpsertSalaryStructureDto, user: AuthenticatedUser) {
     await this.assertEmployeeExists(employeeId);
@@ -134,8 +138,24 @@ export class SalaryStructureService {
       dto.ctcAnnual,
       settings.minBasicPercent,
     );
-    const tenantId = this.tenantPrisma.tenantId;
+    const effectivePeriod = dto.effectiveFrom.slice(0, 7); // YYYY-MM
+    const affectedItems = await this.findAffectedLineItems(employeeId, effectivePeriod);
 
+    if (affectedItems.length > 0) {
+      return this.applyRevision(
+        employeeId,
+        active,
+        components,
+        dto.ctcAnnual,
+        new Date(dto.effectiveFrom),
+        dto.reason ??
+          'Auto-upgraded from a plain structure update because it affects already-processed periods.',
+        user,
+        affectedItems,
+      );
+    }
+
+    const tenantId = this.tenantPrisma.tenantId;
     const updated = await this.tenantPrisma.client.salaryStructure.update({
       where: { id: active.id },
       data: {
@@ -162,62 +182,58 @@ export class SalaryStructureService {
     return this.toResponse(updated);
   }
 
+  private findAffectedLineItems(employeeId: string, effectivePeriod: string) {
+    return this.tenantPrisma.client.payrollLineItem.findMany({
+      where: {
+        employeeId,
+        run: {
+          isReprocess: false,
+          status: { in: ['PROCESSED', 'DISBURSED'] },
+          period: { gte: effectivePeriod },
+        },
+      },
+      include: { run: { select: { id: true, period: true } } },
+      orderBy: { run: { period: 'asc' } },
+    });
+  }
+
   /**
    * Supersedes the active structure with a new one, recording the change as
    * an append-only `SalaryRevision` (module 07 Phase 7) instead of editing
-   * history. If `effectiveDate` falls at or before a period this employee
-   * already has a `PROCESSED`/`DISBURSED` (non-reprocess) line item for,
-   * generates one `ArrearsLineItem` per such period — the delta between
-   * what was paid under the OLD structure and what the NEW structure would
-   * pay, recomputed with the SAME historical workingDays/payableDays/month
-   * and CURRENT EPF/ESI/PT config on both sides (so the delta isolates the
-   * structure change — TDS, overtime and ad-hoc adjustments are
-   * deliberately excluded from both sides and so cancel out of the
-   * comparison; see §12 decision 25). Arrears sit `PENDING` until the next
-   * `createDraft` folds them into that run's `adHocAdjustments` — never a
-   * rewrite of the original (already-immutable) `PayrollLineItem` (INV-2).
+   * history. For each already-affected period, generates an
+   * `ArrearsLineItem` — the delta between what was paid under the OLD
+   * structure and what the NEW structure would pay, recomputed with the
+   * SAME historical workingDays/payableDays/month and CURRENT EPF/ESI/PT
+   * config on both sides (so the delta isolates the structure change — TDS,
+   * overtime and ad-hoc adjustments are deliberately excluded from both
+   * sides and so cancel out of the comparison; see §12 decision 25).
+   * Arrears sit `PENDING` until the next `createDraft` folds them into that
+   * run's `adHocAdjustments` — never a rewrite of the original
+   * (already-immutable) `PayrollLineItem` (INV-2).
    */
-  async revise(employeeId: string, dto: ReviseSalaryStructureDto, user: AuthenticatedUser) {
-    await this.assertEmployeeExists(employeeId);
-    const active = await this.findActive(employeeId);
-    if (!active) {
-      throw new NotFoundException('No salary structure for this employee yet — create one first');
-    }
-
+  private async applyRevision(
+    employeeId: string,
+    active: NonNullable<Awaited<ReturnType<SalaryStructureService['findActive']>>>,
+    components: ReturnType<typeof normalizeAndValidateComponents>,
+    ctcAnnual: number,
+    effectiveDate: Date,
+    reason: string,
+    user: AuthenticatedUser,
+    affectedItems: Awaited<ReturnType<SalaryStructureService['findAffectedLineItems']>>,
+  ) {
     const settings = await this.config.getSettings();
-    const components = normalizeAndValidateComponents(
-      dto.components,
-      dto.ctcAnnual,
-      settings.minBasicPercent,
-    );
     const tenantId = this.tenantPrisma.tenantId;
-    const effectiveDate = new Date(dto.effectiveDate);
-    const effectivePeriod = dto.effectiveDate.slice(0, 7); // YYYY-MM
 
     const employee = await this.tenantPrisma.client.employee.findUniqueOrThrow({
       where: { id: employeeId },
       select: { workState: true },
     });
-    const [affectedItems, ptSlabs] = await Promise.all([
-      this.tenantPrisma.client.payrollLineItem.findMany({
-        where: {
-          employeeId,
-          run: {
-            isReprocess: false,
-            status: { in: ['PROCESSED', 'DISBURSED'] },
-            period: { gte: effectivePeriod },
-          },
-        },
-        include: { run: { select: { id: true, period: true } } },
-        orderBy: { run: { period: 'asc' } },
-      }),
-      employee.workState
-        ? this.tenantPrisma.client.professionalTaxSlab.findMany({
-            where: { state: employee.workState },
-            orderBy: { grossFrom: 'asc' },
-          })
-        : Promise.resolve([]),
-    ]);
+    const ptSlabs = employee.workState
+      ? await this.tenantPrisma.client.professionalTaxSlab.findMany({
+          where: { state: employee.workState },
+          orderBy: { grossFrom: 'asc' },
+        })
+      : [];
 
     const epf = {
       ceiling: settings.epfCeiling,
@@ -251,7 +267,7 @@ export class SalaryStructureService {
       });
       const revised = calculatePayroll({
         components,
-        ctcAnnual: dto.ctcAnnual,
+        ctcAnnual,
         workingDays: item.workingDays,
         payableDays: item.payableDays,
         epf,
@@ -280,7 +296,7 @@ export class SalaryStructureService {
           id: newStructureId,
           tenantId,
           employeeId,
-          ctcAnnual: dto.ctcAnnual,
+          ctcAnnual,
           effectiveFrom: effectiveDate,
           components: { create: components.map((c) => ({ tenantId, ...c })) },
         },
@@ -293,7 +309,7 @@ export class SalaryStructureService {
           previousStructureId: active.id,
           newStructureId,
           effectiveDate,
-          reason: dto.reason,
+          reason,
           approvedBy: user.sub,
         },
       }),
@@ -308,7 +324,7 @@ export class SalaryStructureService {
       employeeId,
       {
         revisionId,
-        effectiveDate: dto.effectiveDate,
+        effectiveDate: effectiveDate.toISOString().slice(0, 10),
         arrearsPeriods: arrears.map((a) => a.period),
       },
     );
@@ -319,5 +335,39 @@ export class SalaryStructureService {
       arrearsGenerated: arrears.length,
       arrearsPeriods: arrears.map((a) => a.period),
     };
+  }
+
+  /**
+   * Public entry point for an explicit, user-initiated revision (always
+   * takes the supersede-and-revise path and requires a reason) — the
+   * counterpart to `update()`'s auto-upgrade for the same path when it
+   * detects affected periods on its own.
+   */
+  async revise(employeeId: string, dto: ReviseSalaryStructureDto, user: AuthenticatedUser) {
+    await this.assertEmployeeExists(employeeId);
+    const active = await this.findActive(employeeId);
+    if (!active) {
+      throw new NotFoundException('No salary structure for this employee yet — create one first');
+    }
+
+    const settings = await this.config.getSettings();
+    const components = normalizeAndValidateComponents(
+      dto.components,
+      dto.ctcAnnual,
+      settings.minBasicPercent,
+    );
+    const effectivePeriod = dto.effectiveDate.slice(0, 7); // YYYY-MM
+    const affectedItems = await this.findAffectedLineItems(employeeId, effectivePeriod);
+
+    return this.applyRevision(
+      employeeId,
+      active,
+      components,
+      dto.ctcAnnual,
+      new Date(dto.effectiveDate),
+      dto.reason,
+      user,
+      affectedItems,
+    );
   }
 }

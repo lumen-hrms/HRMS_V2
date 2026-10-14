@@ -230,7 +230,8 @@ includes/excludes).
 `grossFrom` · `grossTo` · `monthlyAmount`. Admin-editable, seeded with
 known-good state defaults at tenant onboarding.
 
-**`PayrollSettings`** — one row per tenant: `epfCeiling` (default 15000) ·
+**`PayrollSettings`** — one row per tenant: `epfCeiling` (default 25000,
+raised from 15000 per the 2026-09-17 wage-ceiling notification, Phase 9) ·
 `epfOptAboveCeiling` policy · `minBasicPercent` (default 50) ·
 `overtimeEnabled` · `overtimeMultiplier` (default 2.0).
 
@@ -239,7 +240,8 @@ config tables for TDS, per tenant/financial year/regime (`OLD`/`NEW`):
 slab boundaries and rates (`TaxSlab`) and the regime-wide standard
 deduction, cess, and 87A rebate threshold/max (`TaxRegimeConfig`), seeded
 lazily per FY — same editable-not-constant posture as `ProfessionalTaxSlab`
-(UNVERIFIED FY2024-25-shaped defaults, decision 11, Phase 9 review).
+(NEW-regime defaults updated to Budget 2025 FY2025-26/26-27 figures,
+decision 11/29, Phase 9 — still not an independent expert review).
 
 **`Employee.workState`** *(new field on module 03's `Employee`)* —
 `IndianState` enum (all states and UTs), nullable; drives Professional Tax
@@ -945,8 +947,9 @@ dummy CSV bank file round-trips against its fixture (verified).
 **Deviations:**
 - **Default tax slabs/config are seeded, not left empty** (unlike the
   original spec's silence on this) — same UNVERIFIED-rates posture as
-  `DEFAULT_PT_SLABS` (decision 11): a reasonable FY2024-25-shaped default
-  per regime so a tenant isn't blocked on Company Admin data entry before
+  `DEFAULT_PT_SLABS` (decision 11): a reasonable default per regime (NEW
+  regime updated to Budget 2025's FY2025-26/26-27 figures, decision 29) so
+  a tenant isn't blocked on Company Admin data entry before
   TDS can run at all; a Company Admin edits them per FY.
 - **No re-projection "trigger" mechanism** — re-projection is just a
   property of running `computeMonthlyTds()` fresh on every `createDraft`/
@@ -1358,16 +1361,48 @@ modelled in the engine from the start because module 08's ECR needs it.
 |---|---|
 | 27 | **The Payroll frontend client (`apps/web/src/lib/payroll/client.ts`) is real-API-only, with no mock fixture store** — unlike `lib/leave/client.ts`, which still carries one from before Leave's backend existed (`VITE_LEAVE_MOCK`). Payroll's backend was already fully built through Phase 8 by the time its frontend was started, so there was never a "backend doesn't exist yet" period to build a mock for. |
 | 28 | **No `GET /payroll/runs` list endpoint exists, so the Run tab keeps a small client-side-only "recently opened" memory in `localStorage`** (`rememberRun`/`recentRuns` in the client) rather than inventing a server list. Purely a UX convenience, never read as a source of truth; HR can also open any run by pasting its id. |
+| 29 | **Best-effort public-source statutory review (still not decision 11's independent expert review)**: cross-checked every shipped statutory default/formula against public sources (news coverage of the EPFO wage-ceiling notification, tax-portal explainers of Budget 2025, the Payment of Gratuity Act's text as summarized by secondary sources) and fixed four concrete gaps found this way — see "Still open" below for what each one was and what's now fixed. PT slabs (Karnataka/Maharashtra/Telangana/Andhra Pradesh/West Bengal/Gujarat) were checked and found still current; no change needed there. |
 
 ### Still open
 
-- **Risk from decision 11, still unresolved after Phase 9:** phases 2–8
-  build on rates and slabs nobody independent has verified. Phase 9's
-  self-conducted static RLS/grant audit is real hardening, but it is not
-  the independent statutory-rates review decision 11 calls for — that
-  still needs a human payroll/tax domain expert. Mitigation unchanged:
-  every rate/slab cites its source in a comment and lives in config, so a
-  correction is a data change, not a code change.
+- **Risk from decision 11, narrowed but not closed by Phase 9's public-source
+  review:** a best-effort pass against public sources (not an engaged
+  domain expert) found and fixed four concrete statutory gaps:
+  - `PayrollSettings.epfCeiling`'s default was ₹15,000; the EPFO wage
+    ceiling rose to ₹25,000 effective 2026-09-17 (notification S.O.
+    5109(E)) — default raised, and any tenant row still sitting on the old
+    ₹15,000 default is backfilled (migration `20261124090000_statutory_rate_review`); a tenant that had deliberately customized it away from
+    15,000 is left alone.
+  - `DEFAULT_TAX_SLABS.NEW` / `DEFAULT_TAX_REGIME_CONFIG.NEW`
+    (`payroll-defaults.ts`) were FY2024-25-shaped (slabs to ₹15L, 87A
+    rebate threshold ₹7L/₹25,000 max); Budget 2025 changed the NEW regime
+    for FY2025-26 and FY2026-27 (slabs to ₹24L, rebate threshold ₹12L/
+    ₹60,000 max, same ₹75,000 standard deduction) — defaults updated.
+    Only affects tenants/FYs seeded *after* this fix; a tenant whose FY
+    was already lazily seeded under the old defaults needs its TaxSlab/
+    TaxRegimeConfig rows corrected by hand once DB access exists (not
+    done — no DB access this session; see the adversarial-tests gap
+    below for why).
+  - `projectAnnualTax` (`tds-calculator.ts`) had a hard 87A rebate cliff —
+    full rebate below the threshold, full tax immediately above it, with
+    no Section 87A marginal relief for incomes just over the line. Fixed:
+    tax above the threshold is now capped at the amount by which income
+    exceeds the threshold.
+  - `calculateGratuity`/`completedYearsOfService`
+    (`full-and-final-calculator.ts`) had no statutory ₹20L payout cap
+    (notification S.O. 1420(E)) and didn't apply the Payment of Gratuity
+    Act §4(2) rule that a trailing part-year of more than 6 months counts
+    as a full year — both fixed (`gratuityMaxAmount`, new tenant-editable
+    `PayrollSettings` field, default ₹20,00,000).
+
+  None of this substitutes for decision 11's independent human
+  payroll/tax domain expert review — it only closes the gaps a web search
+  could surface with reasonable confidence. PT slabs (Karnataka,
+  Maharashtra, Telangana, Andhra Pradesh, West Bengal, Gujarat) and the
+  EPF/ESI percentage rates (as opposed to the EPF ceiling, which did
+  change) were checked and are still current; no change made there.
+  Mitigation unchanged: every rate/slab cites its source in a comment and
+  lives in config, so a correction is a data change, not a code change.
 - **No adversarial cross-tenant e2e suite and no performance run at
   ~500/~5,000 employees** — both need a live Postgres with all 8
   migrations applied; this environment has neither a reachable Docker
@@ -1428,10 +1463,11 @@ modelled in the engine from the start because module 08's ECR needs it.
   exercised against Phase 7's actual re-process flow yet, since that phase
   isn't built.
 - **No independent review of the TDS slabs/rebate/cess figures yet**
-  (same Phase 9 deferral as decision 11, PT slabs) — the seeded
-  FY2024-25-shaped defaults in `DEFAULT_TAX_SLABS`/
-  `DEFAULT_TAX_REGIME_CONFIG` are a reasonable placeholder, not a verified
-  statutory figure for any specific FY.
+  (same Phase 9 deferral as decision 11, PT slabs) — the seeded defaults
+  in `DEFAULT_TAX_SLABS`/`DEFAULT_TAX_REGIME_CONFIG` were updated per
+  decision 29 to the Budget 2025 FY2025-26/26-27 NEW-regime figures (best-
+  effort public-source check), but remain a reasonable placeholder, not a
+  verified statutory figure signed off by a domain expert.
 - **Re-process vs. a still-`PENDING` arrears row against the period being
   re-processed is unverified** (decision 25's sibling) — if a revision
   generated arrears against an original run's period and that period is
