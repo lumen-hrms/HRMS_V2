@@ -5,6 +5,7 @@ import { PAUSED_WORKER, startBackgroundWorker } from '../common/background-worke
 import { PlatformPrismaClientProvider } from '../prisma/platform-prisma-client.provider';
 import { PLATFORM_ADMIN_QUEUE } from './platform-admin.constants';
 import { PlatformAdminService } from './platform-admin.service';
+import { BillingService } from '../billing/billing.service';
 
 /**
  * Two daily repeatable jobs (registered once at boot, same
@@ -15,6 +16,10 @@ import { PlatformAdminService } from './platform-admin.service';
  *   drives it off `Subscription.renewsAt` instead.
  * - `expire-breakglass` — flips overdue ACTIVE break-glass grants to
  *   EXPIRED so a forgotten grant doesn't sit "active" past its TTL.
+ * - `expire-trials` — moves TRIAL tenants whose trial window has passed to
+ *   READ_ONLY (reads still work, writes are refused until converted).
+ * - `enforce-grace` — ACTIVE tenants whose failed-payment grace window has
+ *   passed go READ_ONLY (module 14).
  */
 @Injectable()
 @Processor(PLATFORM_ADMIN_QUEUE, PAUSED_WORKER)
@@ -25,6 +30,7 @@ export class PlatformScheduledJobsProcessor extends WorkerHost implements OnAppl
     @InjectQueue(PLATFORM_ADMIN_QUEUE) private readonly queue: Queue,
     private readonly platformPrisma: PlatformPrismaClientProvider,
     private readonly service: PlatformAdminService,
+    private readonly billing: BillingService,
   ) {
     super();
   }
@@ -43,12 +49,24 @@ export class PlatformScheduledJobsProcessor extends WorkerHost implements OnAppl
         { pattern: '0 * * * *' },
         { name: 'expire-breakglass' },
       );
+      await this.queue.upsertJobScheduler(
+        'expire-trials-daily',
+        { pattern: '30 4 * * *' },
+        { name: 'expire-trials' },
+      );
+      await this.queue.upsertJobScheduler(
+        'enforce-grace-daily',
+        { pattern: '45 4 * * *' },
+        { name: 'enforce-grace' },
+      );
     });
   }
 
   async process(job: Job): Promise<void> {
     if (job.name === 'renew-subscriptions') await this.runRenewals();
     if (job.name === 'expire-breakglass') await this.service.expireOverdueBreakGlassGrants();
+    if (job.name === 'expire-trials') await this.service.expireTrials();
+    if (job.name === 'enforce-grace') await this.billing.enforceGrace();
   }
 
   async runRenewals() {

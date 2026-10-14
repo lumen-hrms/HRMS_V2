@@ -17,6 +17,7 @@ import type {
   PlatformAuditEntry,
   PlatformSettings,
   TenantDetail,
+  TenantPayment,
   TenantRow,
   TenantStatus,
   UpdatePlanInput,
@@ -109,6 +110,34 @@ export const platformApi = {
   /** `PATCH /tenants/:id/plan` — re-snapshot the tenant onto a different plan. */
   changePlan(id: string, plan: string, reason: string) {
     return raw.patch<TenantRow>(`/tenants/${id}/plan`, { plan, reason });
+  },
+
+  /** `PATCH /tenants/:id/trial` — set when the trial ends (reopens a read-only tenant). */
+  setTrialEnd(id: string, trialEndsAt: string, reason: string) {
+    return raw.patch<{ trialEndsAt: string; status: TenantStatus }>(`/tenants/${id}/trial`, {
+      trialEndsAt,
+      reason,
+    });
+  },
+
+  /** `POST /tenants/:id/convert` — confirm the paid plan after payment (outside the app). */
+  convertTenant(id: string, plan: string, reason: string) {
+    return raw.post<{ status: TenantStatus; plan: string; renewsAt: string }>(
+      `/tenants/${id}/convert`,
+      { plan, reason },
+    );
+  },
+
+  /** `POST /tenants/:id/billing/subscribe` — create the Razorpay subscription; returns the customer's payment link. */
+  subscribeBilling(id: string) {
+    return raw.post<{ subscriptionId: string; paymentUrl: string }>(
+      `/tenants/${id}/billing/subscribe`,
+    );
+  },
+
+  /** `GET /tenants/:id/payments` — captured Razorpay charges, newest first. */
+  listPayments(id: string) {
+    return raw.get<TenantPayment[]>(`/tenants/${id}/payments`);
   },
 
   /** `POST /tenants/:id/renew` — renew a term; re-snapshots the current plan definition. */

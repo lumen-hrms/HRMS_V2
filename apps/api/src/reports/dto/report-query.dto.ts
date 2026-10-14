@@ -14,6 +14,10 @@ export class ReportQueryDto {
   @IsOptional()
   @Matches(ISO_DAY, { message: 'asOf must be YYYY-MM-DD' })
   asOf?: string;
+
+  @IsOptional()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: 'period must be YYYY-MM' })
+  period?: string;
 }
 
 export class ReportExportQueryDto extends ReportQueryDto {

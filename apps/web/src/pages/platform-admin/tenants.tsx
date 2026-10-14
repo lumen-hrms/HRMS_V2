@@ -230,7 +230,7 @@ export function TenantsPage() {
             </THead>
             <TBody>
               {pageRows.map((t) => {
-                const until = fmtUntil(t.subscription?.renewsAt ?? null);
+                const until = fmtUntil(t.subscription?.trialEndsAt ?? null);
                 const trialChip =
                   t.status === 'TRIAL' && until && until.days >= 0 && until.days <= 7
                     ? `ends ${until.text}`

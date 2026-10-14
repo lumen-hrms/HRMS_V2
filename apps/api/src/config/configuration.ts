@@ -52,6 +52,12 @@ export interface AppConfig {
     fromAddress?: string;
     configurationSet?: string;
   };
+  /** Razorpay (module 14). All unset → billing endpoints refuse; webhook rejects. */
+  razorpay: {
+    keyId?: string;
+    keySecret?: string;
+    webhookSecret?: string;
+  };
   /** Public URL of the web app, used for links inside emails. */
   appBaseUrl: string;
   encryption: {
@@ -101,6 +107,11 @@ export default (): AppConfig => ({
     region: process.env.SES_REGION ?? 'ap-south-1',
     fromAddress: process.env.SES_FROM_ADDRESS || undefined,
     configurationSet: process.env.SES_CONFIGURATION_SET || undefined,
+  },
+  razorpay: {
+    keyId: process.env.RAZORPAY_KEY_ID || undefined,
+    keySecret: process.env.RAZORPAY_KEY_SECRET || undefined,
+    webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || undefined,
   },
   appBaseUrl: (process.env.APP_BASE_URL ?? 'http://localhost:5173').replace(/\/+$/, ''),
   encryption: {

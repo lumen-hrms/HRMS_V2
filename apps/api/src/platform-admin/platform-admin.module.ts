@@ -7,11 +7,13 @@ import { PlatformAdminService } from './platform-admin.service';
 import { PlansService } from './plans.service';
 import { PlatformScheduledJobsProcessor } from './platform-scheduled-jobs.processor';
 import { PLATFORM_ADMIN_QUEUE } from './platform-admin.constants';
+import { BillingModule } from '../billing/billing.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     NotificationsModule,
+    BillingModule,
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService<AppConfig, true>) => ({

@@ -42,6 +42,13 @@ export interface AnnualTaxProjectionInput {
   declaredExemptions: Decimal | number | string;
   slabs: TaxSlabRow[];
   config: TaxRegimeConfigRow;
+  /**
+   * 87A marginal relief just above the rebate threshold (new regime only):
+   * tax can never exceed the income earned over the threshold, so ₹1 more
+   * income doesn't cost the whole rebate. Only applies when the rebate fully
+   * covers the tax at the threshold.
+   */
+  marginalRelief?: boolean;
 }
 
 /** Annual tax (with cess and the 87A rebate applied), before crediting TDS already deducted. */
@@ -56,6 +63,11 @@ export function projectAnnualTax(input: AnnualTaxProjectionInput): Decimal {
 
   if (taxableIncome.lte(input.config.rebateThreshold)) {
     tax = D.max(0, tax.minus(input.config.rebateMaxAmount));
+  } else if (
+    input.marginalRelief &&
+    slabTax(new D(input.config.rebateThreshold), input.slabs).lte(input.config.rebateMaxAmount)
+  ) {
+    tax = D.min(tax, taxableIncome.minus(input.config.rebateThreshold));
   }
 
   return tax.plus(tax.times(input.config.cessPercent).div(100));
@@ -100,6 +112,7 @@ export function computeMonthlyTds(input: MonthlyTdsInput): Decimal {
     declaredExemptions: input.regime === 'OLD' ? input.declaredExemptions : 0,
     slabs: input.slabs,
     config: input.config,
+    marginalRelief: input.regime === 'NEW',
   });
 
   const remainingTax = annualTax.minus(input.alreadyDeducted);
