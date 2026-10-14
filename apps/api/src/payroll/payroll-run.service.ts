@@ -1,3 +1,4 @@
+import { mapWithConcurrency } from './concurrency.util';
 import {
   BadRequestException,
   ConflictException,
@@ -94,6 +95,9 @@ function snapshotToJson(result: PayrollCalculationResult) {
     netPay: result.netPay.toNumber(),
   };
 }
+
+const PAYSLIP_CONCURRENCY = 10;
+const NOTIFY_CONCURRENCY = 10;
 
 @Injectable()
 export class PayrollRunService {
@@ -740,6 +744,10 @@ export class PayrollRunService {
     const payslipExceptions: LineItemException[] = [];
     const notifyEmployeeIds: string[] = [];
     const keyUpdates: Array<{ id: string; key: string }> = [];
+    const payslipTargets: Array<{
+      item: (typeof lineItems)[number];
+      emp: (typeof employees)[number] & { dateOfBirth: Date };
+    }> = [];
     for (const item of lineItems) {
       const emp = employeesById.get(item.employeeId);
       if (!emp?.dateOfBirth) {
@@ -750,36 +758,48 @@ export class PayrollRunService {
         });
         continue;
       }
+      payslipTargets.push({ item, emp: emp as (typeof payslipTargets)[number]['emp'] });
+    }
 
-      const snapshot = item.calculationSnapshot as unknown as {
-        earnings: Array<{ code: string; proratedAmount: number }>;
-      };
-      const buffer = await generatePayslipPdf({
-        employeeName: `${emp.firstName} ${emp.lastName}`,
-        employeeCode: emp.employeeCode,
-        period: run.period,
-        dateOfBirth: emp.dateOfBirth,
-        workingDays: item.workingDays,
-        payableDays: item.payableDays,
-        lopDays: item.lopDays,
-        earnings: snapshot.earnings.map((e) => ({ code: e.code, amount: e.proratedAmount })),
-        grossEarnings: item.grossEarnings.toNumber(),
-        epfEmployee: item.epfEmployee.toNumber(),
-        esiEmployee: item.esiEmployee.toNumber(),
-        professionalTax: item.professionalTax.toNumber(),
-        tdsDeducted: item.tdsDeducted.toNumber(),
-        adHocAdjustments: (item.adHocAdjustments as unknown as AdHocAdjustmentDto[]) ?? [],
-        netPay: item.netPay.toNumber(),
-      });
-      const key = this.storage.buildKey(
-        tenantId,
-        item.employeeId,
-        `payslip-${run.period}.pdf`,
-        'payslip',
-      );
-      await this.storage.upload(key, buffer, 'application/pdf');
-      keyUpdates.push({ id: item.id, key });
-      notifyEmployeeIds.push(item.employeeId);
+    // Generate + upload with bounded concurrency: 5,000 sequential S3 PUTs
+    // would hold this request open for minutes (module 07 Phase 9).
+    const generated = await mapWithConcurrency(
+      payslipTargets,
+      PAYSLIP_CONCURRENCY,
+      async ({ item, emp }) => {
+        const snapshot = item.calculationSnapshot as unknown as {
+          earnings: Array<{ code: string; proratedAmount: number }>;
+        };
+        const buffer = await generatePayslipPdf({
+          employeeName: `${emp.firstName} ${emp.lastName}`,
+          employeeCode: emp.employeeCode,
+          period: run.period,
+          dateOfBirth: emp.dateOfBirth,
+          workingDays: item.workingDays,
+          payableDays: item.payableDays,
+          lopDays: item.lopDays,
+          earnings: snapshot.earnings.map((e) => ({ code: e.code, amount: e.proratedAmount })),
+          grossEarnings: item.grossEarnings.toNumber(),
+          epfEmployee: item.epfEmployee.toNumber(),
+          esiEmployee: item.esiEmployee.toNumber(),
+          professionalTax: item.professionalTax.toNumber(),
+          tdsDeducted: item.tdsDeducted.toNumber(),
+          adHocAdjustments: (item.adHocAdjustments as unknown as AdHocAdjustmentDto[]) ?? [],
+          netPay: item.netPay.toNumber(),
+        });
+        const key = this.storage.buildKey(
+          tenantId,
+          item.employeeId,
+          `payslip-${run.period}.pdf`,
+          'payslip',
+        );
+        await this.storage.upload(key, buffer, 'application/pdf');
+        return { id: item.id, key, employeeId: item.employeeId };
+      },
+    );
+    for (const g of generated) {
+      keyUpdates.push({ id: g.id, key: g.key });
+      notifyEmployeeIds.push(g.employeeId);
     }
 
     const mergedExceptions = [
@@ -813,16 +833,16 @@ export class PayrollRunService {
       { payslipsGenerated: keyUpdates.length, payslipExceptions: payslipExceptions.length },
     );
     await this.notifyStatusChange(run, 'PROCESSED', user.sub);
-    for (const employeeId of notifyEmployeeIds) {
-      await this.notifications.notify({
+    await mapWithConcurrency(notifyEmployeeIds, NOTIFY_CONCURRENCY, (employeeId) =>
+      this.notifications.notify({
         tenantId,
         template: 'PAYSLIP_READY',
         context: { period: run.period },
         dedupeKey: `payroll:${runId}:payslip:${employeeId}`,
         to: { employeeIds: [employeeId] },
         actorUserId: user.sub,
-      });
-    }
+      }),
+    );
     return this.getRun(runId, user);
   }
 

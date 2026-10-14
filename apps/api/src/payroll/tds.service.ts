@@ -1,4 +1,4 @@
-import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, type TaxRegime } from '@prisma/client';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service';
@@ -40,8 +40,25 @@ export class TdsService {
     throw new ForbiddenException('Not authorized to access this TDS regime choice');
   }
 
+  /**
+   * Without this, an HR/Admin role check alone lets a caller from tenant A
+   * target any employeeId — the composite (tenantId, employeeId,
+   * financialYear) key is always keyed on the CALLER's own tenantId, so a
+   * cross-tenant `set` doesn't touch tenant B's row at all; it silently
+   * upserts a phantom row in tenant A's own table pointing at tenant B's
+   * employee id, returning 200 instead of 404.
+   */
+  private async assertEmployeeExists(employeeId: string) {
+    const employee = await this.tenantPrisma.client.employee.findUnique({
+      where: { id: employeeId },
+      select: { id: true },
+    });
+    if (!employee) throw new NotFoundException('Employee not found');
+  }
+
   async getEmployeeRegime(employeeId: string, financialYear: string, user: AuthenticatedUser) {
     this.assertCanAccess(user, employeeId);
+    await this.assertEmployeeExists(employeeId);
     const row = await this.tenantPrisma.client.tdsRegimeChoice.findUnique({
       where: {
         tenantId_employeeId_financialYear: {
@@ -61,6 +78,7 @@ export class TdsService {
 
   async setEmployeeRegime(employeeId: string, dto: SetTdsRegimeDto, user: AuthenticatedUser) {
     this.assertCanAccess(user, employeeId);
+    await this.assertEmployeeExists(employeeId);
     const tenantId = this.tenantPrisma.tenantId;
     // An HR/Admin user setting someone else's regime is an override (always
     // audited); an employee setting their own, or HR/Admin editing their

@@ -30,13 +30,15 @@ import { TenantStatusPill } from './components/tenant-status-pill';
 import { SeatPressureBar } from './components/seat-pressure-bar';
 import { SuspendDialog } from './components/suspend-dialog';
 import { ChangePlanDialog } from './components/change-plan-dialog';
+import { TrialDialog } from './components/trial-dialog';
+import { BillingCard } from './components/billing-card';
 import { AdjustPricingDialog } from './components/adjust-pricing-dialog';
 import { BreakGlassDialog } from './components/breakglass-dialog';
 import { BreakGlassStatusSheet } from './components/breakglass-status-sheet';
 import type { BreakGlassGrant } from './lib/types';
 
 type Tab = 'overview' | 'subscription' | 'activity' | 'danger';
-type Dialog = 'suspend' | 'resume' | 'plan' | 'pricing' | 'breakglass' | null;
+type Dialog = 'suspend' | 'resume' | 'plan' | 'pricing' | 'breakglass' | 'trial' | 'convert' | null;
 
 export function TenantDetailPage() {
   const { id = '' } = useParams();
@@ -287,6 +289,7 @@ export function TenantDetailPage() {
               <p className="text-xs text-muted-foreground">
                 Seats {sub?.seats ?? '—'} · {sub?.isolationTier === 'DEDICATED' ? 'dedicated DB' : 'pooled'}{' '}
                 · renews {fmtDate(sub?.renewsAt)}
+                {sub?.trialEndsAt ? ` · trial ends ${fmtDate(sub.trialEndsAt)}` : ''}
               </p>
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" variant="outline" onClick={() => setDialog('plan')}>
@@ -298,6 +301,16 @@ export function TenantDetailPage() {
                 <Button size="sm" variant="outline" disabled={busy} onClick={renew}>
                   Renew
                 </Button>
+                {(tenant.status === 'TRIAL' || tenant.status === 'READ_ONLY') && (
+                  <>
+                    <Button size="sm" variant="outline" onClick={() => setDialog('trial')}>
+                      Set trial end
+                    </Button>
+                    <Button size="sm" onClick={() => setDialog('convert')}>
+                      Convert to paid
+                    </Button>
+                  </>
+                )}
               </div>
               <p className="text-[11px] text-muted-foreground">
                 The per-seat rate is negotiated per tenant and snapshotted — a later catalog edit
@@ -336,6 +349,9 @@ export function TenantDetailPage() {
                 Read-only — entitlements are derived from the plan.
               </p>
             </Card>
+          </div>
+          <div className="mt-4">
+            <BillingCard tenant={tenant} onChanged={load} />
           </div>
         </TabsContent>
 
@@ -385,6 +401,13 @@ export function TenantDetailPage() {
         tenant={dialog === 'suspend' || dialog === 'resume' ? tenant : null}
         mode={dialog === 'resume' ? 'resume' : 'suspend'}
         open={dialog === 'suspend' || dialog === 'resume'}
+        onOpenChange={(v) => !v && setDialog(null)}
+        onDone={load}
+      />
+      <TrialDialog
+        mode={dialog === 'convert' ? 'convert' : 'trial'}
+        tenant={dialog === 'trial' || dialog === 'convert' ? tenant : null}
+        open={dialog === 'trial' || dialog === 'convert'}
         onOpenChange={(v) => !v && setDialog(null)}
         onDone={load}
       />

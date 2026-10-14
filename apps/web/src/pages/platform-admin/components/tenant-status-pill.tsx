@@ -5,11 +5,13 @@ const TONE: Record<TenantStatus, string> = {
   ACTIVE: 'bg-success/15 text-success',
   TRIAL: 'bg-warning/15 text-warning',
   SUSPENDED: 'bg-destructive/15 text-destructive',
+  READ_ONLY: 'bg-muted text-foreground',
 };
 const DOT: Record<TenantStatus, string> = {
   ACTIVE: 'bg-success',
   TRIAL: 'bg-warning',
   SUSPENDED: 'bg-destructive',
+  READ_ONLY: 'bg-muted-foreground',
 };
 
 export function TenantStatusPill({

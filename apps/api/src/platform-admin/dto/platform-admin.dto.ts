@@ -56,6 +56,16 @@ export class CreateTenantDto {
   seats?: number;
 
   /**
+   * Length of the free trial, in days, counted from onboarding. Omitted → 7.
+   * The tenant is read-only once it ends unless the operator converts it.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(90)
+  trialDays?: number;
+
+  /**
    * Negotiated per-seat / month rate for this deal. Omitted → the plan's
    * list price. Stored as the Subscription's snapshot; a catalog edit never
    * changes it.
@@ -83,6 +93,37 @@ export class UpdateTenantStatusDto {
 
 /** PATCH /api/platform-admin/tenants/:id/plan */
 export class ChangeTenantPlanDto {
+  @IsIn(SELLABLE)
+  plan!: SellablePlanKey;
+
+  @Transform(trim)
+  @IsString()
+  @MinLength(5)
+  reason!: string;
+}
+
+/**
+ * PATCH /api/platform-admin/tenants/:id/trial — sets the trial end date.
+ * Moving it into the future on a READ_ONLY tenant reopens the trial.
+ */
+export class SetTrialEndDto {
+  /** ISO date-time, must be in the future. */
+  @IsString()
+  @MinLength(10)
+  trialEndsAt!: string;
+
+  @Transform(trim)
+  @IsString()
+  @MinLength(5)
+  reason!: string;
+}
+
+/**
+ * POST /api/platform-admin/tenants/:id/convert — the operator confirms the
+ * tenant's paid plan (payment is handled outside the app). Ends the trial,
+ * makes the tenant ACTIVE and starts a yearly term.
+ */
+export class ConvertTenantDto {
   @IsIn(SELLABLE)
   plan!: SellablePlanKey;
 

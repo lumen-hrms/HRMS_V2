@@ -47,6 +47,7 @@ const TAX_CONFIG = {
 
 function build() {
   const client = {
+    employee: { findUnique: jest.fn().mockResolvedValue({ id: 'emp-1' }) },
     tdsRegimeChoice: {
       findUnique: jest.fn().mockResolvedValue(null),
       findMany: jest.fn().mockResolvedValue([]),
@@ -95,6 +96,14 @@ describe('TdsService.getEmployeeRegime', () => {
     const { service } = build();
     await expect(service.getEmployeeRegime('emp-1', '2026-27', admin)).resolves.toBeDefined();
   });
+
+  it('404s for an employeeId outside the tenant (RLS-scoped lookup finds nothing), never defaulting to NEW', async () => {
+    const { service, client } = build();
+    client.employee.findUnique.mockResolvedValue(null);
+    await expect(service.getEmployeeRegime('other-tenants-emp', '2026-27', admin)).rejects.toThrow(
+      'Employee not found',
+    );
+  });
 });
 
 describe('TdsService.setEmployeeRegime', () => {
@@ -132,6 +141,19 @@ describe('TdsService.setEmployeeRegime', () => {
         otherEmployee,
       ),
     ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('404s for an employeeId outside the tenant instead of upserting a phantom row (cross-tenant regression)', async () => {
+    const { service, client } = build();
+    client.employee.findUnique.mockResolvedValue(null);
+    await expect(
+      service.setEmployeeRegime(
+        'other-tenants-emp',
+        { financialYear: '2026-27', regime: 'NEW' },
+        admin,
+      ),
+    ).rejects.toThrow('Employee not found');
+    expect(client.tdsRegimeChoice.upsert).not.toHaveBeenCalled();
   });
 });
 
