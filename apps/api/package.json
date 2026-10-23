@@ -21,7 +21,7 @@
     "prisma:migrate": "prisma migrate deploy",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:seed": "ts-node prisma/seed.ts",
-    "prisma:seed-demo": "ts-node prisma/seed-demo-org.ts"
+    "prisma:seed-demo": "ts-node prisma/seed-demo-org.ts",
     "user:remove": "node --env-file=.env -r ts-node/register scripts/remove-user.ts"
   },
   "dependencies": {
