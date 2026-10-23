@@ -300,15 +300,19 @@ export class PlatformAdminService {
     });
 
     let adminResetEmailSent = true;
+    let adminFirebaseUid: string | undefined;
     try {
       const seeded = await this.seedCompanyAdmin(tenant.id, dto.adminEmail, dto.adminName);
+      adminFirebaseUid = seeded.user.firebaseUid;
       adminResetEmailSent = seeded.resetEmailSent;
       // Working HR-config defaults so the tenant functions before anyone
       // opens Settings (see docs/TENANT_CONFIGURATION.md).
       await this.seedTenantDefaults(tenant.id);
     } catch (err) {
       // Roll back the tenant record if we couldn't finish provisioning —
-      // a half-provisioned tenant is worse than no tenant at all.
+      // a half-provisioned tenant is worse than no tenant at all. The
+      // Firebase login goes too, or a retry with the same email is refused.
+      if (adminFirebaseUid) await this.discardFirebaseUser(adminFirebaseUid, dto.adminEmail);
       await this.platformPrisma.tenant.delete({ where: { id: tenant.id } });
       throw err;
     }
@@ -735,21 +739,31 @@ export class PlatformAdminService {
       );
     }
 
+    let user;
     try {
-      await this.firebaseAuth.setCustomUserClaims(firebaseUid, { tenantId, role: 'COMPANY_ADMIN' });
-    } catch (err) {
-      this.logger.error(
-        `Firebase Admin could not set custom claims for ${email} — check FIREBASE_SERVICE_ACCOUNT_JSON`,
-        err instanceof Error ? err.stack : String(err),
-      );
-      throw new ServiceUnavailableException(
-        'Could not finish setting up the tenant admin — the identity provider is unreachable. Check the Firebase Admin service-account credentials.',
-      );
-    }
+      try {
+        await this.firebaseAuth.setCustomUserClaims(firebaseUid, {
+          tenantId,
+          role: 'COMPANY_ADMIN',
+        });
+      } catch (err) {
+        this.logger.error(
+          `Firebase Admin could not set custom claims for ${email} — check FIREBASE_SERVICE_ACCOUNT_JSON`,
+          err instanceof Error ? err.stack : String(err),
+        );
+        throw new ServiceUnavailableException(
+          'Could not finish setting up the tenant admin — the identity provider is unreachable. Check the Firebase Admin service-account credentials.',
+        );
+      }
 
-    const user = await scoped.user.create({
-      data: { tenantId, email, firebaseUid, role: 'COMPANY_ADMIN' },
-    });
+      user = await scoped.user.create({
+        data: { tenantId, email, firebaseUid, role: 'COMPANY_ADMIN' },
+      });
+    } catch (err) {
+      // Don't strand a Firebase login with no tenant behind it.
+      await this.discardFirebaseUser(firebaseUid, email);
+      throw err;
+    }
 
     // Non-fatal: the login exists either way. `resetEmailSent` is surfaced
     // all the way up to the New Tenant wizard so the operator isn't left
@@ -767,6 +781,19 @@ export class PlatformAdminService {
     }
 
     return { user, resetEmailSent };
+  }
+
+  /** Best-effort compensation for a failed provisioning step — logs rather
+   * than masking the original error if Firebase refuses the delete too. */
+  private async discardFirebaseUser(firebaseUid: string, email: string) {
+    try {
+      await this.firebaseAuth.deleteUser(firebaseUid);
+    } catch (err) {
+      this.logger.error(
+        `Could not delete the Firebase user for ${email} (${firebaseUid}) after a failed tenant setup — remove it manually`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
   }
 
   /**

@@ -200,6 +200,7 @@ function buildCreateTenantHarness() {
   const firebaseAuth = {
     createUser: jest.fn().mockResolvedValue({ uid: 'fb-uid-1' }),
     setCustomUserClaims: jest.fn().mockResolvedValue(undefined),
+    deleteUser: jest.fn().mockResolvedValue(undefined),
   };
   const authEmails = { sendPasswordReset: jest.fn().mockResolvedValue('ses') };
   const service = new PlatformAdminService(
@@ -232,6 +233,8 @@ describe('PlatformAdminService.createTenant — Firebase Admin failure handling'
     await expect(service.createTenant(dto)).rejects.toBeInstanceOf(ServiceUnavailableException);
     // The half-provisioned tenant row must not survive the failure.
     expect(platformPrisma.tenant.delete).toHaveBeenCalledWith({ where: { id: 'tenant-1' } });
+    // Nothing was created in Firebase, so there's nothing to clean up.
+    expect(firebaseAuth.deleteUser).not.toHaveBeenCalled();
   });
 
   it('turns a Firebase Admin credential failure on setCustomUserClaims into a clear 503', async () => {
@@ -242,6 +245,34 @@ describe('PlatformAdminService.createTenant — Firebase Admin failure handling'
 
     await expect(service.createTenant(dto)).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(platformPrisma.tenant.delete).toHaveBeenCalledWith({ where: { id: 'tenant-1' } });
+    // The Firebase login was already created — it must not be stranded.
+    expect(firebaseAuth.deleteUser).toHaveBeenCalledWith('fb-uid-1');
+  });
+
+  it('deletes the Firebase login when the users row insert fails', async () => {
+    const { service, platformPrisma, firebaseAuth, scoped } = buildCreateTenantHarness();
+    scoped.user.create.mockRejectedValue(new Error('db down'));
+
+    await expect(service.createTenant(dto)).rejects.toThrow('db down');
+    expect(firebaseAuth.deleteUser).toHaveBeenCalledWith('fb-uid-1');
+    expect(platformPrisma.tenant.delete).toHaveBeenCalledWith({ where: { id: 'tenant-1' } });
+  });
+
+  it('deletes the Firebase login when seeding tenant defaults fails, so the email can be retried', async () => {
+    const { service, platformPrisma, firebaseAuth, scoped } = buildCreateTenantHarness();
+    scoped.tenantSettings.create.mockRejectedValue(new Error('constraint'));
+
+    await expect(service.createTenant(dto)).rejects.toThrow('constraint');
+    expect(firebaseAuth.deleteUser).toHaveBeenCalledWith('fb-uid-1');
+    expect(platformPrisma.tenant.delete).toHaveBeenCalledWith({ where: { id: 'tenant-1' } });
+  });
+
+  it('still surfaces the original error when the Firebase cleanup itself fails', async () => {
+    const { service, firebaseAuth, scoped } = buildCreateTenantHarness();
+    scoped.tenantSettings.create.mockRejectedValue(new Error('constraint'));
+    firebaseAuth.deleteUser.mockRejectedValue(new Error('firebase down'));
+
+    await expect(service.createTenant(dto)).rejects.toThrow('constraint');
   });
 
   it('still rejects a duplicate Firebase email as a 400, not a 503', async () => {
