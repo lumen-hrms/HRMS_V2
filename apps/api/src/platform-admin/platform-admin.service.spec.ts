@@ -1,10 +1,6 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import { PlatformAdminService } from './platform-admin.service';
 
-// `seedCompanyAdmin` fires a real hosted-reset-email HTTP call otherwise —
-// these tests are about Firebase Admin (createUser/setCustomUserClaims)
-// failure handling, not the reset-email send, so keep it a no-op here.
-
 /** Minimal fake of the `hrms_platform`-role Prisma surface the audit read
  * path touches — `PlatformAuditLog` only. */
 function buildFakePlatformPrisma(rows: any[]) {
@@ -151,9 +147,9 @@ describe('PlatformAdminService.audit', () => {
   });
 });
 
-/** Fakes the tenant-scoped `hrms_app` client `withTenantContext(...)` hands
- * back — `seedCompanyAdmin`/`seedTenantDefaults` only ever touch `.user` and
- * a handful of settings models through it. */
+/** Fakes the tenant-scoped `hrms_app` surface — both the per-query client
+ * `withTenantContext(...)` hands back and the interactive-transaction client
+ * `seedTenantRows` writes through (`.user` + a handful of settings models). */
 function buildScopedTenantClient(userRows: any[] = []) {
   return {
     user: {
@@ -171,7 +167,13 @@ function buildScopedTenantClient(userRows: any[] = []) {
 
 function buildCreateTenantHarness() {
   const scoped = buildScopedTenantClient();
-  const tenantPrismaRaw = { $extends: jest.fn().mockReturnValue(scoped) };
+  // A separate client for the seeding transaction, so tests can tell a write
+  // made inside it (rolled back on failure) from one that isn't.
+  const tx = { ...buildScopedTenantClient(), $executeRaw: jest.fn().mockResolvedValue(1) };
+  const tenantPrismaRaw = {
+    $extends: jest.fn().mockReturnValue(scoped),
+    $transaction: jest.fn((fn: (client: typeof tx) => Promise<unknown>) => fn(tx)),
+  };
   const platformPrisma = {
     tenant: {
       // 1st call: subdomain-uniqueness check (must be null). 2nd call: the
@@ -211,7 +213,7 @@ function buildCreateTenantHarness() {
     firebaseAuth as any,
     authEmails as any,
   );
-  return { service, platformPrisma, tenantPrismaRaw, scoped, firebaseAuth, authEmails };
+  return { service, platformPrisma, tenantPrismaRaw, scoped, tx, firebaseAuth, authEmails };
 }
 
 describe('PlatformAdminService.createTenant — Firebase Admin failure handling', () => {
@@ -250,8 +252,8 @@ describe('PlatformAdminService.createTenant — Firebase Admin failure handling'
   });
 
   it('deletes the Firebase login when the users row insert fails', async () => {
-    const { service, platformPrisma, firebaseAuth, scoped } = buildCreateTenantHarness();
-    scoped.user.create.mockRejectedValue(new Error('db down'));
+    const { service, platformPrisma, firebaseAuth, tx } = buildCreateTenantHarness();
+    tx.user.create.mockRejectedValue(new Error('db down'));
 
     await expect(service.createTenant(dto)).rejects.toThrow('db down');
     expect(firebaseAuth.deleteUser).toHaveBeenCalledWith('fb-uid-1');
@@ -259,8 +261,8 @@ describe('PlatformAdminService.createTenant — Firebase Admin failure handling'
   });
 
   it('deletes the Firebase login when seeding tenant defaults fails, so the email can be retried', async () => {
-    const { service, platformPrisma, firebaseAuth, scoped } = buildCreateTenantHarness();
-    scoped.tenantSettings.create.mockRejectedValue(new Error('constraint'));
+    const { service, platformPrisma, firebaseAuth, tx } = buildCreateTenantHarness();
+    tx.tenantSettings.create.mockRejectedValue(new Error('constraint'));
 
     await expect(service.createTenant(dto)).rejects.toThrow('constraint');
     expect(firebaseAuth.deleteUser).toHaveBeenCalledWith('fb-uid-1');
@@ -268,8 +270,8 @@ describe('PlatformAdminService.createTenant — Firebase Admin failure handling'
   });
 
   it('still surfaces the original error when the Firebase cleanup itself fails', async () => {
-    const { service, firebaseAuth, scoped } = buildCreateTenantHarness();
-    scoped.tenantSettings.create.mockRejectedValue(new Error('constraint'));
+    const { service, firebaseAuth, tx } = buildCreateTenantHarness();
+    tx.tenantSettings.create.mockRejectedValue(new Error('constraint'));
     firebaseAuth.deleteUser.mockRejectedValue(new Error('firebase down'));
 
     await expect(service.createTenant(dto)).rejects.toThrow('constraint');
@@ -280,6 +282,86 @@ describe('PlatformAdminService.createTenant — Firebase Admin failure handling'
     firebaseAuth.createUser.mockRejectedValue({ code: 'auth/email-already-exists' });
 
     await expect(service.createTenant(dto)).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('writes the admin row and every tenant default inside one RLS-scoped transaction', async () => {
+    const { service, tenantPrismaRaw, scoped, tx } = buildCreateTenantHarness();
+
+    await service.createTenant(dto);
+
+    expect(tenantPrismaRaw.$transaction).toHaveBeenCalledTimes(1);
+    // The RLS session variable is set before any write in the transaction.
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.user.create.mock.invocationCallOrder[0],
+    );
+    expect(tx.user.create).toHaveBeenCalledWith({
+      data: {
+        tenantId: 'tenant-1',
+        email: dto.adminEmail,
+        firebaseUid: 'fb-uid-1',
+        role: 'COMPANY_ADMIN',
+      },
+    });
+    expect(tx.tenantSettings.create).toHaveBeenCalled();
+    expect(tx.attendanceSettings.create).toHaveBeenCalled();
+    expect(tx.shift.create).toHaveBeenCalled();
+    expect(tx.payrollSettings.upsert).toHaveBeenCalled();
+    expect(tx.professionalTaxSlab.createMany).toHaveBeenCalled();
+    // Nothing is written outside the transaction, where it would survive a rollback.
+    for (const model of ['user', 'tenantSettings', 'attendanceSettings', 'shift'] as const) {
+      expect((scoped[model] as any).create).not.toHaveBeenCalled();
+    }
+    expect(scoped.payrollSettings.upsert).not.toHaveBeenCalled();
+    expect(scoped.professionalTaxSlab.createMany).not.toHaveBeenCalled();
+  });
+
+  it('fails the whole seeding transaction when payroll defaults fail, and rolls everything back', async () => {
+    const { service, platformPrisma, firebaseAuth, tenantPrismaRaw, tx, authEmails } =
+      buildCreateTenantHarness();
+    // e.g. the payroll migrations aren't applied — `payroll_settings` doesn't exist.
+    tx.payrollSettings.upsert.mockRejectedValue(
+      new Error('relation "payroll_settings" does not exist'),
+    );
+
+    await expect(service.createTenant(dto)).rejects.toThrow('payroll_settings');
+    // The error escapes the transaction callback, so Postgres rolls back the
+    // users/settings/shift rows already written inside it.
+    await expect(tenantPrismaRaw.$transaction.mock.results[0].value).rejects.toThrow(
+      'payroll_settings',
+    );
+    expect(firebaseAuth.deleteUser).toHaveBeenCalledWith('fb-uid-1');
+    expect(platformPrisma.tenant.delete).toHaveBeenCalledWith({ where: { id: 'tenant-1' } });
+    // No invite for a tenant that was never created.
+    expect(authEmails.sendPasswordReset).not.toHaveBeenCalled();
+  });
+
+  it('never sends the invite when seeding tenant rows fails', async () => {
+    const { service, authEmails, tx } = buildCreateTenantHarness();
+    tx.shift.create.mockRejectedValue(new Error('constraint'));
+
+    await expect(service.createTenant(dto)).rejects.toThrow('constraint');
+    expect(authEmails.sendPasswordReset).not.toHaveBeenCalled();
+  });
+
+  it('never sends the invite when the Firebase login setup fails', async () => {
+    const { service, authEmails, firebaseAuth, tenantPrismaRaw } = buildCreateTenantHarness();
+    firebaseAuth.setCustomUserClaims.mockRejectedValue(new Error('invalid_grant'));
+
+    await expect(service.createTenant(dto)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(authEmails.sendPasswordReset).not.toHaveBeenCalled();
+    // Nothing was written to `public` either.
+    expect(tenantPrismaRaw.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('sends the invite only after every tenant row is written', async () => {
+    const { service, authEmails, tx } = buildCreateTenantHarness();
+
+    await service.createTenant(dto);
+
+    expect(authEmails.sendPasswordReset.mock.invocationCallOrder[0]).toBeGreaterThan(
+      tx.professionalTaxSlab.createMany.mock.invocationCallOrder[0],
+    );
   });
 
   it('creates the tenant admin and emails them a branded INVITE (SES via AuthEmailService)', async () => {

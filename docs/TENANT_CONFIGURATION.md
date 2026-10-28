@@ -74,7 +74,7 @@ ready for the future punch-ingest endpoint whenever that's built.
 ## Layer 2 — Tenant business config
 
 All RLS-scoped `public` tables, seeded with working defaults on tenant
-creation (`PlatformAdminService.seedTenantDefaults`, mirrored in
+creation (`PlatformAdminService.seedTenantRows`, mirrored in
 `prisma/seed.ts`) so a new tenant functions before anyone opens Settings.
 
 ### `tenant_settings` (one row per tenant)
@@ -173,8 +173,9 @@ finalization job and the punch write-path are the next slice.
 1. **Platform operator** creates the tenant with a `plan` →
    `entitlementsForPlan(plan)` populates `subscription.enabled_modules` +
    `features`. First Company Admin is seeded (existing flow).
-2. `seedTenantDefaults(tenantId)` writes `tenant_settings` +
-   `attendance_settings` + the default `General` shift.
+2. `seedTenantRows(tenantId, …)` writes the admin's `users` row,
+   `tenant_settings` + `attendance_settings` + the default `General` shift
+   + payroll settings/PT slabs, all in one transaction.
 3. **Company Admin**, on first login, walks a **setup wizard** (work week
    → shift(s) → holidays → leave types → payroll cut-off). Skippable
    (defaults already applied), resumable. — *wizard UI not built yet.*
@@ -186,7 +187,7 @@ finalization job and the punch write-path are the next slice.
 | Piece | State |
 |---|---|
 | Schema: entitlement columns, `tenant_settings`, `shifts`, `holidays`, `attendance_settings`, `punches`, `employees.shift_id` | ✅ migration `20260905000001` |
-| Onboarding: `plan` → entitlements; `seedTenantDefaults` | ✅ |
+| Onboarding: `plan` → entitlements; `seedTenantRows` | ✅ |
 | Seed script parity (defaults + demo holidays per tenant) | ✅ |
 | `EntitlementGuard` (block modules not in plan) + `@RequiresFeature` | ✅ wired onto Leave + Attendance |
 | `attendance.service.ts` reads `shifts` / `tenant_settings` instead of hardcoded constants | ✅ |

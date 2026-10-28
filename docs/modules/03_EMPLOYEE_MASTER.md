@@ -74,8 +74,10 @@ penny-drop bank verification, background-verification workflow.
 - **HR Manager** lives on the **Directory** (search, filter, bulk actions)
   and the **Employee Detail** tabbed page. Onboarding is either one-at-a-time
   (Add Employee form, Identity + Employment required, rest deferred) or
-  **Bulk Import** (download `.xlsx` template → upload → per-row result table →
-  re-upload only failed rows). Offboarding is a **lifecycle transition** to
+  **Bulk Import** (download the template → upload `.csv`/`.xlsx` → preview
+  (dry run, nothing written) → confirm → per-row result table → re-upload
+  only failed rows). Salaries are imported separately (Payroll › Structures
+  › Import salaries, module 07). Offboarding is a **lifecycle transition** to
   `NOTICE_PERIOD` then `SEPARATED`, each captured with the required date +
   reason; `SEPARATED` cascades to disable the linked login (module 01).
 - **Employee** sees a single "My Profile" view — their record with only
@@ -274,7 +276,7 @@ transition graph (`apps/web/src/pages/employees/detail.tsx`).
 | `PATCH` | `/api/employees/:id/sensitive-fields` | Company Admin, HR Manager | `{pan?, aadhaarLast4?, uan?, pfNumber?, esicNumber?, taxRegime?, bankAccountHolderName?, bankAccountNumber?, bankIfsc?, bankName?, bankBranch?, bankAccountType?}` — encrypts `pan`/`bankAccountNumber`, computes the masked forms, audits which fields changed (never the values). |
 | `POST` | `/api/employees/:id/reveal` | Company Admin, HR Manager, Auditor | `{field: 'pan'\|'bankAccountNumber', reason}` — decrypts and returns the value; writes an `employee.field_revealed` audit row (reason logged, value never logged). |
 | `GET`/`POST`/`PATCH`/`DELETE` | `/api/employees/:id/emergency-contacts[/:contactId]` | read: row-scoped · write: any authenticated (own record) or Admin/HR | RULE-5 primary-swap on create/update. |
-| `POST` | `/api/employees/bulk-import` | Company Admin, HR Manager | Multipart `file` (`.xlsx`). Requires `employeeCode`/`firstName`/`lastName` columns. Returns `[{ row, status: 'ok'|'error', message }]`. Never fails the batch. Frontend: `apps/web/src/pages/employees/import.tsx` (template download, upload, per-row result table, failed-row re-download). |
+| `POST` | `/api/employees/bulk-import?dryRun=true\|false` | Company Admin, HR Manager | Multipart `file` (`.csv` or `.xlsx`, ≤5 MB, ≤5,000 rows). Creates or updates (matched by `employeeCode`) with the full field set — see §5.2. Returns an `ImportReport` (`{dryRun, totalRows, succeeded, failed, ignoredColumns, summary, results: [{row, employeeCode, action, success, error?, warnings?, detail?}]}`). Never fails the batch. `EmployeeImportService`; frontend `apps/web/src/pages/employees/import.tsx` on the shared `components/bulk-import.tsx`. |
 | `GET` | `/api/employees/:id/documents` | row-scoped | List metadata. |
 | `POST` | `/api/employees/:id/documents?label=&category=` | Admin/HR (any employee) or Employee (own record only); Line Manager/Auditor cannot upload | MIME allow-list (PDF/JPG/PNG) + 10 MB cap enforced in the service, not just the controller. |
 | `GET` | `/api/documents/:id/download-url` | row-scoped (via the document's owning employee) | 5-minute presigned URL. |
@@ -326,20 +328,44 @@ lists a bucket or returns a raw key.
 5. Later the employee logs in and sees **only** their own record; their Line
    Manager sees them in the team list and org chart.
 
-### 5.2 Bulk import — built (`apps/web/src/pages/employees/import.tsx`)
+### 5.2 Bulk import — built (`EmployeeImportService`, `apps/web/src/pages/employees/import.tsx`)
 
-1. HR → **Employees → Bulk import** → downloads the `.csv` template
-   (required: `employeeCode`, `firstName`, `lastName`; optional:
-   `personalEmail`, `phone`, `designation` — matching what
-   `bulkImport()` actually reads today; department/manager resolution by
-   name isn't implemented, only by the columns the API accepts).
-2. Chooses a file → uploads directly (no client-side preview step —
-   simpler than the original target spec, and the per-row result table
-   from step 3 covers the same need).
-3. `POST /api/employees/bulk-import` → server parses with `exceljs`, inserts
-   row-by-row → returns per-row `[{ row, status, message }]`.
-4. Result table: "X created, Y failed"; **Download failed rows** as `.xlsx`
-   to fix and re-upload only those.
+1. HR → **Employees → Bulk import** → downloads the `.csv` template. Columns
+   (headers matched loosely — `Employee Code` = `employeeCode`):
+   `employeeCode`* · `firstName`/`lastName` (required for a new code) ·
+   `personalEmail`, `phone`, `dateOfBirth`, `gender`, `maritalStatus`,
+   `bloodGroup`, `nationality` · `department` (by name — a new name is
+   created; the preview lists them), `designation`, `employmentType`,
+   `dateOfJoining`, `workLocation`, `workState`, `reportingManagerCode` (an
+   existing employee **or** another row in the file), `payGrade`,
+   `costCenter` · `pan`, `aadhaarLast4` (a full 12-digit Aadhaar is rejected,
+   never stored or echoed), `uan`, `pfNumber`, `esicNumber`, `taxRegime` ·
+   `bankAccountHolderName`, `bankAccountNumber`, `bankIfsc`, `bankName`,
+   `bankBranch`, `bankAccountType` · `loginEmail`, `loginRole`.
+   Dates: `YYYY-MM-DD` or `DD-MM-YYYY`. Enums/states accept friendly text
+   ("Full time", "Tamil Nadu").
+2. Uploads `.csv` or `.xlsx` → `POST …?dryRun=true` validates every row and
+   previews creates vs updates, new departments, logins and per-row errors
+   — **writes nothing**.
+3. Confirms → `POST …?dryRun=false` re-validates and imports every valid
+   row. An existing `employeeCode` is an **update**; a blank cell never
+   clears a field. PAN / bank account go through the same encryption +
+   masking as `updateSensitiveFields`. Managers are linked in a second pass
+   (so order in the file doesn't matter); unknown managers, self-managers
+   and reporting cycles fail the row, cascading to rows that report to a
+   failing row. A `loginEmail` creates a Firebase login (random password,
+   tenant/role claims, `users` row) — role capped by RULE-2 — and the INVITE
+   email goes out only after the employee row lands; a failed DB write
+   deletes the Firebase login again. Audited per row (`employee.created` /
+   `employee.updated`, field names only — never PAN/bank/Aadhaar values),
+   per login (`user.created`), and per batch (`employee.bulk_imported`).
+4. The commit streams live progress (`Accept: application/x-ndjson` →
+   `streamImport`: saving → linking managers → sending invites, with counts
+   and elapsed time) and writes up to 4 rows in parallel; each row is one
+   statement (employee + nested `users` create), audit rows are batched
+   (`AuditService.logMany`). Without that `Accept` header the endpoint
+   returns plain JSON as before.
+5. Result table; **Errors (.csv)** download to fix and re-upload only those.
 
 ### 5.3 Employee edits their own contact details — built
 
@@ -557,8 +583,10 @@ Supabase dev DB** via `./scripts/dev.sh migrate`):
       (404 via RLS).
 - [ ] `POST /api/employees` with a duplicate `employeeCode` in the tenant is
       rejected.
-- [ ] Bulk import of a file with 1 bad row in 10 → 9 `ok`, 1 `error`, no
-      rollback of the 9.
+- [x] Bulk import with a bad row → the good rows import, the bad one reports
+      its error — covered by `employee-import.service.spec.ts` (plus
+      validation, manager resolution/cycles, encryption, login + invite
+      ordering, RULE-2 and dry-run-writes-nothing).
 - [x] Uploading a disallowed MIME type or a file over the 10 MB cap is
       rejected server-side — covered by `employees.service.spec.ts`.
 - [x] An Employee can upload only to their own record; a Line Manager cannot

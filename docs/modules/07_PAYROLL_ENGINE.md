@@ -312,6 +312,7 @@ projection (feature 8), never owns or writes it.
 | Method | Path | Notes |
 |---|---|---|
 | `GET`/`POST`/`PATCH` | `/api/payroll/structures/:employeeId` | `@Roles(HR_MANAGER, COMPANY_ADMIN)` write; employee can `GET` own, read-only |
+| `POST` | `/api/payroll/structures/bulk-import?dryRun=` | `@Roles(HR_MANAGER, COMPANY_ADMIN)` — ✅ built 2026-10-28, see §5.4 |
 | `POST` | `/api/payroll/structures/:employeeId/revise` | Creates a `SalaryRevision`; backdated → triggers arrears calc into the next open run. **Live (Phase 7)** |
 | `GET` · `PUT` | `/api/payroll/config/pt-slabs?state=` · `/config/pt-slabs/:state` | List slabs; `PUT` atomically replaces one state's whole slab set (must start at 0, be contiguous, end open-ended). **Live (Phase 1)** |
 | `GET`/`PATCH` | `/api/payroll/config/tax-slabs` | Old/new regime slabs, standard deduction, cess, rebate per FY |
@@ -384,6 +385,25 @@ recognized Layer-1 module name in `TENANT_CONFIGURATION.md`.
    already-`PROCESSED` period, becomes an `ArrearsLineItem` folded into
    the **next open** run — never a rewrite of the historical
    `PayrollLineItem`s (INV-2).
+
+### 5.4 Bulk salary import — ✅ built 2026-10-28
+
+`SalaryImportService` (`apps/web/src/pages/payroll/salary-import.tsx`, from
+**Structures › Import salaries**). One CSV/XLSX row per employee:
+`employeeCode`*, `ctcAnnual`*, `effectiveFrom` (defaults to date of
+joining), `basicPercentOfCtc` (default 50), `hraPercentOfBasic` (default
+40), optional fixed monthly `daMonthly`/`conveyanceMonthly`/
+`medicalMonthly`/`ltaMonthly`, and `reason`. Builds the standard template
+with Special Allowance as the `CTC - …` balancing formula, validated by the
+same `normalizeAndValidateComponents` as the editor (tenant Basic floor
+included) plus a refusal when fixed parts overshoot CTC. A dry run writes
+nothing and returns each row's monthly breakdown; the commit goes through
+`SalaryStructureService.create()` (no structure yet) or `.update()` (has
+one — so a change reaching an already-processed month auto-upgrades to a
+revision with arrears, exactly as from the editor). Separated employees
+are refused (use F&F). CUSTOM components and formulas stay editor-only.
+Does **not** set the headline `Employee.ctcAnnual` (Reports' planned CTC) —
+same as the editor today.
 
 ### 5.3 Full & Final settlement — ✅ built Phase 8
 

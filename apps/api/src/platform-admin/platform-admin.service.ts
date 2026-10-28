@@ -176,10 +176,10 @@ export class PlatformAdminService {
   // ---- Tenant provisioning & metadata ----
   //
   // Everything below reads/writes ONLY platform.* tables via
-  // `this.platformPrisma`, EXCEPT `seedCompanyAdmin` and `refreshHeadcount`,
-  // which deliberately use the separate `hrms_app` connection
-  // (`this.tenantPrismaRaw`) scoped to one tenant at a time via
-  // `withTenantContext`. That keeps the `hrms_platform` role itself
+  // `this.platformPrisma`, EXCEPT `seedTenantRows`, `resendAdminReset` and
+  // `refreshHeadcount`, which deliberately use the separate `hrms_app`
+  // connection (`this.tenantPrismaRaw`) scoped to one tenant at a time via
+  // the RLS session variable. That keeps the `hrms_platform` role itself
   // (`this.platformPrisma`'s connection) with literally zero grants on
   // `public` — see tenant-isolation.e2e-spec.ts, which asserts a raw query
   // against public.employees over the platform connection is rejected by
@@ -299,15 +299,12 @@ export class PlatformAdminService {
       },
     });
 
-    let adminResetEmailSent = true;
     let adminFirebaseUid: string | undefined;
     try {
-      const seeded = await this.seedCompanyAdmin(tenant.id, dto.adminEmail, dto.adminName);
-      adminFirebaseUid = seeded.user.firebaseUid;
-      adminResetEmailSent = seeded.resetEmailSent;
-      // Working HR-config defaults so the tenant functions before anyone
-      // opens Settings (see docs/TENANT_CONFIGURATION.md).
-      await this.seedTenantDefaults(tenant.id);
+      adminFirebaseUid = await this.createAdminLogin(tenant.id, dto.adminEmail, dto.adminName);
+      // The admin's users row + working HR-config defaults, in ONE
+      // transaction — a failure here leaves no orphaned `public` rows.
+      await this.seedTenantRows(tenant.id, dto.adminEmail, adminFirebaseUid);
     } catch (err) {
       // Roll back the tenant record if we couldn't finish provisioning —
       // a half-provisioned tenant is worse than no tenant at all. The
@@ -316,6 +313,10 @@ export class PlatformAdminService {
       await this.platformPrisma.tenant.delete({ where: { id: tenant.id } });
       throw err;
     }
+
+    // Only now that provisioning has fully succeeded — an invite sent
+    // before a rollback points the customer at a tenant that doesn't exist.
+    const adminResetEmailSent = await this.sendAdminInvite(tenant.id, dto.adminEmail);
 
     await this.refreshHeadcount(tenant.id);
 
@@ -704,16 +705,12 @@ export class PlatformAdminService {
   }
 
   /**
-   * Creates the tenant's first COMPANY_ADMIN: a Firebase user with a random
-   * password (never shown to anyone) + a hosted password-reset email so the
-   * customer sets their own password on first sign-in.
+   * Creates the Firebase login for the tenant's first COMPANY_ADMIN, with a
+   * random password (never shown to anyone) and the tenant/role claims. The
+   * customer sets their own password from the invite `sendAdminInvite` sends
+   * once provisioning has finished. Returns the Firebase uid.
    */
-  private async seedCompanyAdmin(tenantId: string, email: string, name: string) {
-    const scoped = withTenantContext(this.tenantPrismaRaw, tenantId);
-
-    const existing = await scoped.user.findFirst({ where: { tenantId, email } });
-    if (existing) throw new BadRequestException('That admin email is already in use');
-
+  private async createAdminLogin(tenantId: string, email: string, name: string) {
     let firebaseUid: string;
     try {
       const created = await this.firebaseAuth.createUser({
@@ -739,48 +736,43 @@ export class PlatformAdminService {
       );
     }
 
-    let user;
     try {
-      try {
-        await this.firebaseAuth.setCustomUserClaims(firebaseUid, {
-          tenantId,
-          role: 'COMPANY_ADMIN',
-        });
-      } catch (err) {
-        this.logger.error(
-          `Firebase Admin could not set custom claims for ${email} — check FIREBASE_SERVICE_ACCOUNT_JSON`,
-          err instanceof Error ? err.stack : String(err),
-        );
-        throw new ServiceUnavailableException(
-          'Could not finish setting up the tenant admin — the identity provider is unreachable. Check the Firebase Admin service-account credentials.',
-        );
-      }
-
-      user = await scoped.user.create({
-        data: { tenantId, email, firebaseUid, role: 'COMPANY_ADMIN' },
+      await this.firebaseAuth.setCustomUserClaims(firebaseUid, {
+        tenantId,
+        role: 'COMPANY_ADMIN',
       });
     } catch (err) {
+      this.logger.error(
+        `Firebase Admin could not set custom claims for ${email} — check FIREBASE_SERVICE_ACCOUNT_JSON`,
+        err instanceof Error ? err.stack : String(err),
+      );
       // Don't strand a Firebase login with no tenant behind it.
       await this.discardFirebaseUser(firebaseUid, email);
-      throw err;
+      throw new ServiceUnavailableException(
+        'Could not finish setting up the tenant admin — the identity provider is unreachable. Check the Firebase Admin service-account credentials.',
+      );
     }
 
-    // Non-fatal: the login exists either way. `resetEmailSent` is surfaced
-    // all the way up to the New Tenant wizard so the operator isn't left
-    // guessing why the customer says they never got the email — the only
-    // trace used to be this log line.
-    let resetEmailSent = true;
+    return firebaseUid;
+  }
+
+  /**
+   * Sends the Company Admin's hosted password-reset INVITE. Non-fatal: the
+   * login exists either way. The result is surfaced all the way up to the
+   * New Tenant wizard so the operator isn't left guessing why the customer
+   * says they never got the email (and can use `resendAdminReset`).
+   */
+  private async sendAdminInvite(tenantId: string, email: string) {
     try {
       await this.authEmails.sendPasswordReset({ email, kind: 'INVITE', tenantId });
+      return true;
     } catch (err) {
-      resetEmailSent = false;
       this.logger.error(
         `Tenant admin ${email} created but the password-reset email failed to send`,
         err instanceof Error ? err.stack : String(err),
       );
+      return false;
     }
-
-    return { user, resetEmailSent };
   }
 
   /** Best-effort compensation for a failed provisioning step — logs rather
@@ -797,28 +789,46 @@ export class PlatformAdminService {
   }
 
   /**
-   * Seeds the tenant's operational HR config with sensible defaults —
-   * 5-day week (Sun/Sat off), one 09:00–18:00 "General" shift, self-service
-   * attendance. The Company Admin tunes these in-app; nothing here is a
-   * commercial/plan concern. Uses the tenant-scoped `hrms_app` connection,
-   * same as seedCompanyAdmin (the platform role has no grants on `public`).
+   * Writes every `public` row a new tenant starts with — the first
+   * COMPANY_ADMIN's users row plus working HR-config defaults so the tenant
+   * functions before anyone opens Settings (5-day week, one 09:00–18:00
+   * "General" shift, self-service attendance, payroll settings + PT slabs;
+   * see docs/TENANT_CONFIGURATION.md). The Company Admin tunes these in-app.
+   *
+   * One interactive transaction on the tenant-scoped `hrms_app` connection
+   * (the platform role has no grants on `public`, and `hrms_app` has no
+   * DELETE on most of these tables) with the RLS session variable set first:
+   * a failure on any step rolls all of them back, so a failed onboarding
+   * leaves no orphaned rows for a tenant that was never created.
    */
-  private async seedTenantDefaults(tenantId: string) {
-    const scoped = withTenantContext(this.tenantPrismaRaw, tenantId);
+  private async seedTenantRows(tenantId: string, email: string, firebaseUid: string) {
+    await this.tenantPrismaRaw.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, TRUE)`;
 
-    await scoped.tenantSettings.create({ data: { tenantId } });
-    await scoped.attendanceSettings.create({ data: { tenantId } });
-    await scoped.shift.create({
-      data: {
-        tenantId,
-        name: 'General',
-        type: 'FIXED',
-        startTime: '09:00',
-        endTime: '18:00',
-        isDefault: true,
+        const existing = await tx.user.findFirst({ where: { tenantId, email } });
+        if (existing) throw new BadRequestException('That admin email is already in use');
+        await tx.user.create({
+          data: { tenantId, email, firebaseUid, role: 'COMPANY_ADMIN' },
+        });
+
+        await tx.tenantSettings.create({ data: { tenantId } });
+        await tx.attendanceSettings.create({ data: { tenantId } });
+        await tx.shift.create({
+          data: {
+            tenantId,
+            name: 'General',
+            type: 'FIXED',
+            startTime: '09:00',
+            endTime: '18:00',
+            isDefault: true,
+          },
+        });
+        await seedPayrollDefaults(tx, tenantId);
       },
-    });
-    await seedPayrollDefaults(scoped, tenantId);
+      // A dozen round-trips to the pooler; Prisma's 5s default is tight.
+      { timeout: 15_000 },
+    );
   }
 
   /**

@@ -16,6 +16,7 @@ import { LeavePage } from '@/pages/leave';
 import { AttendancePage } from '@/pages/attendance';
 import { PayrollPage } from '@/pages/payroll';
 import { StructureEditorPage } from '@/pages/payroll/structure-editor';
+import { SalaryImportPage } from '@/pages/payroll/salary-import';
 import { FullAndFinalPage } from '@/pages/payroll/fnf';
 import { AccessPage } from '@/pages/access';
 import { AccountPage } from '@/pages/access/account';
@@ -53,6 +54,7 @@ export default function App() {
                     <Route path="leave" element={<LeavePage />} />
                     <Route path="attendance" element={<AttendancePage />} />
                     <Route path="payroll" element={<PayrollPage />} />
+                    <Route path="payroll/import" element={<SalaryImportPage />} />
                     <Route path="payroll/structures/:employeeId" element={<StructureEditorPage />} />
                     <Route path="payroll/fnf/:employeeId" element={<FullAndFinalPage />} />
                     <Route path="access" element={<AccessPage />} />

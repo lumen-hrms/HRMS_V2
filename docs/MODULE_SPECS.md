@@ -21,8 +21,24 @@
 > spec draft that is no longer maintained — ignore them; this file and the
 > code are the source of truth.)
 >
-> **Last synced to code:** 2026-11-24. Landed since the previous sync
-> (2026-10-05):
+> **Last synced to code:** 2026-10-28. Landed since the previous sync
+> (dated 2026-11-24):
+>
+> - **Bulk import — Employee Master (module 03) + Payroll (module 07).**
+>   The employee import now takes the full field set (department by name,
+>   manager by code, work state, statutory IDs, encrypted PAN/bank, logins
+>   with invites), creates *or* updates by `employeeCode`, reads CSV as well
+>   as XLSX (the old `.csv` template couldn't be uploaded), and previews
+>   with a dry run before committing. New `POST
+>   /api/payroll/structures/bulk-import` imports salaries on the standard
+>   template through `SalaryStructureService.create()`/`update()`. Shared
+>   reader/report in `apps/api/src/common/bulk-import.ts` and UI in
+>   `apps/web/src/components/bulk-import.tsx`. Commits stream live progress
+>   (NDJSON) and write 4 rows in parallel — a 30-row import with 10 logins
+>   took ~2m20s row-by-row against the shared DB. Both modules stay ✅ 100%.
+> - **Platform Admin: tenant onboarding no longer strands rows.** The admin
+>   `users` row and every tenant default are seeded in one transaction, and
+>   the invite email goes out only after provisioning fully succeeds.
 >
 > - **Payroll Engine (module 07) Phase 9 follow-up: `update()`/`revise()`
 >   convergence + a best-effort public-source statutory review.**
@@ -728,7 +744,7 @@ must validate and report per-row rather than fail the batch.
 | Emergency contact (name, relationship, phone, address) | FR-EMP-004 | ✅ full CRUD, RULE-5 primary-swap |
 | Document upload (PDF/JPG/PNG, ≤10MB) — offer letter, IDs, certs | FR-EMP-005 | ✅ MIME allow-list + size cap enforced server-side; category + delete added |
 | Employee lifecycle states | FR-EMP-007 | ✅ `EmployeeLifecycleState` (`PRE_JOINING/PROBATION/CONFIRMED/NOTICE_PERIOD/SUSPENDED/SEPARATED`) matches the SRS set; `PATCH /employees/:id/lifecycle` validates transitions, `SEPARATED` disables the linked login |
-| Bulk import via Excel template + error report | FR-EMP-009 | ✅ API + frontend (`apps/web/src/pages/employees/import.tsx`) |
+| Bulk import via Excel template + error report | FR-EMP-009 | ✅ CSV/XLSX, full field set (job, manager by code, statutory IDs, encrypted bank/PAN, logins + invites), create **or** update by `employeeCode`, dry-run preview before commit (`EmployeeImportService`, `apps/web/src/pages/employees/import.tsx`) |
 | Multi-level hierarchy (Company → BU → Dept → Team) | FR-ORG-001 | 🟡 Department (now with `code`/`headEmployeeId`, edit/delete-with-reassign) + self-referential `reportingManagerId`; BU/Team levels **deliberately deferred** — flat hierarchy decided sufficient for V1 |
 | Interactive org chart — reporting lines, expand, search | FR-ORG-002 | ✅ tree rooted per role (recursive subtree for Employee/Line Manager); search (auto-expands ancestors of a match, highlights hits), per-node + expand-all/collapse-all, zoom (60–160%), and a click-to-drawer quick view (report count + direct reports + link to full profile) |
 | Multiple reporting lines (solid + dotted) | FR-ORG-003 | 🔴 single `reportingManagerId` only |
@@ -752,14 +768,16 @@ must validate and report per-row rather than fail the batch.
 
 ### Happy path (bulk import)
 
-1. HR → **Employees → Bulk import** → downloads the `.csv` template
-   (`employeeCode`, `firstName`, `lastName` required; `personalEmail`,
-   `phone`, `designation` optional).
-2. Uploads the file → `POST /api/employees/bulk-import` (multipart `file`).
-3. Server parses with `exceljs`, inserts row-by-row, returns
-   `[{ row, status: 'ok' | 'error', message }]`; the UI shows a per-row
-   result table and offers a failed-rows download.
-4. HR fixes the flagged rows and re-uploads only those.
+1. HR → **Employees → Bulk import** → downloads the `.csv` template (the
+   full field set — see `docs/modules/03_EMPLOYEE_MASTER.md` §5.2).
+2. Uploads `.csv`/`.xlsx` → `POST /api/employees/bulk-import?dryRun=true`
+   previews creates/updates, new departments, logins and per-row errors
+   without writing anything.
+3. Confirms → the same file with `dryRun=false`; every valid row is created
+   or updated (by `employeeCode`), managers linked in a second pass, logins
+   invited last. Errors download as CSV.
+4. Salaries: **Payroll › Structures › Import salaries**
+   (`POST /api/payroll/structures/bulk-import`, same preview/confirm flow).
 
 ### Functionalities / API
 
@@ -773,7 +791,7 @@ must validate and report per-row rather than fail the batch.
 | `PATCH` | `/api/employees/:id/sensitive-fields` | Company Admin, HR Manager |
 | `POST` | `/api/employees/:id/reveal` | Company Admin, HR Manager, Auditor |
 | `GET`/`POST`/`PATCH`/`DELETE` | `/api/employees/:id/emergency-contacts[/:contactId]` | read: row-scoped · write: self or Admin/HR |
-| `POST` | `/api/employees/bulk-import` | Company Admin, HR Manager |
+| `POST` | `/api/employees/bulk-import?dryRun=` | Company Admin, HR Manager — CSV/XLSX, create or update, dry-run preview |
 | `POST` | `/api/employees/:id/photo` | self or Admin/HR — JPEG/PNG/WebP, ≤5MB; replaces the previous object |
 | `GET` | `/api/employees/:id/documents` | row-scoped |
 | `POST` | `/api/employees/:id/documents` | Admin/HR (any) or Employee (own only) |

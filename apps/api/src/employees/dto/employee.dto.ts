@@ -28,9 +28,9 @@ export const LIFECYCLE_STATES = [
   'SEPARATED',
 ] as const;
 
-const EMPLOYMENT_TYPES = ['FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERN', 'CONSULTANT'];
-const TAX_REGIMES = ['OLD', 'NEW'];
-const BANK_ACCOUNT_TYPES = ['SAVINGS', 'CURRENT'];
+export const EMPLOYMENT_TYPES = ['FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERN', 'CONSULTANT'];
+export const TAX_REGIMES = ['OLD', 'NEW'];
+export const BANK_ACCOUNT_TYPES = ['SAVINGS', 'CURRENT'];
 export const DOCUMENT_CATEGORIES = [
   'OFFER_LETTER',
   'ID_PROOF',
@@ -40,9 +40,9 @@ export const DOCUMENT_CATEGORIES = [
   'OTHER',
 ] as const;
 
-const PAN_PATTERN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
-const IFSC_PATTERN = /^[A-Z]{4}0[A-Z0-9]{6}$/;
-const AADHAAR_LAST4_PATTERN = /^\d{4}$/;
+export const PAN_PATTERN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+export const IFSC_PATTERN = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+export const AADHAAR_LAST4_PATTERN = /^\d{4}$/;
 
 export class CreateEmployeeDto {
   @IsString()

@@ -118,7 +118,7 @@ export class AttendanceService {
    * The tenant's per-tenant shift/grace config (docs/TENANT_CONFIGURATION.md
    * layer 2), not a hardcoded constant. `Employee.shiftId` is a per-employee
    * override (layer 3); falls back to the tenant's one `isDefault` shift,
-   * seeded on every tenant at onboarding (`PlatformAdminService.seedTenantDefaults`).
+   * seeded on every tenant at onboarding (`PlatformAdminService.seedTenantRows`).
    */
   private async resolveShift(employeeId: string, tenantId: string) {
     const employee = await this.tenantPrisma.client.employee.findUnique({

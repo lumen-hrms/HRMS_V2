@@ -109,7 +109,7 @@ This is the concrete mechanism behind "even the founder can't casually see tenan
 
 ### 2.6 One deliberate exception, and why it's safe
 
-`PlatformAdminService.seedCompanyAdmin()` and `.refreshHeadcount()` (in `src/platform-admin/platform-admin.service.ts`) need to write into a brand-new tenant's `public.users`/`public.employees` (to create the first Company Admin login, and to denormalize a headcount back into `platform.tenants.employeeCount`). These do **not** use the `hrms_platform` connection — they use the separate `hrms_app`-backed `TenantPrismaClientProvider`, scoped to one tenant via the same `withTenantContext()` helper as ordinary requests. So `hrms_platform` itself never touches `public` under any code path; the exception is implemented via a different, correctly-scoped connection, not a privilege escalation on the platform role.
+`PlatformAdminService.seedTenantRows()` and `.refreshHeadcount()` (in `src/platform-admin/platform-admin.service.ts`) need to write into a brand-new tenant's `public.users` + default settings / read `public.employees` (to create the first Company Admin and the tenant's defaults in one transaction, and to denormalize a headcount back into `platform.tenants.employeeCount`). These do **not** use the `hrms_platform` connection — they use the separate `hrms_app`-backed `TenantPrismaClientProvider`, scoped to one tenant via the same RLS session variable as ordinary requests (`withTenantContext()`, or set first inside `seedTenantRows`' transaction). So `hrms_platform` itself never touches `public` under any code path; the exception is implemented via a different, correctly-scoped connection, not a privilege escalation on the platform role.
 
 ## 3. Auth flow in detail
 

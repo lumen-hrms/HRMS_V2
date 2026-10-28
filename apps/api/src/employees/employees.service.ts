@@ -7,7 +7,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import * as ExcelJS from 'exceljs';
 import type * as admin from 'firebase-admin';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service';
 import { StorageService } from '../storage/storage.service';
@@ -273,7 +272,7 @@ export class EmployeesService {
 
     // Firebase user creation is a network call to the Admin SDK, not a DB
     // write — do it before the transaction rather than inside it, same
-    // pattern as PlatformAdminService.seedCompanyAdmin.
+    // pattern as PlatformAdminService.createAdminLogin.
     let pendingUser: { email: string; firebaseUid: string; role: string } | undefined;
     if (dto.loginEmail && dto.loginTempPassword) {
       const role = (dto.loginRole as string) ?? 'EMPLOYEE';
@@ -844,66 +843,5 @@ export class EmployeesService {
     }
     roots.forEach(countReports);
     return roots;
-  }
-
-  // ---- Bulk import ----
-
-  async bulkImport(buffer: Buffer) {
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(buffer as any);
-    const sheet = workbook.worksheets[0];
-    if (!sheet) throw new BadRequestException('Workbook has no sheets');
-
-    const header = (sheet.getRow(1).values as any[]).map((v) => String(v ?? '').trim());
-    const col = (name: string) => header.indexOf(name);
-
-    const required = ['employeeCode', 'firstName', 'lastName'];
-    for (const r of required) {
-      if (col(r) === -1) throw new BadRequestException(`Missing required column: ${r}`);
-    }
-
-    const results: { row: number; success: boolean; error?: string }[] = [];
-    const tenantId = this.tenantPrisma.tenantId;
-
-    for (let rowNum = 2; rowNum <= sheet.rowCount; rowNum++) {
-      const row = sheet.getRow(rowNum);
-      if (row.values === undefined || (row.values as any[]).length === 0) continue;
-
-      const get = (name: string) => {
-        const idx = col(name);
-        return idx === -1 ? undefined : row.getCell(idx).text?.trim() || undefined;
-      };
-
-      try {
-        const employeeCode = get('employeeCode');
-        const firstName = get('firstName');
-        const lastName = get('lastName');
-        if (!employeeCode || !firstName || !lastName) {
-          throw new Error('employeeCode, firstName and lastName are required');
-        }
-
-        await this.tenantPrisma.client.employee.create({
-          data: {
-            tenantId,
-            employeeCode,
-            firstName,
-            lastName,
-            personalEmail: get('personalEmail'),
-            phone: get('phone'),
-            designation: get('designation'),
-          },
-        });
-        results.push({ row: rowNum, success: true });
-      } catch (err: any) {
-        results.push({ row: rowNum, success: false, error: err.message ?? 'Unknown error' });
-      }
-    }
-
-    return {
-      totalRows: results.length,
-      succeeded: results.filter((r) => r.success).length,
-      failed: results.filter((r) => !r.success).length,
-      results,
-    };
   }
 }

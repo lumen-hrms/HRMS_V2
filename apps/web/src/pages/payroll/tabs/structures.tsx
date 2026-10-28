@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Wallet } from 'lucide-react';
+import { Search, Upload, Wallet } from 'lucide-react';
 import { api } from '@/lib/api';
+import { useAuth } from '@/context/auth-context';
+import { isPayrollAdmin } from '@/lib/roles';
 import type { EmployeeSummary } from '@/lib/payroll/types';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -23,6 +25,7 @@ const LIFECYCLE_LABEL: Record<string, string> = {
 
 export function StructuresTab() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [employees, setEmployees] = React.useState<EmployeeSummary[] | null>(null);
   const [search, setSearch] = React.useState('');
   const [lifecycleFilter, setLifecycleFilter] = React.useState('');
@@ -68,6 +71,11 @@ export function StructuresTab() {
             </option>
           ))}
         </Select>
+        {isPayrollAdmin(user) && (
+          <Button variant="outline" className="ml-auto" onClick={() => navigate('/payroll/import')}>
+            <Upload className="h-4 w-4" /> Import salaries
+          </Button>
+        )}
       </div>
 
       <Card className="overflow-hidden">

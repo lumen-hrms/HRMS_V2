@@ -53,6 +53,52 @@ describe('AuditService.log', () => {
   });
 });
 
+describe('AuditService.logMany', () => {
+  it('writes every row in one createMany, stamped with the tenant', async () => {
+    const tenantPrisma: any = {
+      tenantId: 'tenant-1',
+      client: { auditLog: { createMany: jest.fn() } },
+    };
+    const service = new AuditService(tenantPrisma);
+    await service.logMany([
+      {
+        actorUserId: 'u1',
+        action: 'employee.created',
+        targetType: 'employee',
+        targetId: 'e1',
+        metadata: { module: 'employee-master' },
+      },
+      {
+        action: 'employee.updated',
+        targetType: 'employee',
+        metadata: { module: 'employee-master' },
+      },
+    ]);
+    const { data } = tenantPrisma.client.auditLog.createMany.mock.calls[0][0];
+    expect(tenantPrisma.client.auditLog.createMany).toHaveBeenCalledTimes(1);
+    expect(data).toHaveLength(2);
+    expect(data[1]).toMatchObject({
+      tenantId: 'tenant-1',
+      actorUserId: null,
+      targetId: null,
+      ipAddress: null,
+    });
+  });
+
+  it('is a no-op for an empty list and never throws on a failed write', async () => {
+    const createMany = jest.fn().mockRejectedValue(new Error('db down'));
+    const service = new AuditService({
+      tenantId: 't',
+      client: { auditLog: { createMany } },
+    } as any);
+    await service.logMany([]);
+    expect(createMany).not.toHaveBeenCalled();
+    await expect(
+      service.logMany([{ action: 'x', targetType: 'y', metadata: { module: 'm' } }]),
+    ).resolves.toBeUndefined();
+  });
+});
+
 describe('AuditService.query', () => {
   function row(overrides: Record<string, any> = {}) {
     return {

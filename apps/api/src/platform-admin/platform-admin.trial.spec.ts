@@ -61,10 +61,9 @@ describe('PlatformAdminService — trial lifecycle', () => {
       const prisma = buildFakePlatformPrisma({});
       prisma.tenant.findUnique.mockResolvedValueOnce(null); // subdomain free
       const { service } = buildService(prisma);
-      (service as any).seedCompanyAdmin = jest
-        .fn()
-        .mockResolvedValue({ user: { firebaseUid: 'fb-uid-1' }, resetEmailSent: true });
-      (service as any).seedTenantDefaults = jest.fn().mockResolvedValue(undefined);
+      (service as any).createAdminLogin = jest.fn().mockResolvedValue('fb-uid-1');
+      (service as any).seedTenantRows = jest.fn().mockResolvedValue(undefined);
+      (service as any).sendAdminInvite = jest.fn().mockResolvedValue(true);
       (service as any).refreshHeadcount = jest.fn().mockResolvedValue(undefined);
 
       const before = Date.now();
@@ -91,10 +90,9 @@ describe('PlatformAdminService — trial lifecycle', () => {
       const prisma = buildFakePlatformPrisma({});
       prisma.tenant.findUnique.mockResolvedValueOnce(null);
       const { service } = buildService(prisma);
-      (service as any).seedCompanyAdmin = jest
-        .fn()
-        .mockResolvedValue({ user: { firebaseUid: 'fb-uid-1' }, resetEmailSent: true });
-      (service as any).seedTenantDefaults = jest.fn().mockResolvedValue(undefined);
+      (service as any).createAdminLogin = jest.fn().mockResolvedValue('fb-uid-1');
+      (service as any).seedTenantRows = jest.fn().mockResolvedValue(undefined);
+      (service as any).sendAdminInvite = jest.fn().mockResolvedValue(true);
       (service as any).refreshHeadcount = jest.fn().mockResolvedValue(undefined);
 
       await service.createTenant(

@@ -332,6 +332,28 @@ docker run -d --name hrms-api --restart unless-stopped \
   --env-file apps/api/.env -p 80:3000 --network hrms hrms-api
 ```
 
+**Changing an env var on the box — no SSH session or AWS console needed.**
+`scripts/api-env.sh` edits `apps/api/.env` on the box over SSH and recreates
+the API container with the new value (Docker only reads `--env-file` at
+create time, so `docker restart` wouldn't pick it up). The new container
+keeps everything the running one had — including the GitHub-forwarded
+secrets — is health-checked, and is rolled back to the previous one if it
+doesn't come up. The box's `.env` keeps its last 5 backups.
+
+```bash
+./scripts/api-env.sh list                          # names only, never values
+./scripts/api-env.sh set FIELD_ENCRYPTION_KEY       # prompts for the value (hidden)
+./scripts/api-env.sh set FIELD_ENCRYPTION_KEY --local   # also writes your local apps/api/.env
+./scripts/api-env.sh unset SOME_OLD_VAR
+./scripts/api-env.sh set A --no-restart && ./scripts/api-env.sh set B --no-restart && ./scripts/api-env.sh restart
+```
+
+Uses `~/.ssh/hrms-key.pem` and the box address from `apps/web/vercel.json`
+(override with `HRMS_SSH_KEY` / `HRMS_EC2_HOST`). Variables that
+`deploy-api.yml` forwards from GitHub secrets (S3_*, SES_*, RAZORPAY_*,
+APP_BASE_URL) are re-applied from GitHub on the next deploy, so change those
+in GitHub — the script warns when you touch one.
+
 **Web:** push to the tracked branch → Vercel auto-builds. Or `vercel --prod`
 from `apps/web`.
 

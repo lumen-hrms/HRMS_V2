@@ -1,175 +1,83 @@
-import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Download, Upload } from 'lucide-react';
-import { getAccessToken, getTenantSubdomain, isApiError } from '@/lib/api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { BulkImport, type ImportColumn, type ImportReport } from '@/components/bulk-import';
 
-const TEMPLATE_COLUMNS = [
-  'employeeCode',
-  'firstName',
-  'lastName',
-  'personalEmail',
-  'phone',
-  'designation',
-] as const;
+/** Mirrors `EMPLOYEE_IMPORT_COLUMNS` in apps/api/src/employees/employee-import.service.ts. */
+const COLUMNS: ImportColumn[] = [
+  { name: 'employeeCode', required: true, description: 'Unique code. An existing code updates that employee; a new one creates them.' },
+  { name: 'firstName', description: 'Required for a new employee.' },
+  { name: 'lastName', description: 'Required for a new employee.' },
+  { name: 'personalEmail', description: 'Personal email address.' },
+  { name: 'phone', description: 'Mobile number.' },
+  { name: 'dateOfBirth', description: 'YYYY-MM-DD or DD-MM-YYYY.' },
+  { name: 'gender', description: 'e.g. Male, Female, Other — used for gender-restricted leave types.' },
+  { name: 'maritalStatus', description: 'Free text.' },
+  { name: 'bloodGroup', description: 'e.g. O+.' },
+  { name: 'nationality', description: 'e.g. Indian.' },
+  { name: 'department', description: 'Department name. A name that doesn’t exist yet is created (the preview lists them).' },
+  { name: 'designation', description: 'Job title.' },
+  { name: 'employmentType', description: 'Full time, Part time, Contract, Intern or Consultant.' },
+  { name: 'dateOfJoining', description: 'YYYY-MM-DD or DD-MM-YYYY. Also the default salary effective date.' },
+  { name: 'workLocation', description: 'Office / city.' },
+  { name: 'workState', description: 'State or UT of work, e.g. Karnataka — decides Professional Tax.' },
+  { name: 'reportingManagerCode', description: 'Manager’s employeeCode — an existing employee or another row in this file.' },
+  { name: 'payGrade', description: 'Free text.' },
+  { name: 'costCenter', description: 'Free text.' },
+  { name: 'pan', description: 'ABCDE1234F. Stored encrypted; only a masked form is shown.' },
+  { name: 'aadhaarLast4', description: 'Last 4 digits only — never the full Aadhaar number.' },
+  { name: 'uan', description: '12-digit UAN.' },
+  { name: 'pfNumber', description: 'PF member ID.' },
+  { name: 'esicNumber', description: 'ESIC IP number.' },
+  { name: 'taxRegime', description: 'OLD or NEW.' },
+  { name: 'bankAccountHolderName', description: 'Name on the account.' },
+  { name: 'bankAccountNumber', description: '9–18 digits. Stored encrypted.' },
+  { name: 'bankIfsc', description: 'e.g. SBIN0001234.' },
+  { name: 'bankName', description: 'e.g. State Bank of India.' },
+  { name: 'bankBranch', description: 'Branch name.' },
+  { name: 'bankAccountType', description: 'Savings or Current.' },
+  { name: 'loginEmail', description: 'Optional. Creates a login and emails an invite to set a password.' },
+  { name: 'loginRole', description: 'Employee (default), Line Manager, HR Manager, Auditor — or Company Admin (Company Admins only).' },
+];
 
-interface RowResult {
-  row: number;
-  success: boolean;
-  error?: string;
-}
-
-interface ImportResult {
-  totalRows: number;
-  succeeded: number;
-  failed: number;
-  results: RowResult[];
-}
+const count = (r: ImportReport, key: string) => Number(r.summary[key] ?? 0);
 
 export function EmployeeBulkImportPage() {
   const navigate = useNavigate();
-  const [fileName, setFileName] = React.useState<string | null>(null);
-  const [uploading, setUploading] = React.useState(false);
-  const [result, setResult] = React.useState<ImportResult | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
-
-  function downloadTemplate() {
-    // Plain CSV — Excel opens it fine and it needs no client-side xlsx
-    // library. Server accepts .xlsx too; this is the simplest correct
-    // template for the required + commonly-used columns.
-    const csv = TEMPLATE_COLUMNS.join(',') + '\n';
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'employee-import-template.csv';
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setFileName(file.name);
-    setUploading(true);
-    setError(null);
-    setResult(null);
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const headers: Record<string, string> = {};
-      const token = await getAccessToken();
-      const subdomain = getTenantSubdomain();
-      if (token) headers.Authorization = `Bearer ${token}`;
-      if (subdomain) headers['X-Tenant-Subdomain'] = subdomain;
-      const res = await fetch('/api/employees/bulk-import', { method: 'POST', headers, body: formData });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.message ?? 'Import failed');
-      setResult(body as ImportResult);
-    } catch (err) {
-      setError(isApiError(err) ? err.message : (err as Error).message);
-    } finally {
-      setUploading(false);
-      e.target.value = '';
-    }
-  }
-
-  function downloadFailedRows() {
-    if (!result) return;
-    const failed = result.results.filter((r) => !r.success);
-    const csv = ['row,error', ...failed.map((r) => `${r.row},"${(r.error ?? '').replace(/"/g, '""')}"`)].join(
-      '\n',
-    );
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'failed-rows.csv';
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
   return (
-    <div className="flex max-w-2xl flex-col gap-5">
+    <div className="flex max-w-4xl flex-col gap-5">
       <div>
         <h1 className="text-xl font-semibold">Bulk import employees</h1>
         <p className="text-sm text-muted-foreground">
-          Upload an .xlsx file with one row per employee. A bad row never fails the whole batch —
-          fix and re-upload only the failed rows.
+          Add new employees or update existing ones (matched by employee code) — job details,
+          statutory IDs, bank details and logins in one file. Blank cells never clear a field. Salaries
+          are imported separately under Payroll › Structures.
         </p>
       </div>
-
-      <Card>
-        <CardHeader className="flex-row items-center justify-between">
-          <CardTitle>1. Download the template</CardTitle>
-          <Button size="sm" variant="outline" onClick={downloadTemplate}>
-            <Download className="h-3.5 w-3.5" /> Template (.csv)
-          </Button>
-        </CardHeader>
-        <CardContent className="text-sm text-muted-foreground">
-          Required columns: <code>employeeCode</code>, <code>firstName</code>, <code>lastName</code>.
-          Optional: <code>personalEmail</code>, <code>phone</code>, <code>designation</code>.
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>2. Upload your file</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          <label>
-            <input
-              type="file"
-              accept=".xlsx,.csv"
-              className="hidden"
-              onChange={handleFile}
-              disabled={uploading}
-            />
-            <span className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm font-medium hover:bg-accent">
-              <Upload className="h-4 w-4" /> {uploading ? 'Uploading…' : 'Choose file (.xlsx)'}
-            </span>
-          </label>
-          {fileName && <p className="text-xs text-muted-foreground">{fileName}</p>}
-          {error && <p className="text-sm text-destructive">{error}</p>}
-        </CardContent>
-      </Card>
-
-      {result && (
-        <Card>
-          <CardHeader className="flex-row items-center justify-between">
-            <CardTitle>3. Result</CardTitle>
-            {result.failed > 0 && (
-              <Button size="sm" variant="outline" onClick={downloadFailedRows}>
-                <Download className="h-3.5 w-3.5" /> Download failed rows
-              </Button>
-            )}
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            <div className="flex items-center gap-2 text-sm">
-              <Badge variant="success">{result.succeeded} created</Badge>
-              {result.failed > 0 && <Badge variant="destructive">{result.failed} failed</Badge>}
-              <span className="text-muted-foreground">of {result.totalRows} rows</span>
-            </div>
-            <div className="flex flex-col divide-y divide-border rounded-md border border-border">
-              {result.results.map((r) => (
-                <div key={r.row} className="flex items-center justify-between px-3 py-2 text-sm">
-                  <span className="text-muted-foreground">Row {r.row}</span>
-                  {r.success ? (
-                    <Badge variant="success">ok</Badge>
-                  ) : (
-                    <span className="text-right text-destructive">{r.error}</span>
-                  )}
-                </div>
-              ))}
-            </div>
-            <Button className="self-start" onClick={() => navigate('/employees')}>
-              Done — back to directory
-            </Button>
-          </CardContent>
-        </Card>
-      )}
+      <BulkImport
+        endpoint="/employees/bulk-import"
+        columns={COLUMNS}
+        rowNoun="employees"
+        templateFileName="employee-import-template.csv"
+        onDone={() => navigate('/employees')}
+        summarize={(r) => {
+          const committed = !r.dryRun;
+          const departments = (r.summary.newDepartments as string[] | undefined) ?? [];
+          const badges: [('success' | 'warning' | 'default'), string][] = [
+            ['success', `${count(r, committed ? 'created' : 'create')} ${committed ? 'created' : 'new'}`],
+            ['default', `${count(r, committed ? 'updated' : 'update')} ${committed ? 'updated' : 'to update'}`],
+          ];
+          if (count(r, 'logins') > 0) badges.push(['default', `${count(r, 'logins')} logins`]);
+          if (count(r, 'invitesFailed') > 0) {
+            badges.push(['warning', `${count(r, 'invitesFailed')} invites failed`]);
+          }
+          if (departments.length > 0) {
+            badges.push([
+              'warning',
+              `${committed ? 'Created' : 'Will create'} department${departments.length === 1 ? '' : 's'}: ${departments.join(', ')}`,
+            ]);
+          }
+          return badges;
+        }}
+      />
     </div>
   );
 }

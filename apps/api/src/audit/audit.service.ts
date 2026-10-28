@@ -65,6 +65,33 @@ export class AuditService {
     }
   }
 
+  /**
+   * Many audit rows in one statement — for batch operations (bulk import)
+   * where one `log()` per row would cost a DB round-trip each. Same
+   * contract: a failure is logged and swallowed.
+   */
+  async logMany(inputs: AuditLogInput[]): Promise<void> {
+    if (inputs.length === 0) return;
+    try {
+      await this.tenantPrisma.client.auditLog.createMany({
+        data: inputs.map((input) => ({
+          tenantId: this.tenantPrisma.tenantId,
+          actorUserId: input.actorUserId ?? null,
+          action: input.action,
+          targetType: input.targetType,
+          targetId: input.targetId ?? null,
+          ipAddress: input.ipAddress ?? null,
+          metadata: input.metadata as Prisma.InputJsonObject,
+        })),
+      });
+    } catch (err) {
+      this.logger.error(
+        `Batch audit write failed for ${inputs.length} rows (first action "${inputs[0].action}")`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
+  }
+
   async query(filter: AuditQueryFilter): Promise<
     Array<{
       id: string;

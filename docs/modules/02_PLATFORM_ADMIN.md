@@ -102,9 +102,14 @@ console, per-tenant feature-flag UI beyond plan defaults, dunning emails.
    `public` — verified by test. The console cannot read tenant PII under any
    code path.
 2. **Onboarding is atomic-ish.** Creating a tenant creates `Tenant` +
-   `Subscription`, then seeds the first Company Admin. **If seeding the admin
-   fails, the tenant row is rolled back** — no tenant is left where nobody
-   can log in.
+   `Subscription`, then the first Company Admin's Firebase login, then — in
+   **one** RLS-scoped `hrms_app` transaction — the admin's `users` row and
+   every tenant default (settings, shift, payroll settings + PT slabs).
+   **If any step fails, all of it is rolled back**: the transaction leaves no
+   `public` rows, the Firebase login is deleted, and the tenant row is
+   removed — no tenant is left where nobody can log in, and no orphaned rows
+   or logins block a retry. The admin's invite email is sent only **after**
+   provisioning has fully succeeded.
 3. **Suspend is immediate and total.** `PATCH .../status` → `SUSPENDED`
    locks out every user of that tenant at `TenantResolutionMiddleware` on
    their next request.
@@ -133,9 +138,9 @@ console, per-tenant feature-flag UI beyond plan defaults, dunning emails.
 | `hrms_app` | all tenant business queries | CRUD on `public.*` only; `NOBYPASSRLS` |
 | `hrms_platform` | this module | CRUD on `platform.*` only; **zero grants on `public`, not even `USAGE`** |
 
-The **one deliberate exception**: `PlatformAdminService.seedCompanyAdmin()`
-and `.refreshHeadcount()` need to write a new tenant's `public.users` /
-read a count. They do **not** use `hrms_platform` — they use the
+The **one deliberate exception**: `PlatformAdminService.seedTenantRows()`
+and `.refreshHeadcount()` need to write a new tenant's `public.users` +
+default settings / read a count. They do **not** use `hrms_platform` — they use the
 `hrms_app`-backed `TenantPrismaClientProvider`, scoped to the one new tenant
 via `withTenantContext()`, exactly like a normal request. So `hrms_platform`
 itself never touches `public`; the exception is a correctly-scoped second
@@ -291,7 +296,9 @@ list), Audit log.
 
 - **INV-1** — `hrms_platform` never gains any grant on `public`. The only
   path from this module into `public` is the `hrms_app`-backed, per-tenant
-  `withTenantContext()` used by `seedCompanyAdmin` / `refreshHeadcount`.
+  tenant context (`withTenantContext()`, or the RLS session variable set
+  inside `seedTenantRows`' transaction) used by `seedTenantRows` /
+  `refreshHeadcount`.
 - **INV-2** — no tenant is ever persisted without a working Company Admin
   login (rollback on seed failure).
 - **INV-3** — `subdomain` is immutable after creation in V1 (changing it

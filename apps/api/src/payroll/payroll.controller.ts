@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   ParseEnumPipe,
   ParseUUIDPipe,
@@ -9,8 +10,13 @@ import {
   Post,
   Put,
   Query,
+  Res,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { IndianState, TaxRegime } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../common/guards/tenant.guard';
@@ -21,6 +27,8 @@ import { RequiresModule } from '../common/decorators/requires-module.decorator';
 import { AuthenticatedUser, CurrentUser } from '../common/decorators/current-user.decorator';
 import { PayrollConfigService } from './payroll-config.service';
 import { SalaryStructureService } from './salary-structure.service';
+import { SalaryImportService } from './salary-import.service';
+import { MAX_IMPORT_FILE_BYTES, NDJSON, streamImport } from '../common/bulk-import';
 import { PayrollRunService } from './payroll-run.service';
 import { TdsService } from './tds.service';
 import { FullAndFinalService } from './full-and-final.service';
@@ -48,11 +56,36 @@ import {
 export class PayrollController {
   constructor(
     private readonly structures: SalaryStructureService,
+    private readonly salaryImport: SalaryImportService,
     private readonly config: PayrollConfigService,
     private readonly runs: PayrollRunService,
     private readonly tds: TdsService,
     private readonly fnf: FullAndFinalService,
   ) {}
+
+  /**
+   * Bulk salary import (CSV or XLSX), one standard-template structure per
+   * row. `?dryRun=true` validates and previews without writing; a commit
+   * with `Accept: application/x-ndjson` streams progress (`streamImport`).
+   * Declared before `structures/:employeeId` so the literal path wins.
+   */
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  @Post('structures/bulk-import')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_IMPORT_FILE_BYTES } }))
+  async importStructures(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Query('dryRun') dryRun: string | undefined,
+    @Headers('accept') accept: string | undefined,
+    @CurrentUser() user: AuthenticatedUser,
+    @Res() res: Response,
+  ) {
+    if (dryRun !== 'true' && accept?.includes(NDJSON)) {
+      return streamImport(res, (onProgress) =>
+        this.salaryImport.import(file?.buffer, user, false, onProgress),
+      );
+    }
+    res.json(await this.salaryImport.import(file?.buffer, user, dryRun === 'true'));
+  }
 
   // Row scoping (HR/Admin: anyone; Employee: own only) lives in the service.
   @Get('structures/:employeeId')
