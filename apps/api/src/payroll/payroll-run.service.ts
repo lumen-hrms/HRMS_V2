@@ -345,7 +345,7 @@ export class PayrollRunService {
     ]);
 
     const holidays = await this.tenantPrisma.client.holiday.findMany({
-      where: { date: { gte: start, lt: end } },
+      where: { date: { gte: start, lt: end }, isOptional: false },
       select: { date: true },
     });
     const holidayDates = new Set(holidays.map((h) => h.date.toISOString().slice(0, 10)));
@@ -528,7 +528,7 @@ export class PayrollRunService {
         this.attendance.getApprovedOvertimeBatch(run.period),
         this.tenantPrisma.client.professionalTaxSlab.findMany({ orderBy: { grossFrom: 'asc' } }),
         this.tenantPrisma.client.holiday.findMany({
-          where: { date: { gte: start, lt: end } },
+          where: { date: { gte: start, lt: end }, isOptional: false },
           select: { date: true },
         }),
       ]);

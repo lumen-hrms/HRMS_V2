@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -20,10 +21,13 @@ import { EntitlementGuard } from '../common/guards/entitlement.guard';
 import { RequiresModule } from '../common/decorators/requires-module.decorator';
 import { CurrentUser, AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import { LeaveService } from './leave.service';
+import { LeavePolicyRecalcService } from './leave-policy-recalc.service';
+import { MAX_IMPORT_FILE_BYTES } from '../common/bulk-import';
 import {
   ApplyLeaveDto,
   BalanceAdjustmentDto,
   CreateHolidayDto,
+  RecalculatePolicyDto,
   CreateLeaveTypeDto,
   DecideLeaveDto,
   UpdateHolidayDto,
@@ -35,7 +39,10 @@ import {
 @RequiresModule('LEAVE')
 @Controller('leave')
 export class LeaveController {
-  constructor(private readonly service: LeaveService) {}
+  constructor(
+    private readonly service: LeaveService,
+    private readonly recalc: LeavePolicyRecalcService,
+  ) {}
 
   @Get('types')
   listTypes(@Query('includeInactive') includeInactive?: string) {
@@ -60,9 +67,24 @@ export class LeaveController {
     return this.service.initializeYearlyBalances(id, parseInt(year, 10));
   }
 
+  /** `?year=` is a leave year (defaults to the current one); `?from=&to=` a date range. */
   @Get('holidays')
-  listHolidays(@Query('year') year: string) {
-    return this.service.listHolidays(parseInt(year, 10) || new Date().getFullYear());
+  listHolidays(
+    @Query('year') year?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.service.listHolidays(parseInt(year ?? '', 10) || undefined, { from, to });
+  }
+
+  @Post('holidays/import')
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_IMPORT_FILE_BYTES } }))
+  importHolidays(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Query('dryRun') dryRun: string | undefined,
+  ) {
+    return this.service.importHolidays(file?.buffer, dryRun !== 'false');
   }
 
   @Post('holidays')
@@ -81,6 +103,19 @@ export class LeaveController {
   @Roles('COMPANY_ADMIN', 'HR_MANAGER')
   deleteHoliday(@Param('id') id: string) {
     return this.service.deleteHoliday(id);
+  }
+
+  /**
+   * Reverse and re-apply this leave year's policy credits, optionally with a
+   * corrected go-live date. `dryRun` (the default) previews without saving.
+   */
+  @Post('policy/recalculate')
+  @Roles('COMPANY_ADMIN')
+  recalculatePolicy(@Body() dto: RecalculatePolicyDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.recalc.recalculate(
+      { goLiveDate: dto.goLiveDate, dryRun: dto.dryRun !== false },
+      user,
+    );
   }
 
   @Get('settings')
@@ -117,11 +152,20 @@ export class LeaveController {
 
   @Get('balances/:employeeId')
   balances(
-    @Param('employeeId') employeeId: string,
+    @Param('employeeId', ParseUUIDPipe) employeeId: string,
     @Query('year') year: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.service.getBalances(employeeId, user, parseInt(year, 10) || undefined);
+  }
+
+  /** Event-based leave (maternity, paternity, marriage…) the employee can request — row-scoped. */
+  @Get('event-leave/:employeeId')
+  eventLeave(
+    @Param('employeeId', ParseUUIDPipe) employeeId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.eventLeave(employeeId, user);
   }
 
   @Post('requests')
@@ -142,7 +186,10 @@ export class LeaveController {
   }
 
   @Get('requests/employee/:employeeId')
-  listForEmployee(@Param('employeeId') employeeId: string, @CurrentUser() user: AuthenticatedUser) {
+  listForEmployee(
+    @Param('employeeId', ParseUUIDPipe) employeeId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
     return this.service.listForEmployee(employeeId, user);
   }
 

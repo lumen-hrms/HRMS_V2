@@ -50,6 +50,8 @@ interface BulkImportProps {
   /** Turns a report's `summary` into badges, e.g. `[['success', '12 to create']]`. */
   summarize: (report: ImportReport) => [variant: 'success' | 'warning' | 'default', label: string][];
   onDone: () => void;
+  /** Header for the column showing each row's key (`ImportRowResult.employeeCode`), e.g. "Date". */
+  keyLabel?: string;
 }
 
 function downloadCsv(fileName: string, lines: string[]) {
@@ -181,6 +183,7 @@ export function BulkImport({
   rowNoun,
   summarize,
   onDone,
+  keyLabel = 'Code',
 }: BulkImportProps) {
   const [file, setFile] = React.useState<File | null>(null);
   const [busy, setBusy] = React.useState<'preview' | 'import' | null>(null);
@@ -379,7 +382,7 @@ export function BulkImport({
                 <THead>
                   <TR>
                     <TH>Row</TH>
-                    <TH>Code</TH>
+                    <TH>{keyLabel}</TH>
                     <TH>Action</TH>
                     <TH>Details</TH>
                   </TR>

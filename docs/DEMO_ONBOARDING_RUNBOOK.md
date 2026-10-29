@@ -121,7 +121,7 @@ section has the most state to set up, so time it.
 | Act | What happens | Persona | Time |
 |---|---|---|---|
 | 1 | Lead → tenant created | P0 Platform Admin | 5 min |
-| 2 | First login + setup wizard | P1 Company Admin | 6 min |
+| 2 | First login + company setup | P1 Company Admin | 10 min |
 | 3 | Departments, **employee import**, persona accounts, org chart | P1 | 8 min |
 | 4 | Payroll setup (statutory + salary structures) | P2 HR Manager | 6 min |
 | 5 | A day in the life (attendance, leave, documents) | P4 → P3 → P2 | 10 min |
@@ -161,34 +161,44 @@ never sees employee data."**
 
 ---
 
-## Act 2 — Company Admin first login & setup wizard (P1)
+## Act 2 — Company Admin first login & company setup (P1)
 
 1. In **P1's window**, open the inbox → the **"set your password"** email → set a password.
 2. Go to the app's `/login`:
    - **Company Subdomain:** `northwind`
    - Email + new password → **Sign in**
-3. The **first-run setup wizard** opens automatically ("Set up your workspace"). It
-   has five steps, and each one can be skipped and resumed later:
-   1. **Work week:** Mon–Sat for a clinic, or Mon–Fri.
-   2. **Default shift:** e.g. 09:00–18:00 with a 15-minute grace period. Late marks and
-      overtime are calculated from this.
-   3. **Holidays:** add 2–3 (Diwali, Christmas). Leave day counts skip holidays.
-   4. **Leave types:** keep the defaults (CL/SL/EL…). Point out the configurable notice
-      days, gender restriction, and approval requirement.
-   5. **Payroll cut-off:** e.g. the 25th. Unresolved regularizations auto-resolve at
-      cut-off.
-4. Land on the **Dashboard**. It's empty but role-aware.
-5. **(Optional)** Open **Leave → Settings** and switch the approval chain to **2-level**
-   (Line Manager → HR) with an escalation timer. This makes Act 5 show both approvers.
+3. **Company setup** opens full screen. Nobody in the workspace can use the app until
+   it's submitted — show this by signing in as anyone else ("Your workspace is being
+   set up"). Point out **Save draft**: you can stop and resume on any device. Each step
+   must be error-free to continue:
+   1. **Company:** legal name, address, state, contact, and the **go-live date**
+      (leave for anyone without an imported balance is prorated from it).
+   2. **Departments:** `Nursing`, `Administration`, `Diagnostics`, `HR`.
+   3. **Your profile:** your own employee record, linked to your login.
+   4. **Work week & shifts:** Mon–Sat for a clinic; 09:00–18:00 with a 15-minute grace.
+   5. **Attendance rules:** regularization window/cap; payroll cut-off the 25th.
+   6. **Holidays:** upload `northwind-holidays.csv` (`date, name, type`), mark Holi as
+      OPTIONAL. Show that an ambiguous date like `03/04/2027` is rejected.
+   7. **Leave policy:** keep the suggested CL/SL/EL/RH; leave year starts April;
+      2-level approval. RH (Restricted Holiday) is how employees take optional holidays.
+   8. **Import employees:** upload `northwind-employees.xlsx`; show a bad row blocking
+      Next until it's fixed (the check is strict here, unlike the later bulk import).
+   9. **Opening balances:** upload `northwind-opening-balances.csv` — the balances from
+      their previous HRMS. Everyone else gets prorated policy defaults.
+   10. **Review & submit:** every warning listed; submit applies it all in one go.
+4. Land on the **Dashboard** — note the **Set up payroll** card (payroll is not part of
+   setup; set it up when ready).
 
 ---
 
 ## Act 3 — Employee data import (P1)
 
-**Message: "Bring your existing staff list in one upload; bad rows don't block good ones."**
+**Message: "After setup, keep adding staff in bulk; bad rows don't block good ones."** (Skip
+the employee file in Act 2 step 8 if you want to show this flow instead.)
 
 ### 3.1 Departments
-**Departments** → create `Nursing`, `Administration`, `Diagnostics`, `HR`.
+Already created in company setup (Act 2). Open **Departments** to show them; add one
+more (e.g. `Pharmacy`) to show they stay editable.
 
 ### 3.2 Bulk import
 1. **Employees → Import** ("Bulk import employees").

@@ -187,9 +187,17 @@ running live:** the line-manager leave-visibility placeholder is a real
 `reportingManagerId` check, holiday-aware working-day counts, request
 attachments, a tenant-configurable 1-or-2-level approval chain with
 escalation timers (BullMQ `leave` queue / Redis — first use of BullMQ in
-this repo), a monthly/quarterly accrual job (proration-aware for mid-year
-joiners), and every endpoint (team balances, balance adjustments, ledger,
-settings). Every cell of the frontend's role×tab matrix is wired to
+this repo), one entitlement engine (`leave/leave-entitlement.ts` +
+`LeaveEntitlementService` — prorated annual grants, monthly/quarterly
+credits, clipped to joining date and the tenant's go-live date, opening
+balances, year-end carry-forward; ledger-idempotent; driven by the daily
+job, new hires, company setup and "Apply now"), optional holidays as
+working days taken via a Restricted Holiday leave type
+(`LeaveType.isRestrictedHoliday`), holiday CSV/XLSX import, event-based
+leave (`LeaveType.grantMode = ON_EVENT` — maternity incl. the statutory edge
+cases, paternity, marriage: per-event allowance, limits, start window,
+service check, proof, never LOP), and every
+endpoint (team balances, balance adjustments, ledger, settings). Every cell of the frontend's role×tab matrix is wired to
 `apps/web/src/lib/leave`, whose `client.ts` defaults `USE_MOCK` to **off**
 (`VITE_LEAVE_MOCK === 'true'` forces the fixture store — same inverted-default
 pattern as `access/client.ts`; `LeaveService` maps every response into the
@@ -238,9 +246,17 @@ enforced, not just stored: `EntitlementGuard` + `@RequiresModule`/
 wired onto Leave and Attendance. Layer 2 (tenant business config) has both
 its engine wiring (`attendance.service.ts` reads the tenant's `Shift` +
 `tenant_settings` instead of hardcoded constants) and its UI (a Settings
-tab for shifts + attendance/general config, plus a skippable/resumable
-first-run setup wizard for a Company Admin's first login). See
-`docs/TENANT_CONFIGURATION.md`.
+tab for shifts + attendance/general config). **Company setup is
+mandatory** (`apps/api/src/setup`, `apps/web/src/pages/setup`, replaced the
+old skippable wizard 2026-10-29): a full-screen 10-step first run —
+company profile + go-live date, departments, the admin's own employee
+profile, work week & shifts, attendance rules, holidays (import), leave
+policy, employee file, opening leave balances, review — saved as an
+encrypted draft and submitted strictly in one transaction. Until then
+`TenantGuard` answers 403 `SETUP_INCOMPLETE` on every business route for
+every role (exempt: `/api/setup/*`, `/api/auth/*`, `/api/access/me`), and
+the nightly accrual/finalization jobs skip the tenant. Payroll isn't a
+setup step. See `docs/TENANT_CONFIGURATION.md` "Company setup".
 
 **Documents — done, 100%.** A shared `apps/api/src/documents` module owns
 every user upload — employee profile documents, leave attachments (moved
@@ -267,7 +283,7 @@ delivery (owner's SES setup). See `docs/modules/10_NOTIFICATIONS.md`.
 **Attendance — done, 100%.** Self-service clock-in/out/breaks/calendar/
 stats, shift-aware late/grace/target-hours/overtime logic, a nightly
 finalization job (holiday → weekly-off → punches → genuine absence,
-BullMQ), full regularization approval (window/cap enforcement, approve/
+BullMQ; never marks a day before go-live), full regularization approval (window/cap enforcement, approve/
 reject/bulk-approve, audited, auto-resolved at the tenant's payroll
 cut-off), and manager/HR team views (roster + manual marking) are all live
 and plan-gated. GPS/biometric/selfie-QR capture and `POST

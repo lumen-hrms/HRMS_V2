@@ -125,7 +125,7 @@ export class FullAndFinalService {
         this.attendance.getLopDays(employeeId, period),
         this.leave.getEncashableBalance(employeeId, separationDate),
         this.tenantPrisma.client.holiday.findMany({
-          where: { date: { gte: start, lt: end } },
+          where: { date: { gte: start, lt: end }, isOptional: false },
           select: { date: true },
         }),
       ]);

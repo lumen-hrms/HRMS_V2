@@ -9,11 +9,14 @@ import { LeaveAccrualProcessor } from './leave-accrual.processor';
 import { LEAVE_QUEUE } from './leave.constants';
 import { DocumentsModule } from '../documents/documents.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { LeaveEntitlementModule } from './leave-entitlement.module';
+import { LeavePolicyRecalcService } from './leave-policy-recalc.service';
 
 @Module({
   imports: [
     DocumentsModule,
     NotificationsModule,
+    LeaveEntitlementModule,
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService<AppConfig, true>) => ({
@@ -23,7 +26,12 @@ import { NotificationsModule } from '../notifications/notifications.module';
     BullModule.registerQueue({ name: LEAVE_QUEUE }),
   ],
   controllers: [LeaveController],
-  providers: [LeaveService, LeaveEscalationProcessor, LeaveAccrualProcessor],
+  providers: [
+    LeaveService,
+    LeavePolicyRecalcService,
+    LeaveEscalationProcessor,
+    LeaveAccrualProcessor,
+  ],
   exports: [LeaveService],
 })
 export class LeaveModule {}

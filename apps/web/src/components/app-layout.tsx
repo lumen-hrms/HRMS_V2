@@ -5,6 +5,7 @@ import {
   Users,
   CalendarDays,
   Network,
+  Building,
   Building2,
   Clock,
   Wallet,
@@ -21,7 +22,6 @@ import { useAuth } from '@/context/auth-context';
 import { useTheme } from '@/context/theme-context';
 import { cn } from '@/lib/utils';
 import { ROLE_LABELS, type Role } from '@/lib/roles';
-import { SetupWizard } from '@/components/setup-wizard/setup-wizard';
 // Sidebar is on `bg-card` (theme-driven), so the mark swaps per theme in
 // index.css (`.brand-mark-light` / `.brand-mark-dark`) — same three-state
 // pattern as the token blocks. Both are transparent PNGs.
@@ -69,6 +69,12 @@ const NAV: { to: string; label: string; icon: typeof LayoutDashboard; end?: bool
     roles: ['COMPANY_ADMIN', 'HR_MANAGER', 'AUDITOR'],
   },
   {
+    to: '/company',
+    label: 'Company',
+    icon: Building,
+    roles: ['COMPANY_ADMIN', 'HR_MANAGER', 'AUDITOR'],
+  },
+  {
     to: '/notifications',
     label: 'Email log',
     icon: Mail,
@@ -90,7 +96,6 @@ export function AppLayout() {
 
   return (
     <div className="flex min-h-screen bg-background text-foreground">
-      <SetupWizard />
       <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-card">
         <div className="flex items-center gap-2 px-5 py-5">
           <img src={lumenMarkDark} alt="" className="brand-mark-light h-7 w-7 shrink-0 object-contain" />

@@ -18,12 +18,14 @@ import {
 } from '../crypto/field-encryption.service';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import type { AppRole } from '../common/decorators/roles.decorator';
-import { buildAccessAuditData, ROLE_LABELS } from '../access/access.support';
+import { assignableRoles, buildAccessAuditData, ROLE_LABELS } from '../access/access.support';
 import { AuditService } from '../audit/audit.service';
+import { LeaveEntitlementService } from '../leave/leave-entitlement.service';
 import type {
   CreateDepartmentDto,
   CreateEmployeeDto,
   DeleteDepartmentDto,
+  LinkLoginDto,
   RevealFieldDto,
   TransitionLifecycleDto,
   UpdateDepartmentDto,
@@ -76,6 +78,7 @@ export class EmployeesService {
     private readonly fieldEncryption: FieldEncryptionService,
     @Inject(FIREBASE_AUTH) private readonly firebaseAuth: admin.auth.Auth,
     private readonly audit: AuditService,
+    private readonly entitlement: LeaveEntitlementService,
   ) {}
 
   /**
@@ -270,6 +273,17 @@ export class EmployeesService {
   async create(dto: CreateEmployeeDto, actor?: AuthenticatedUser) {
     const tenantId = this.tenantPrisma.tenantId;
 
+    if (dto.existingUserId && (dto.loginEmail || dto.loginTempPassword)) {
+      throw new BadRequestException(
+        'Either create a new login (loginEmail + loginTempPassword) or link an existing one (existingUserId), not both',
+      );
+    }
+    // Validated before any write, so a rejected link never leaves a
+    // half-created employee behind.
+    const linkedUser = dto.existingUserId
+      ? await this.assertLinkableLogin(dto.existingUserId, actor)
+      : undefined;
+
     // Firebase user creation is a network call to the Admin SDK, not a DB
     // write — do it before the transaction rather than inside it, same
     // pattern as PlatformAdminService.createAdminLogin.
@@ -310,7 +324,7 @@ export class EmployeesService {
       return tx.employee.create({
         data: {
           tenantId,
-          userId: createdUserId,
+          userId: linkedUser?.id ?? createdUserId,
           employeeCode: dto.employeeCode,
           firstName: dto.firstName,
           lastName: dto.lastName,
@@ -353,7 +367,131 @@ export class EmployeesService {
       }
     }
 
+    if (linkedUser && actor) {
+      await this.auditLoginLinked(
+        actor,
+        linkedUser,
+        employee,
+        'Linked when the employee was created.',
+      );
+    }
+
+    await this.applyLeavePolicy([employee.id]);
     return employee;
+  }
+
+  /**
+   * A new hire's leave for the current year (prorated from their joining
+   * date) right away, instead of waiting for tonight's accrual job — which
+   * would credit it anyway, so a failure here only delays it.
+   */
+  private async applyLeavePolicy(employeeIds: string[]) {
+    try {
+      await this.entitlement.applyPolicyDefaults(
+        this.tenantPrisma.client,
+        this.tenantPrisma.tenantId,
+        new Date(),
+        { employeeIds },
+      );
+    } catch (err) {
+      this.logger.error(
+        'Could not apply leave policy to a new employee — the nightly accrual job will',
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
+  }
+
+  /**
+   * Links a login that already exists in this tenant to an employee that has
+   * none — the only way the first Company Admin (created at tenant onboarding
+   * with no employee record) gets self-service Leave/Attendance/Payslips.
+   * Never changes the login's role.
+   */
+  async linkLogin(employeeId: string, dto: LinkLoginDto, actor: AuthenticatedUser) {
+    const employee = await this.tenantPrisma.client.employee.findUnique({
+      where: { id: employeeId },
+      select: {
+        id: true,
+        employeeCode: true,
+        firstName: true,
+        lastName: true,
+        userId: true,
+        lifecycleState: true,
+      },
+    });
+    if (!employee) throw new NotFoundException('Employee not found');
+    if (employee.userId) throw new BadRequestException('This employee already has a login');
+    if (employee.lifecycleState === 'SEPARATED') {
+      throw new BadRequestException('Cannot link a login to a separated employee');
+    }
+    const user = await this.assertLinkableLogin(dto.userId, actor);
+
+    // `userId: null` in the filter closes the race with a concurrent link of
+    // the same employee; the unique index on employees.user_id closes the
+    // race with a concurrent link of the same login.
+    let count: number;
+    try {
+      ({ count } = await this.tenantPrisma.client.employee.updateMany({
+        where: { id: employeeId, userId: null },
+        data: { userId: user.id },
+      }));
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new BadRequestException('That login is already linked to another employee');
+      }
+      throw e;
+    }
+    if (count === 0) throw new BadRequestException('This employee already has a login');
+
+    await this.auditLoginLinked(actor, user, employee, 'Linked to an existing employee record.');
+    return { employeeId, userId: user.id };
+  }
+
+  /**
+   * A linkable login: in this tenant, not already linked, and within the
+   * actor's RULE-2 privilege ceiling (an HR Manager can't attach a Company
+   * Admin's login to an employee record — same ceiling as role assignment).
+   */
+  private async assertLinkableLogin(userId: string, actor: AuthenticatedUser | undefined) {
+    if (!actor) throw new ForbiddenException('Linking a login requires an authenticated actor');
+    const user = await this.tenantPrisma.client.user.findUnique({
+      where: { id: userId },
+      include: { employee: { select: { id: true } } },
+    });
+    // RLS already hides other tenants' rows; the explicit check is defense in
+    // depth, and both cases read as "not found" so nothing leaks.
+    if (!user || user.tenantId !== this.tenantPrisma.tenantId) {
+      throw new NotFoundException('Login not found');
+    }
+    if (user.employee)
+      throw new BadRequestException('That login is already linked to another employee');
+    if (!assignableRoles(actor.role as AppRole).includes(user.role as AppRole)) {
+      throw new ForbiddenException(
+        `Only a Company Admin can link a ${ROLE_LABELS[user.role as AppRole] ?? user.role} login`,
+      );
+    }
+    return user;
+  }
+
+  private async auditLoginLinked(
+    actor: AuthenticatedUser,
+    user: { id: string; email: string },
+    employee: { employeeCode: string; firstName: string; lastName: string },
+    note: string,
+  ) {
+    const data = buildAccessAuditData({
+      tenantId: this.tenantPrisma.tenantId,
+      actorUserId: actor.sub,
+      actorName: actor.email ? humanizeEmail(actor.email) : 'System',
+      actorRole: actor.role,
+      action: 'user.linked',
+      targetUserId: user.id,
+      targetEmail: user.email,
+      before: null,
+      after: `${employee.firstName} ${employee.lastName} (${employee.employeeCode})`,
+      note,
+    });
+    await this.audit.log({ ...data, metadata: data.metadata as Record<string, unknown> });
   }
 
   /**

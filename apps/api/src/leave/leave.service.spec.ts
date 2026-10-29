@@ -1,5 +1,6 @@
 import { ForbiddenException, BadRequestException } from '@nestjs/common';
 import { LeaveService } from './leave.service';
+import { LeaveEntitlementService } from './leave-entitlement.service';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
 
 /** Nested relations `toRequestDto` always reads off a LeaveRequest row —
@@ -120,6 +121,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       const result = await service.apply(
@@ -146,6 +148,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       const result = await service.apply(
@@ -172,6 +175,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       const result = await service.apply(
@@ -210,6 +214,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       const result = await service.getApprovedLopDaysBatch(
@@ -233,6 +238,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       const result = await service.getApprovedLopDaysBatch(
@@ -251,6 +257,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
       await expect(
         service.apply(
@@ -267,6 +274,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
       await expect(
         service.apply(
@@ -301,6 +309,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       await expect(
@@ -335,6 +344,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       await expect(
@@ -373,6 +383,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       await expect(
@@ -410,6 +421,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       const result = await service.apply(
@@ -448,6 +460,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       // A random employee (not the manager) must be rejected.
@@ -490,6 +503,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       // A Line Manager cannot give L2 approval.
@@ -538,6 +552,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       await service.approve('req-1', user({ role: 'COMPANY_ADMIN' }));
@@ -577,6 +592,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       const result = await service.cancel('req-1', user());
@@ -604,6 +620,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       await service.creditCompOff('emp-1', new Date('2026-01-10'), 'Republic Day');
@@ -632,6 +649,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       await service.creditCompOff('emp-1', new Date('2026-01-10'), 'Republic Day');
@@ -662,6 +680,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       await service.creditOvertimeCompOff('emp-1', 0.25, '2026-09');
@@ -682,6 +701,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       await service.creditOvertimeCompOff('emp-1', 0.25, '2026-09');
@@ -713,6 +733,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       await expect(
@@ -738,6 +759,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       await expect(
@@ -764,6 +786,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       await expect(
@@ -788,6 +811,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       const result = await service.getEncashableBalance('emp-1', new Date('2026-06-15'));
@@ -807,6 +831,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       expect(await service.getEncashableBalance('emp-1', new Date('2026-06-15'))).toBe(0);
@@ -831,6 +856,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       // February 2027 is still FY2026 (April 2026 -> March 2027) when fyStartMonth = 4.
@@ -873,6 +899,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       const result = await service.teamBalances(
@@ -897,6 +924,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       await service.teamCalendar(
@@ -943,6 +971,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       const result = await service.apply(
@@ -980,6 +1009,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       const result = await service.apply(
@@ -1016,6 +1046,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         queue,
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       const result = await service.apply(
@@ -1054,6 +1085,7 @@ describe('LeaveService', () => {
         documents,
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
 
       const dto = await service.attach('req-1', pdf, user());
@@ -1079,6 +1111,7 @@ describe('LeaveService', () => {
         documents,
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
       await service.attach('req-1', pdf, user({ role: 'HR_MANAGER', employeeId: 'emp-hr' }));
       expect(documents.upload).toHaveBeenCalled();
@@ -1091,6 +1124,7 @@ describe('LeaveService', () => {
         documents,
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
       await expect(
         service.attach('req-1', pdf, user({ role: 'LINE_MANAGER' })),
@@ -1105,6 +1139,7 @@ describe('LeaveService', () => {
         documents,
         buildFakeQueue(),
         buildFakeNotifications(),
+        new LeaveEntitlementService(),
       );
       await expect(service.attach('req-1', pdf, user())).rejects.toBeInstanceOf(
         BadRequestException,
@@ -1158,6 +1193,7 @@ describe('LeaveService', () => {
         buildFakeDocuments(),
         buildFakeQueue(),
         notifications,
+        new LeaveEntitlementService(),
       );
       return { service, notifications };
     }
@@ -1270,5 +1306,464 @@ describe('LeaveService', () => {
         }),
       );
     });
+  });
+});
+
+describe('LeaveService — holidays, restricted holiday leave, policy', () => {
+  const build = (
+    overrides: Record<string, any> = {},
+    entitlement: any = new LeaveEntitlementService(),
+  ) => {
+    const tenantPrisma = buildFakeTenantPrisma(overrides);
+    const service = new LeaveService(
+      tenantPrisma as any,
+      buildFakeDocuments(),
+      buildFakeQueue(),
+      buildFakeNotifications(),
+      entitlement,
+    );
+    return { service, tenantPrisma };
+  };
+  const aprilSettings = {
+    tenantSettings: {
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        leaveApprovalLevels: 2,
+        weeklyOffDays: [0, 6],
+        allowLopRequests: true,
+        fyStartMonth: 4,
+      }),
+    },
+  };
+
+  it('counts optional holidays as working days when computing leave days', async () => {
+    const { service, tenantPrisma } = build({
+      employee: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'emp-1', reportingManagerId: null }),
+      },
+      leaveBalance: { findUnique: jest.fn().mockResolvedValue({ accrued: 10, used: 0 }) },
+    });
+
+    await service.apply(
+      { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-07' },
+      user(),
+    );
+
+    expect(tenantPrisma.client.holiday.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ isOptional: false }) }),
+    );
+  });
+
+  describe('Restricted Holiday leave', () => {
+    const rhType = {
+      leaveType: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 'lt-rh',
+          name: 'Restricted Holiday',
+          minNoticeDays: 0,
+          genderRestriction: 'ANY',
+          isRestrictedHoliday: true,
+        }),
+      },
+      employee: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'emp-1', reportingManagerId: null }),
+      },
+      leaveBalance: { findUnique: jest.fn().mockResolvedValue({ accrued: 2, used: 0 }) },
+    };
+
+    it('is allowed on an optional holiday', async () => {
+      const { service } = build({
+        ...rhType,
+        holiday: {
+          findMany: jest.fn(async ({ where }: any) =>
+            where.isOptional ? [{ date: new Date('2026-03-04') }] : [],
+          ),
+        },
+      });
+
+      const result = await service.apply(
+        { leaveTypeId: 'lt-rh', startDate: '2026-03-04', endDate: '2026-03-04' },
+        user(),
+      );
+      expect(result.days).toBe(1);
+    });
+
+    it('is refused on an ordinary working day', async () => {
+      const { service, tenantPrisma } = build({ ...rhType });
+
+      await expect(
+        service.apply(
+          { leaveTypeId: 'lt-rh', startDate: '2026-03-05', endDate: '2026-03-05' },
+          user(),
+        ),
+      ).rejects.toThrow(/only be taken on optional holidays/);
+      expect(tenantPrisma.client.leaveRequest.create).not.toHaveBeenCalled();
+    });
+  });
+
+  it('lists holidays by leave year (April–March) unless a date range is given', async () => {
+    const { service, tenantPrisma } = build(aprilSettings);
+
+    await service.listHolidays(2026);
+    expect(tenantPrisma.client.holiday.findMany.mock.calls[0][0].where.date).toEqual({
+      gte: new Date('2026-04-01T00:00:00Z'),
+      lt: new Date('2027-04-01T00:00:00Z'),
+    });
+
+    await service.listHolidays(undefined, { from: '2027-02-01', to: '2027-02-28' });
+    expect(tenantPrisma.client.holiday.findMany.mock.calls[1][0].where.date).toEqual({
+      gte: new Date('2027-02-01'),
+      lt: new Date('2027-03-01'),
+    });
+  });
+
+  describe('initializeYearlyBalances (apply policy now)', () => {
+    it('goes through the entitlement engine for the current leave year and one type', async () => {
+      const entitlement = {
+        applyPolicyDefaults: jest.fn().mockResolvedValue({ balancesCreated: 4, credited: 4 }),
+      };
+      const { service } = build({}, entitlement);
+      const year = new Date().getUTCFullYear(); // fyStartMonth 1 in the default fake
+
+      await expect(service.initializeYearlyBalances('lt-1', year)).resolves.toEqual({
+        initialized: 4,
+        credited: 4,
+      });
+      expect(entitlement.applyPolicyDefaults).toHaveBeenCalledWith(
+        expect.anything(),
+        'tenant-1',
+        expect.any(Date),
+        { leaveTypeIds: ['lt-1'] },
+      );
+    });
+
+    it('refuses any year other than the current leave year', async () => {
+      const entitlement = { applyPolicyDefaults: jest.fn() };
+      const { service } = build({}, entitlement);
+
+      await expect(service.initializeYearlyBalances('lt-1', 2001)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(entitlement.applyPolicyDefaults).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('importHolidays', () => {
+    const csv = (body: string) => Buffer.from(`date,name,type\n${body}`);
+    const withLeaveYear = (extra: Record<string, any> = {}) => {
+      const settings = {
+        tenantSettings: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            weeklyOffDays: [0, 6],
+            fyStartMonth: 1,
+          }),
+        },
+        payrollRun: { findMany: jest.fn().mockResolvedValue([]) },
+        holiday: {
+          findMany: jest
+            .fn()
+            .mockResolvedValue([
+              { date: new Date(`${new Date().getUTCFullYear()}-12-25`), name: 'Christmas' },
+            ]),
+          upsert: jest.fn().mockResolvedValue({}),
+        },
+        ...extra,
+      };
+      return build(settings);
+    };
+    const y = new Date().getUTCFullYear();
+
+    it('previews without writing, marking new vs already-saved rows', async () => {
+      const { service, tenantPrisma } = withLeaveYear();
+
+      const report = await service.importHolidays(
+        csv(
+          `${y}-12-25,Christmas,PUBLIC\n${y}-12-24,Christmas Eve,OPTIONAL\n03/04/${y},Ambiguous,`,
+        ),
+        true,
+      );
+
+      expect(report.results.map((r) => [r.action, r.success])).toEqual([
+        ['update', true],
+        ['create', true],
+        [null, false],
+      ]);
+      expect((tenantPrisma.client.holiday as any).upsert).not.toHaveBeenCalled();
+    });
+
+    it('commits only the valid rows, upserting by date + name', async () => {
+      const { service, tenantPrisma } = withLeaveYear();
+
+      await service.importHolidays(
+        csv(`${y}-12-24,Christmas Eve,OPTIONAL\nnot-a-date,Bad,`),
+        false,
+      );
+
+      expect((tenantPrisma.client.holiday as any).upsert).toHaveBeenCalledTimes(1);
+      expect((tenantPrisma.client.holiday as any).upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            tenantId_date_name: {
+              tenantId: 'tenant-1',
+              date: new Date(`${y}-12-24`),
+              name: 'Christmas Eve',
+            },
+          },
+          create: expect.objectContaining({ isOptional: true }),
+        }),
+      );
+    });
+  });
+});
+
+describe('LeaveService — event-based leave (maternity, paternity, marriage)', () => {
+  const marriageType = {
+    id: 'lt-mrl',
+    name: 'Marriage Leave',
+    minNoticeDays: 0,
+    genderRestriction: 'ANY',
+    grantMode: 'ON_EVENT',
+    daysPerEvent: 7,
+    reducedDaysPerEvent: null,
+    reducedAfterEvents: null,
+    countCalendarDays: false,
+    maxEventsPerEmployment: 1,
+    eventLabel: 'Marriage date',
+    eventWindowDaysBefore: 15,
+    eventWindowDaysAfter: 30,
+    minServiceDays: 0,
+    requiresDocument: false,
+    statutoryMaternity: false,
+  };
+  const build = (overrides: Record<string, any> = {}, documents = buildFakeDocuments()) => {
+    const tenantPrisma = buildFakeTenantPrisma({
+      leaveType: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue(marriageType),
+        findMany: jest.fn().mockResolvedValue([marriageType]),
+        create: jest.fn((args: any) => args.data),
+      },
+      employee: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 'emp-1',
+          reportingManagerId: null,
+          gender: 'Female',
+          dateOfJoining: new Date('2020-01-01'),
+          esicNumber: null,
+        }),
+      },
+      // No balance at all — event leave mustn't need one.
+      leaveBalance: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+        upsert: jest.fn().mockResolvedValue({ accrued: 7, used: 7 }),
+      },
+      ...overrides,
+    });
+    const service = new LeaveService(
+      tenantPrisma as any,
+      documents,
+      buildFakeQueue(),
+      buildFakeNotifications(),
+      new LeaveEntitlementService(),
+    );
+    return { service, tenantPrisma };
+  };
+
+  it('applies with the event date, never as LOP, with no balance needed', async () => {
+    const { service, tenantPrisma } = build();
+
+    await service.apply(
+      {
+        leaveTypeId: 'lt-mrl',
+        startDate: '2026-12-07',
+        endDate: '2026-12-15',
+        eventDate: '2026-12-10',
+      },
+      user(),
+    );
+
+    expect(tenantPrisma.client.leaveRequest.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ days: 7, isLop: false, eventDate: new Date('2026-12-10') }),
+      }),
+    );
+  });
+
+  it('refuses a second marriage leave — once per employment', async () => {
+    const { service, tenantPrisma } = build();
+    tenantPrisma.client.leaveRequest.findMany.mockResolvedValue([
+      { eventDate: new Date('2024-02-14'), days: 7 },
+    ]);
+
+    await expect(
+      service.apply(
+        {
+          leaveTypeId: 'lt-mrl',
+          startDate: '2026-12-07',
+          endDate: '2026-12-08',
+          eventDate: '2026-12-10',
+        },
+        user(),
+      ),
+    ).rejects.toThrow(/once during your employment/);
+    expect(tenantPrisma.client.leaveRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses without the event date', async () => {
+    const { service } = build();
+    await expect(
+      service.apply(
+        { leaveTypeId: 'lt-mrl', startDate: '2026-12-07', endDate: '2026-12-08' },
+        user(),
+      ),
+    ).rejects.toThrow(/marriage date/);
+  });
+
+  it('counts calendar days for a maternity-type leave', async () => {
+    const { service, tenantPrisma } = build({
+      leaveType: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          ...marriageType,
+          name: 'Maternity Leave',
+          genderRestriction: 'FEMALE',
+          daysPerEvent: 182,
+          countCalendarDays: true,
+          maxEventsPerEmployment: null,
+          eventWindowDaysBefore: 56,
+        }),
+      },
+    });
+
+    await service.apply(
+      {
+        leaveTypeId: 'lt-ml',
+        startDate: '2026-12-01',
+        endDate: '2026-12-14',
+        eventDate: '2026-12-10',
+      },
+      user(),
+    );
+
+    expect(tenantPrisma.client.leaveRequest.create.mock.calls[0][0].data.days).toBe(14);
+  });
+
+  describe('final approval and cancel', () => {
+    const pendingL2 = {
+      id: 'req-1',
+      status: 'PENDING_L2',
+      employeeId: 'emp-1',
+      leaveTypeId: 'lt-mrl',
+      days: 7,
+      isLop: false,
+      eventDate: new Date('2026-12-10'),
+      startDate: new Date('2026-12-07'),
+      endDate: new Date('2026-12-15'),
+      employee: { reportingManagerId: null },
+    };
+    const requestFake = (row: Record<string, unknown>) => ({
+      leaveRequest: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue(row),
+        update: jest.fn((args: any) => ({
+          id: 'req-1',
+          ...FAKE_REQUEST_SCALARS,
+          ...args.data,
+          ...FAKE_REQUEST_RELS,
+        })),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    });
+
+    it('grants the event days, then records them as used', async () => {
+      const { service, tenantPrisma } = build(requestFake(pendingL2));
+
+      await service.approve('req-1', user({ role: 'HR_MANAGER', employeeId: 'emp-hr' }));
+
+      const sources = tenantPrisma.client.leaveLedgerEntry.create.mock.calls.map(
+        (c: any) => c[0].data.source,
+      );
+      expect(sources).toEqual(['EVENT_GRANT', 'REQUEST_APPROVED']);
+    });
+
+    it('refuses final approval while a required document is missing', async () => {
+      const { service, tenantPrisma } = build({
+        ...requestFake(pendingL2),
+        leaveType: {
+          findUniqueOrThrow: jest
+            .fn()
+            .mockResolvedValue({ ...marriageType, requiresDocument: true }),
+        },
+      });
+
+      await expect(
+        service.approve('req-1', user({ role: 'HR_MANAGER', employeeId: 'emp-hr' })),
+      ).rejects.toThrow(/needs a supporting document/);
+      expect(tenantPrisma.client.leaveLedgerEntry.create).not.toHaveBeenCalled();
+    });
+
+    it('takes the grant back when an approved request is cancelled', async () => {
+      const { service, tenantPrisma } = build(requestFake({ ...pendingL2, status: 'APPROVED' }));
+
+      await service.cancel('req-1', user({ role: 'HR_MANAGER', employeeId: 'emp-hr' }));
+
+      const entries = tenantPrisma.client.leaveLedgerEntry.create.mock.calls.map((c: any) => [
+        c[0].data.source,
+        c[0].data.delta,
+      ]);
+      expect(entries).toEqual([
+        ['REQUEST_CANCELLED', 7],
+        ['EVENT_GRANT', -7],
+      ]);
+    });
+  });
+
+  it('lists what an employee can still take, hiding other-gender types', async () => {
+    const paternity = {
+      ...marriageType,
+      id: 'lt-pl',
+      name: 'Paternity Leave',
+      genderRestriction: 'MALE',
+      maxEventsPerEmployment: 2,
+    };
+    const { service, tenantPrisma } = build({
+      leaveType: { findMany: jest.fn().mockResolvedValue([marriageType, paternity]) },
+    });
+    tenantPrisma.client.leaveRequest.findMany.mockResolvedValue([
+      { leaveTypeId: 'lt-mrl', eventDate: new Date('2024-02-14') },
+    ]);
+
+    const result = await service.eventLeave('emp-1', user());
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        leaveType: expect.objectContaining({ id: 'lt-mrl' }),
+        eventsUsed: 1,
+        nextAllowanceDays: 0,
+      }),
+    ]);
+  });
+
+  it('keeps event-based types out of the balances list', async () => {
+    const { service, tenantPrisma } = build();
+
+    await service.getBalances('emp-1', user(), 2026);
+
+    expect(tenantPrisma.client.leaveBalance.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ leaveType: { grantMode: 'ACCRUED' } }),
+      }),
+    );
+  });
+
+  it('rejects an event-based type with no days or no event label', async () => {
+    const { service, tenantPrisma } = build();
+    expect(() =>
+      service.createType({
+        name: 'Bad',
+        code: 'BAD',
+        annualQuota: 0,
+        grantMode: 'ON_EVENT',
+        daysPerEvent: 0,
+      }),
+    ).toThrow(BadRequestException);
+    expect(tenantPrisma.client.leaveType.create).not.toHaveBeenCalled();
   });
 });

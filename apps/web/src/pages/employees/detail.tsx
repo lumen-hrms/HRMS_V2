@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Upload, Download, ArrowRightLeft, Eye, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Upload, Download, ArrowRightLeft, Eye, KeyRound, Pencil, Plus, Trash2 } from 'lucide-react';
 import { api, getAccessToken, getTenantSubdomain, isApiError } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -15,6 +15,8 @@ import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/context/auth-context';
 import { ScanStatusBadge } from '@/components/documents';
 import { UPLOAD_ACCEPT, uploadProblem, useOpenDocument, type ScanStatus } from '@/lib/documents';
+import { ROLE_LABELS } from '@/lib/roles';
+import { useLinkableLogins } from '@/pages/employees/linkable-logins';
 
 const DOCUMENT_CATEGORY_LABEL: Record<string, string> = {
   OFFER_LETTER: 'Offer letter',
@@ -137,13 +139,14 @@ const HR_ADMIN = ['COMPANY_ADMIN', 'HR_MANAGER'];
 
 export function EmployeeDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const [employee, setEmployee] = React.useState<EmployeeDetail | null>(null);
   const [docs, setDocs] = React.useState<Doc[]>([]);
   const [contacts, setContacts] = React.useState<EmergencyContact[]>([]);
   const [uploading, setUploading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [statusDialogOpen, setStatusDialogOpen] = React.useState(false);
+  const [linkDialogOpen, setLinkDialogOpen] = React.useState(false);
   const [profileDialogOpen, setProfileDialogOpen] = React.useState(false);
   const [sensitiveDialogOpen, setSensitiveDialogOpen] = React.useState(false);
   const [contactDialog, setContactDialog] = React.useState<EmergencyContact | 'new' | null>(null);
@@ -270,9 +273,16 @@ export function EmployeeDetailPage() {
           </div>
         </div>
         {canManage && (
-          <Button size="sm" variant="outline" onClick={() => setStatusDialogOpen(true)}>
-            <ArrowRightLeft className="h-3.5 w-3.5" /> Change status
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {!employee.userId && employee.lifecycleState !== 'SEPARATED' && (
+              <Button size="sm" variant="outline" onClick={() => setLinkDialogOpen(true)}>
+                <KeyRound className="h-3.5 w-3.5" /> Link login
+              </Button>
+            )}
+            <Button size="sm" variant="outline" onClick={() => setStatusDialogOpen(true)}>
+              <ArrowRightLeft className="h-3.5 w-3.5" /> Change status
+            </Button>
+          </div>
         )}
       </div>
 
@@ -558,6 +568,20 @@ export function EmployeeDetailPage() {
           toast({ title: 'Status updated', description: `Now ${STATE_LABEL[newState] ?? newState}` });
         }}
       />
+
+      {linkDialogOpen && (
+        <LinkLoginDialog
+          employee={employee}
+          onOpenChange={setLinkDialogOpen}
+          onLinked={async (userId) => {
+            setLinkDialogOpen(false);
+            // Linking your own login changes your employeeId.
+            if (userId === user?.sub) await refreshUser();
+            load();
+            toast({ title: 'Login linked' });
+          }}
+        />
+      )}
 
       {profileDialogOpen && (
         <ProfileFieldsDialog
@@ -1227,6 +1251,82 @@ function LifecycleDialog({
             </div>
           </div>
         )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function LinkLoginDialog({
+  employee,
+  onOpenChange,
+  onLinked,
+}: {
+  employee: EmployeeDetail;
+  onOpenChange: (open: boolean) => void;
+  onLinked: (userId: string) => void;
+}) {
+  const { user } = useAuth();
+  const logins = useLinkableLogins();
+  const [userId, setUserId] = React.useState('');
+  const [submitting, setSubmitting] = React.useState(false);
+  const [formError, setFormError] = React.useState<string | null>(null);
+
+  async function submit() {
+    if (!userId) {
+      setFormError('Choose a login to link.');
+      return;
+    }
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      await api.patch(`/employees/${employee.id}/login`, { userId });
+      onLinked(userId);
+    } catch (err) {
+      setFormError(isApiError(err) ? err.message : 'Could not link the login — try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader
+          title="Link an existing login"
+          description={`${employee.firstName} ${employee.lastName} · ${employee.employeeCode}`}
+          onClose={() => onOpenChange(false)}
+        />
+        <div className="flex flex-col gap-4">
+          <Field
+            label="Login"
+            required
+            hint="Logins in this workspace without an employee record. The login keeps its current role."
+          >
+            <Select value={userId} onChange={(e) => setUserId(e.target.value)}>
+              <option value="">{logins === null ? 'Loading…' : 'Select a login'}</option>
+              {logins?.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.email} · {ROLE_LABELS[u.role]}
+                  {u.id === user?.sub ? ' (you)' : ''}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          {logins?.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              Every login in this workspace already has an employee record.
+            </p>
+          )}
+          {formError && <p className="text-sm text-destructive">{formError}</p>}
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+              Cancel
+            </Button>
+            <Button onClick={submit} disabled={submitting || !userId}>
+              {submitting ? 'Linking…' : 'Link login'}
+            </Button>
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
   );

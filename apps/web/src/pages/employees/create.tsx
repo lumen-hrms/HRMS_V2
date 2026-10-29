@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
-import { isApiError } from '@/context/auth-context';
+import { isApiError, useAuth } from '@/context/auth-context';
+import { ROLE_LABELS } from '@/lib/roles';
+import { useLinkableLogins } from '@/pages/employees/linkable-logins';
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,8 +18,11 @@ interface EmployeeOption {
   lastName: string;
 }
 
+type LoginMode = 'none' | 'new' | 'link';
+
 export function EmployeeCreatePage() {
   const navigate = useNavigate();
+  const { user, refreshUser } = useAuth();
   const [departments, setDepartments] = React.useState<Department[]>([]);
   const [managers, setManagers] = React.useState<EmployeeOption[]>([]);
   const [form, setForm] = React.useState({
@@ -30,7 +35,10 @@ export function EmployeeCreatePage() {
     loginEmail: '',
     loginTempPassword: '',
     loginRole: 'EMPLOYEE',
+    existingUserId: '',
   });
+  const [loginMode, setLoginMode] = React.useState<LoginMode>('none');
+  const linkableLogins = useLinkableLogins();
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
 
@@ -48,11 +56,19 @@ export function EmployeeCreatePage() {
     setError(null);
     setBusy(true);
     try {
-      const payload: Record<string, string> = { ...form };
+      const { loginEmail, loginTempPassword, loginRole, existingUserId, ...rest } = form;
+      const payload: Record<string, string> = {
+        ...rest,
+        ...(loginMode === 'new' ? { loginEmail, loginTempPassword, loginRole } : {}),
+        ...(loginMode === 'link' ? { existingUserId } : {}),
+      };
       Object.keys(payload).forEach((k) => {
         if (!payload[k]) delete payload[k];
       });
       const employee = await api.post<{ id: string }>('/employees', payload);
+      // Linking your own login changes your employeeId — pick it up now so
+      // Leave/Attendance self-service work without signing in again.
+      if (loginMode === 'link' && existingUserId === user?.sub) await refreshUser();
       navigate(`/employees/${employee.id}`);
     } catch (err) {
       setError(isApiError(err) ? err.message : 'Failed to create employee');
@@ -111,35 +127,85 @@ export function EmployeeCreatePage() {
             </div>
 
             <hr className="my-1 border-border" />
-            <p className="text-xs font-medium text-muted-foreground">
-              Optional: create a login for this employee
-            </p>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Login email" type="email" value={form.loginEmail} onChange={(v) => set('loginEmail', v)} />
-              <Field
-                label="Temp password"
-                type="text"
-                value={form.loginTempPassword}
-                onChange={(v) => set('loginTempPassword', v)}
-              />
-            </div>
             <div className="flex flex-col gap-1.5">
-              <Label>Role</Label>
+              <Label>Login</Label>
               <select
                 className="h-9 rounded-md border border-input bg-card px-2 text-sm"
-                value={form.loginRole}
-                onChange={(e) => set('loginRole', e.target.value)}
+                value={loginMode}
+                onChange={(e) => setLoginMode(e.target.value as LoginMode)}
               >
-                {['EMPLOYEE', 'LINE_MANAGER', 'HR_MANAGER', 'COMPANY_ADMIN', 'AUDITOR'].map((r) => (
-                  <option key={r} value={r}>
-                    {r.replace('_', ' ')}
-                  </option>
-                ))}
+                <option value="none">No login for now</option>
+                <option value="new">Create a new login</option>
+                <option value="link">Link an existing login</option>
               </select>
             </div>
 
+            {loginMode === 'new' && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Login email" type="email" value={form.loginEmail} onChange={(v) => set('loginEmail', v)} required />
+                  <Field
+                    label="Temp password"
+                    type="text"
+                    value={form.loginTempPassword}
+                    onChange={(v) => set('loginTempPassword', v)}
+                    required
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label>Role</Label>
+                  <select
+                    className="h-9 rounded-md border border-input bg-card px-2 text-sm"
+                    value={form.loginRole}
+                    onChange={(e) => set('loginRole', e.target.value)}
+                  >
+                    {['EMPLOYEE', 'LINE_MANAGER', 'HR_MANAGER', 'COMPANY_ADMIN', 'AUDITOR'].map((r) => (
+                      <option key={r} value={r}>
+                        {r.replace('_', ' ')}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
+
+            {loginMode === 'link' &&
+              (linkableLogins?.length === 0 ? (
+                <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+                  Every login in this workspace is already linked to an employee — including yours, if company
+                  setup created your profile. To give this person a login, choose <strong>Create a new login</strong>{' '}
+                  instead.
+                </p>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  <Label>Existing login</Label>
+                  <select
+                    className="h-9 rounded-md border border-input bg-card px-2 text-sm"
+                    value={form.existingUserId}
+                    onChange={(e) => set('existingUserId', e.target.value)}
+                    disabled={linkableLogins === null}
+                    required
+                  >
+                    <option value="">{linkableLogins === null ? 'Loading…' : 'Select a login'}</option>
+                    {linkableLogins?.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.email} · {ROLE_LABELS[u.role]}
+                        {u.id === user?.sub ? ' (you)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    Logins without an employee record. The login keeps its current role.
+                  </p>
+                </div>
+              ))}
+
             {error && <p className="text-sm text-destructive">{error}</p>}
-            <Button type="submit" disabled={busy} className="mt-2 self-start">
+            <Button
+              type="submit"
+              disabled={busy || (loginMode === 'link' && linkableLogins?.length === 0)}
+              className="mt-2 self-start"
+            >
               {busy ? 'Saving…' : 'Create employee'}
             </Button>
           </form>

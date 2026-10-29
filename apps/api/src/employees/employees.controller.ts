@@ -5,6 +5,7 @@ import {
   Get,
   Headers,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -29,6 +30,7 @@ import {
   CreateDepartmentDto,
   CreateEmployeeDto,
   DeleteDepartmentDto,
+  LinkLoginDto,
   RevealFieldDto,
   TransitionLifecycleDto,
   UpdateDepartmentDto,
@@ -83,6 +85,16 @@ export class EmployeesController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.service.update(id, dto, user);
+  }
+
+  @Patch(':id/login')
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  linkLogin(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: LinkLoginDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.linkLogin(id, dto, user);
   }
 
   @Patch(':id/lifecycle')

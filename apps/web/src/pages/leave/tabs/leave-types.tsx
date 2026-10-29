@@ -14,6 +14,7 @@ import { useToast } from '@/components/ui/toast';
 import { leaveApi } from '@/lib/leave/client';
 import { MOCK_CURRENT_YEAR } from '@/lib/leave/fixtures';
 import { ACCRUAL_LABELS, type AccrualFrequency, type LeaveType } from '@/lib/leave/types';
+import { EVENT_PRESETS, describeEventType } from '@/lib/leave/event-presets';
 
 const ACCRUAL_PALETTE = ['#2b5a8c', '#1a7f5a', '#a8681a', '#7c4fb0', '#0f766e', '#b3261e'];
 
@@ -82,11 +83,28 @@ export function LeaveTypesTab({ readOnly = false }: { readOnly?: boolean }) {
             <TBody>
               {rows.map((t) => (
                 <TR key={t.id}>
-                  <TD className="font-medium text-foreground">{t.name}</TD>
-                  <TD className="text-right tabular-nums">{t.annualQuota}d</TD>
-                  <TD className="text-right tabular-nums">{t.carryForwardCap}d</TD>
+                  <TD className="font-medium text-foreground">
+                    {t.name}
+                    {t.genderRestriction !== 'ANY' && (
+                      <span className="ml-1.5 text-xs text-muted-foreground">
+                        · {t.genderRestriction === 'FEMALE' ? 'women' : 'men'} only
+                      </span>
+                    )}
+                  </TD>
+                  {t.grantMode === 'ON_EVENT' ? (
+                    <TD colSpan={2} className="text-right text-xs text-muted-foreground">
+                      {describeEventType(t)}
+                    </TD>
+                  ) : (
+                    <>
+                      <TD className="text-right tabular-nums">{t.annualQuota}d</TD>
+                      <TD className="text-right tabular-nums">{t.carryForwardCap}d</TD>
+                    </>
+                  )}
                   <TD>
-                    <Badge variant="outline">{ACCRUAL_LABELS[t.accrualFrequency]}</Badge>
+                    <Badge variant="outline">
+                      {t.grantMode === 'ON_EVENT' ? 'Per event' : ACCRUAL_LABELS[t.accrualFrequency]}
+                    </Badge>
                   </TD>
                   <TD>
                     <Badge variant={t.requiresApproval ? 'default' : 'outline'}>
@@ -99,6 +117,7 @@ export function LeaveTypesTab({ readOnly = false }: { readOnly?: boolean }) {
                         <Button
                           variant="ghost"
                           size="sm"
+                          disabled={t.grantMode === 'ON_EVENT'}
                           onClick={() => setInitializing(t)}
                           aria-label={`Initialize balances for ${t.name}`}
                         >
@@ -154,6 +173,36 @@ export function LeaveTypesTab({ readOnly = false }: { readOnly?: boolean }) {
   );
 }
 
+type TypeForm = Omit<LeaveType, 'id' | 'active' | 'colorToken'> & { grantMode: 'ACCRUED' | 'ON_EVENT' };
+
+const BLANK_FORM: TypeForm = {
+  name: '',
+  code: '',
+  annualQuota: 12,
+  carryForwardCap: 0,
+  accrualFrequency: 'ANNUAL',
+  genderRestriction: 'ANY',
+  minNoticeDays: 0,
+  paid: true,
+  requiresApproval: true,
+  isCompOff: false,
+  isRestrictedHoliday: false,
+  grantMode: 'ACCRUED',
+  daysPerEvent: null,
+  reducedDaysPerEvent: null,
+  reducedAfterEvents: null,
+  countCalendarDays: false,
+  maxEventsPerEmployment: null,
+  eventLabel: '',
+  eventWindowDaysBefore: 0,
+  eventWindowDaysAfter: 0,
+  minServiceDays: 0,
+  requiresDocument: false,
+  statutoryMaternity: false,
+};
+
+const optNum = (v: string) => (v === '' ? null : Number(v));
+
 function TypeFormDialog({
   mode,
   open,
@@ -168,147 +217,186 @@ function TypeFormDialog({
   onSaved: () => void;
 }) {
   const { toast } = useToast();
-  const [form, setForm] = React.useState({
-    name: '',
-    annualQuota: 12,
-    carryForwardCap: 0,
-    accrualFrequency: 'ANNUAL' as AccrualFrequency,
-    requiresApproval: true,
-    isCompOff: false,
-  });
+  const [form, setForm] = React.useState<TypeForm>(BLANK_FORM);
   const [busy, setBusy] = React.useState(false);
+  const set = <K extends keyof TypeForm>(k: K, v: TypeForm[K]) => setForm((f) => ({ ...f, [k]: v }));
 
   React.useEffect(() => {
     if (!open) return;
-    setForm(
-      initial
-        ? {
-            name: initial.name,
-            annualQuota: initial.annualQuota,
-            carryForwardCap: initial.carryForwardCap,
-            accrualFrequency: initial.accrualFrequency,
-            requiresApproval: initial.requiresApproval,
-            isCompOff: initial.isCompOff,
-          }
-        : {
-            name: '',
-            annualQuota: 12,
-            carryForwardCap: 0,
-            accrualFrequency: 'ANNUAL',
-            requiresApproval: true,
-            isCompOff: false,
-          },
-    );
+    setForm(initial ? { ...BLANK_FORM, ...initial, grantMode: initial.grantMode ?? 'ACCRUED' } : BLANK_FORM);
   }, [open, initial]);
+
+  const onEvent = form.grantMode === 'ON_EVENT';
+
+  function applyPreset(code: string) {
+    const preset = EVENT_PRESETS.find((p) => p.code === code);
+    if (!preset) return;
+    const { summary: _summary, ...fields } = preset;
+    void _summary;
+    setForm((f) => ({ ...f, ...fields, grantMode: 'ON_EVENT', annualQuota: 0, carryForwardCap: 0 }));
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
+    const { code: rawCode, ...rest } = form;
+    const payload = {
+      ...rest,
+      eventLabel: onEvent ? form.eventLabel : null,
+      ...(onEvent ? { annualQuota: 0, carryForwardCap: 0 } : {}),
+    };
     try {
       if (mode === 'create') {
         await leaveApi.createType({
-          name: form.name,
-          annualQuota: form.annualQuota,
-          carryForwardCap: form.carryForwardCap,
-          accrualFrequency: form.accrualFrequency,
-          requiresApproval: form.requiresApproval,
-          isCompOff: form.isCompOff,
-          code: deriveCode(form.name),
+          ...payload,
+          code: rawCode.trim() ? rawCode.trim().toUpperCase() : deriveCode(form.name),
           colorToken: ACCRUAL_PALETTE[Math.floor(Math.random() * ACCRUAL_PALETTE.length)],
-          genderRestriction: 'ANY',
-          minNoticeDays: 0,
-          paid: true,
           active: true,
         });
         toast({ title: `Added “${form.name}”` });
       } else if (initial) {
-        await leaveApi.updateType(initial.id, {
-          name: form.name,
-          annualQuota: form.annualQuota,
-          carryForwardCap: form.carryForwardCap,
-          accrualFrequency: form.accrualFrequency,
-          requiresApproval: form.requiresApproval,
-          isCompOff: form.isCompOff,
-        });
+        await leaveApi.updateType(initial.id, { ...payload, code: rawCode.trim().toUpperCase() || initial.code });
         toast({ title: `Updated “${form.name}”` });
       }
       onSaved();
+    } catch (err) {
+      toast({ title: err instanceof Error ? err.message : 'Could not save the leave type', tone: 'error' });
     } finally {
       setBusy(false);
     }
   }
 
+  const check = (k: keyof TypeForm, label: React.ReactNode, hint?: string, disabled?: boolean) => (
+    <label className="flex items-center gap-2 text-sm">
+      <input
+        type="checkbox"
+        className="h-4 w-4 rounded border-input"
+        checked={!!form[k]}
+        disabled={disabled}
+        onChange={(e) => set(k, e.target.checked as TypeForm[typeof k])}
+      />
+      {label}
+      {hint && <span className="text-xs text-muted-foreground">({hint})</span>}
+    </label>
+  );
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader
           title={mode === 'create' ? 'Add leave type' : `Edit ${initial?.name ?? ''}`}
-          description="Quota and carry-forward apply from the next initialized year."
+          description={
+            onEvent
+              ? 'Event-based: no yearly balance. Each request names its event (a delivery, a birth, a marriage) and is granted that event’s days.'
+              : 'Balances follow this policy automatically: the nightly job credits each period as it starts.'
+          }
           onClose={() => onOpenChange(false)}
         />
         <form onSubmit={submit} className="flex flex-col gap-3">
-          <Field label="Name" required>
-            <Input
-              required
-              placeholder="e.g. Earned Leave"
-              value={form.name}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            />
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Annual quota (days)" required>
-              <Input
-                type="number"
-                min={0}
-                step="0.5"
-                required
-                value={form.annualQuota}
-                onChange={(e) => setForm((f) => ({ ...f, annualQuota: Number(e.target.value) }))}
-              />
+          {mode === 'create' && (
+            <Field label="Start from a ready-made type" hint="Optional — fills in the rules below; everything stays editable.">
+              <Select value="" onChange={(e) => applyPreset(e.target.value)}>
+                <option value="">Choose…</option>
+                {EVENT_PRESETS.map((p) => (
+                  <option key={p.code} value={p.code}>
+                    {p.name} — {p.summary}
+                  </option>
+                ))}
+              </Select>
             </Field>
-            <Field label="Carry-forward cap (days)">
-              <Input
-                type="number"
-                min={0}
-                step="0.5"
-                value={form.carryForwardCap}
-                onChange={(e) => setForm((f) => ({ ...f, carryForwardCap: Number(e.target.value) }))}
-              />
+          )}
+          <div className="grid grid-cols-3 gap-3">
+            <Field label="Name" required className="col-span-2">
+              <Input required placeholder="e.g. Earned Leave" value={form.name} onChange={(e) => set('name', e.target.value)} />
+            </Field>
+            <Field label="Code" hint="Blank = from the name">
+              <Input value={form.code} onChange={(e) => set('code', e.target.value.toUpperCase())} />
             </Field>
           </div>
-          <Field label="Accrual frequency">
-            <Select
-              value={form.accrualFrequency}
-              onChange={(e) => setForm((f) => ({ ...f, accrualFrequency: e.target.value as AccrualFrequency }))}
-            >
-              {Object.entries(ACCRUAL_LABELS).map(([k, v]) => (
-                <option key={k} value={k}>
-                  {v}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="h-4 w-4 rounded border-input"
-              checked={form.requiresApproval}
-              onChange={(e) => setForm((f) => ({ ...f, requiresApproval: e.target.checked }))}
-            />
-            Requires approval
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="h-4 w-4 rounded border-input"
-              checked={form.isCompOff}
-              onChange={(e) => setForm((f) => ({ ...f, isCompOff: e.target.checked }))}
-            />
-            This is the comp-off type
-            <span className="text-xs text-muted-foreground">
-              (earned automatically for holiday/weekly-off work, not applied for)
-            </span>
-          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="How it’s given">
+              <Select value={form.grantMode} onChange={(e) => set('grantMode', e.target.value as TypeForm['grantMode'])}>
+                <option value="ACCRUED">Yearly / periodic balance</option>
+                <option value="ON_EVENT">Per life event (maternity, marriage…)</option>
+              </Select>
+            </Field>
+            <Field label="Who can take it">
+              <Select
+                value={form.genderRestriction}
+                onChange={(e) => set('genderRestriction', e.target.value as TypeForm['genderRestriction'])}
+              >
+                <option value="ANY">Everyone</option>
+                <option value="FEMALE">Women only</option>
+                <option value="MALE">Men only</option>
+              </Select>
+            </Field>
+          </div>
+
+          {onEvent ? (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Event the employee enters" required>
+                <Input value={form.eventLabel ?? ''} placeholder="e.g. Marriage date" onChange={(e) => set('eventLabel', e.target.value)} />
+              </Field>
+              <Field label="Days per event" required>
+                <Input type="number" min={0} step="0.5" required value={form.daysPerEvent ?? ''} onChange={(e) => set('daysPerEvent', optNum(e.target.value))} />
+              </Field>
+              <Field label="Can start up to (days before)">
+                <Input type="number" min={0} value={form.eventWindowDaysBefore ?? 0} onChange={(e) => set('eventWindowDaysBefore', Number(e.target.value))} />
+              </Field>
+              <Field label="Must start within (days after)">
+                <Input type="number" min={0} value={form.eventWindowDaysAfter ?? 0} onChange={(e) => set('eventWindowDaysAfter', Number(e.target.value))} />
+              </Field>
+              <Field label="Times per employment" hint="Blank = no limit">
+                <Input type="number" min={1} value={form.maxEventsPerEmployment ?? ''} onChange={(e) => set('maxEventsPerEmployment', optNum(e.target.value))} />
+              </Field>
+              <Field label="Service needed (days in prior 12 months)">
+                <Input type="number" min={0} value={form.minServiceDays ?? 0} onChange={(e) => set('minServiceDays', Number(e.target.value))} />
+              </Field>
+              <Field label="Reduced days" hint="e.g. 84 from the 3rd child">
+                <Input type="number" min={0} value={form.reducedDaysPerEvent ?? ''} onChange={(e) => set('reducedDaysPerEvent', optNum(e.target.value))} />
+              </Field>
+              <Field label="…after this many events">
+                <Input type="number" min={0} value={form.reducedAfterEvents ?? ''} onChange={(e) => set('reducedAfterEvents', optNum(e.target.value))} />
+              </Field>
+              <div className="col-span-2 flex flex-col gap-2">
+                {check('countCalendarDays', 'Count calendar days', 'weekends and holidays included — maternity')}
+                {check('requiresDocument', 'Needs a supporting document before final approval')}
+                {check('statutoryMaternity', 'Statutory maternity-type leave', 'flags ESI-covered employees — ESIC pays the benefit')}
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Annual quota (days)" required>
+                  <Input type="number" min={0} step="0.5" required value={form.annualQuota} onChange={(e) => set('annualQuota', Number(e.target.value))} />
+                </Field>
+                <Field label="Carry-forward cap (days)">
+                  <Input type="number" min={0} step="0.5" value={form.carryForwardCap} onChange={(e) => set('carryForwardCap', Number(e.target.value))} />
+                </Field>
+              </div>
+              <Field label="Accrual frequency">
+                <Select value={form.accrualFrequency} onChange={(e) => set('accrualFrequency', e.target.value as AccrualFrequency)}>
+                  {Object.entries(ACCRUAL_LABELS).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              {check('isCompOff', 'This is the comp-off type', 'earned automatically for holiday/weekly-off work, not applied for', form.isRestrictedHoliday)}
+              {check('isRestrictedHoliday', 'Restricted holiday', 'can only be taken on an optional holiday', form.isCompOff)}
+            </>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Notice (days)">
+              <Input type="number" min={0} value={form.minNoticeDays} onChange={(e) => set('minNoticeDays', Number(e.target.value))} />
+            </Field>
+            <div className="flex flex-col justify-end gap-2 pb-1">
+              {check('paid', 'Paid')}
+              {check('requiresApproval', 'Requires approval')}
+            </div>
+          </div>
           <div className="mt-1 flex justify-end gap-2">
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
@@ -345,9 +433,14 @@ function InitializeYearDialog({
   async function run() {
     setBusy(true);
     try {
-      const { initialized } = await leaveApi.initializeBalances(type!.id, year);
-      toast({ title: `Initialized ${type!.name} for ${year}`, description: `${initialized} employees seeded.` });
+      const { initialized, credited } = await leaveApi.initializeBalances(type!.id, year);
+      toast({
+        title: `Applied ${type!.name} for ${year}`,
+        description: `${credited} credit${credited === 1 ? '' : 's'}, ${initialized} new balance${initialized === 1 ? '' : 's'}.`,
+      });
       onDone();
+    } catch (err) {
+      toast({ title: err instanceof Error ? err.message : 'Could not apply the policy', tone: 'error' });
     } finally {
       setBusy(false);
     }
@@ -357,12 +450,12 @@ function InitializeYearDialog({
     <Dialog open={!!type} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader
-          title={`Initialize ${type.name}`}
-          description="Creates/refreshes every employee's balance row for the chosen year."
+          title={`Apply ${type.name} now`}
+          description="Credits everyone what this policy owes for the current leave year and hasn't been credited yet (prorated for joiners and your go-live date). The nightly job does this anyway — this just doesn't wait. Safe to run twice."
           onClose={() => onOpenChange(false)}
         />
         <div className="flex flex-col gap-3">
-          <Field label="Year" required>
+          <Field label="Leave year" required hint="The current leave year only.">
             <Input
               type="number"
               value={year}
@@ -374,7 +467,7 @@ function InitializeYearDialog({
               Cancel
             </Button>
             <Button onClick={run} disabled={busy}>
-              {busy ? 'Initializing…' : 'Initialize'}
+              {busy ? 'Applying…' : 'Apply now'}
             </Button>
           </div>
         </div>

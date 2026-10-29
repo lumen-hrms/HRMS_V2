@@ -1,4 +1,5 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { EmployeesService } from './employees.service';
 import { AuditService } from '../audit/audit.service';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
@@ -91,14 +92,18 @@ function buildService(
   const fieldEncryption = fakeFieldEncryption();
   const storage = fakeStorage(storageOverrides);
   const audit = new AuditService(tenantPrisma as any);
+  const entitlement = {
+    applyPolicyDefaults: jest.fn().mockResolvedValue({ credited: 0, balancesCreated: 0 }),
+  };
   const service = new EmployeesService(
     tenantPrisma as any,
     storage as any,
     fieldEncryption as any,
     firebaseAuth as any,
     audit,
+    entitlement as any,
   );
-  return { service, tenantPrisma, firebaseAuth, fieldEncryption, storage };
+  return { service, tenantPrisma, firebaseAuth, fieldEncryption, storage, entitlement };
 }
 
 describe('EmployeesService.transitionLifecycle', () => {
@@ -822,5 +827,268 @@ describe('EmployeesService.orgChart', () => {
     expect(roots[0].directReports[0].directReports).toEqual([]);
     expect(roots[0].totalReportCount).toBe(1);
     expect(() => JSON.stringify(roots)).not.toThrow();
+  });
+});
+
+describe('EmployeesService login linking', () => {
+  const unlinkedAdminLogin = {
+    id: 'user-admin',
+    tenantId: 'tenant-1',
+    email: 'founder@test.com',
+    role: 'COMPANY_ADMIN',
+    employee: null,
+  };
+  const newEmployee = { employeeCode: 'LUM-1', firstName: 'Ani', lastName: 'G' };
+  const companyAdmin = actor({
+    sub: 'user-admin',
+    role: 'COMPANY_ADMIN',
+    email: 'founder@test.com',
+    employeeId: null,
+  });
+
+  function setup(login: Record<string, any> | null, employee: Record<string, any> = {}) {
+    const built = buildService(
+      {
+        id: 'emp-1',
+        employeeCode: 'LUM-1',
+        firstName: 'Ani',
+        lastName: 'G',
+        userId: null,
+        lifecycleState: 'PROBATION',
+        ...employee,
+      },
+      { createUser: jest.fn() },
+    );
+    const { client } = built.tenantPrisma;
+    client.user.findUnique.mockResolvedValue(login);
+    client.user.create = jest.fn();
+    client.employee.create = jest.fn((args: any) => ({ id: 'emp-new', ...args.data }));
+    client.employee.updateMany.mockResolvedValue({ count: 1 });
+    return built;
+  }
+
+  describe('create() leave policy', () => {
+    it('applies the leave policy to the new employee', async () => {
+      const { service, entitlement } = setup(null);
+
+      const created = await service.create(newEmployee, companyAdmin);
+
+      expect(entitlement.applyPolicyDefaults).toHaveBeenCalledWith(
+        expect.anything(),
+        'tenant-1',
+        expect.any(Date),
+        { employeeIds: [created.id] },
+      );
+    });
+
+    it('still creates the employee when applying leave policy fails', async () => {
+      const { service, entitlement } = setup(null);
+      entitlement.applyPolicyDefaults.mockRejectedValue(new Error('db hiccup'));
+
+      await expect(service.create(newEmployee, companyAdmin)).resolves.toMatchObject({
+        id: 'emp-new',
+      });
+    });
+  });
+
+  describe('create() with existingUserId', () => {
+    it('creates the employee linked to the existing login, without provisioning a new one', async () => {
+      const { service, tenantPrisma, firebaseAuth } = setup(unlinkedAdminLogin);
+
+      const created = await service.create(
+        { ...newEmployee, existingUserId: 'user-admin' },
+        companyAdmin,
+      );
+
+      expect(created.userId).toBe('user-admin');
+      expect((firebaseAuth as any).createUser).not.toHaveBeenCalled();
+      expect(tenantPrisma.client.user.create).not.toHaveBeenCalled();
+      expect(tenantPrisma.client.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'access.user_linked',
+          targetId: 'user-admin',
+          metadata: expect.objectContaining({
+            targetEmail: 'founder@test.com',
+            after: 'Ani G (LUM-1)',
+          }),
+        }),
+      });
+    });
+
+    it('rejects existingUserId together with a new-login email/password, before writing anything', async () => {
+      const { service, tenantPrisma, firebaseAuth } = setup(unlinkedAdminLogin);
+
+      await expect(
+        service.create(
+          {
+            ...newEmployee,
+            existingUserId: 'user-admin',
+            loginEmail: 'x@test.com',
+            loginTempPassword: 'temp-pass-1',
+          },
+          companyAdmin,
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect((firebaseAuth as any).createUser).not.toHaveBeenCalled();
+      expect(tenantPrisma.client.employee.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a login that is already linked to another employee', async () => {
+      const { service, tenantPrisma } = setup({
+        ...unlinkedAdminLogin,
+        employee: { id: 'emp-other' },
+      });
+
+      await expect(
+        service.create({ ...newEmployee, existingUserId: 'user-admin' }, companyAdmin),
+      ).rejects.toThrow(BadRequestException);
+      expect(tenantPrisma.client.employee.create).not.toHaveBeenCalled();
+    });
+
+    it('treats a login from another tenant as not found', async () => {
+      const { service, tenantPrisma } = setup({ ...unlinkedAdminLogin, tenantId: 'tenant-2' });
+
+      await expect(
+        service.create({ ...newEmployee, existingUserId: 'user-admin' }, companyAdmin),
+      ).rejects.toThrow(NotFoundException);
+      expect(tenantPrisma.client.employee.create).not.toHaveBeenCalled();
+    });
+
+    it('404s an unknown login', async () => {
+      const { service } = setup(null);
+
+      await expect(
+        service.create({ ...newEmployee, existingUserId: 'user-missing' }, companyAdmin),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('does not let an HR Manager link a Company Admin login (RULE-2 ceiling)', async () => {
+      const { service, tenantPrisma } = setup(unlinkedAdminLogin);
+
+      await expect(
+        service.create({ ...newEmployee, existingUserId: 'user-admin' }, actor()),
+      ).rejects.toThrow(ForbiddenException);
+      expect(tenantPrisma.client.employee.create).not.toHaveBeenCalled();
+      expect(tenantPrisma.client.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses to link without an authenticated actor', async () => {
+      const { service } = setup(unlinkedAdminLogin);
+
+      await expect(
+        service.create({ ...newEmployee, existingUserId: 'user-admin' }),
+      ).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('linkLogin()', () => {
+    it('links a Company Admin’s own login to an existing employee and audits it', async () => {
+      const { service, tenantPrisma } = setup(unlinkedAdminLogin);
+
+      const result = await service.linkLogin('emp-1', { userId: 'user-admin' }, companyAdmin);
+
+      expect(result).toEqual({ employeeId: 'emp-1', userId: 'user-admin' });
+      expect(tenantPrisma.client.employee.updateMany).toHaveBeenCalledWith({
+        where: { id: 'emp-1', userId: null },
+        data: { userId: 'user-admin' },
+      });
+      expect(tenantPrisma.client.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ action: 'access.user_linked', actorUserId: 'user-admin' }),
+      });
+    });
+
+    it('lets an HR Manager link an Employee-role login', async () => {
+      const { service, tenantPrisma } = setup({
+        ...unlinkedAdminLogin,
+        id: 'user-emp',
+        role: 'EMPLOYEE',
+      });
+
+      await service.linkLogin('emp-1', { userId: 'user-emp' }, actor());
+
+      expect(tenantPrisma.client.employee.updateMany).toHaveBeenCalled();
+    });
+
+    it('does not let an HR Manager link a Company Admin login', async () => {
+      const { service, tenantPrisma } = setup(unlinkedAdminLogin);
+
+      await expect(service.linkLogin('emp-1', { userId: 'user-admin' }, actor())).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(tenantPrisma.client.employee.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects an employee that already has a login', async () => {
+      const { service, tenantPrisma } = setup(unlinkedAdminLogin, { userId: 'user-x' });
+
+      await expect(
+        service.linkLogin('emp-1', { userId: 'user-admin' }, companyAdmin),
+      ).rejects.toThrow(BadRequestException);
+      expect(tenantPrisma.client.employee.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects a separated employee', async () => {
+      const { service, tenantPrisma } = setup(unlinkedAdminLogin, { lifecycleState: 'SEPARATED' });
+
+      await expect(
+        service.linkLogin('emp-1', { userId: 'user-admin' }, companyAdmin),
+      ).rejects.toThrow(BadRequestException);
+      expect(tenantPrisma.client.employee.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects a login already linked to another employee', async () => {
+      const { service, tenantPrisma } = setup({
+        ...unlinkedAdminLogin,
+        employee: { id: 'emp-other' },
+      });
+
+      await expect(
+        service.linkLogin('emp-1', { userId: 'user-admin' }, companyAdmin),
+      ).rejects.toThrow(BadRequestException);
+      expect(tenantPrisma.client.employee.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('treats a login from another tenant as not found', async () => {
+      const { service, tenantPrisma } = setup({ ...unlinkedAdminLogin, tenantId: 'tenant-2' });
+
+      await expect(
+        service.linkLogin('emp-1', { userId: 'user-admin' }, companyAdmin),
+      ).rejects.toThrow(NotFoundException);
+      expect(tenantPrisma.client.employee.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('404s an unknown employee', async () => {
+      const { service, tenantPrisma } = setup(unlinkedAdminLogin);
+      tenantPrisma.client.employee.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.linkLogin('emp-missing', { userId: 'user-admin' }, companyAdmin),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('loses a race cleanly when the employee was linked concurrently (no audit row)', async () => {
+      const { service, tenantPrisma } = setup(unlinkedAdminLogin);
+      tenantPrisma.client.employee.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.linkLogin('emp-1', { userId: 'user-admin' }, companyAdmin),
+      ).rejects.toThrow(BadRequestException);
+      expect(tenantPrisma.client.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('maps a unique-index violation (login linked concurrently elsewhere) to a 400', async () => {
+      const { service, tenantPrisma } = setup(unlinkedAdminLogin);
+      tenantPrisma.client.employee.updateMany.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+        }),
+      );
+
+      await expect(
+        service.linkLogin('emp-1', { userId: 'user-admin' }, companyAdmin),
+      ).rejects.toThrow(BadRequestException);
+      expect(tenantPrisma.client.auditLog.create).not.toHaveBeenCalled();
+    });
   });
 });

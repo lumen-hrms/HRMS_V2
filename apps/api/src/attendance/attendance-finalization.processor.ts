@@ -84,13 +84,25 @@ export class AttendanceFinalizationProcessor extends WorkerHost implements OnApp
     const client = withTenantContext(this.tenantPrismaRaw, tenantId);
     const dayEnd = new Date(date.getTime() + 24 * 3600 * 1000);
 
+    // A tenant still in company setup has no final work week/holidays yet —
+    // marking people ABSENT against half-done config would be wrong.
+    const setup = await client.tenantSetup.findUnique({
+      where: { tenantId },
+      select: { completedAt: true },
+    });
+    if (!setup?.completedAt) return;
+
     const [holiday, settings, employees, existingRecords, defaultShift] = await Promise.all([
-      client.holiday.findFirst({ where: { date } }),
+      // Optional holidays are working days (opt-in via Restricted Holiday leave).
+      client.holiday.findFirst({ where: { date, isOptional: false } }),
       client.tenantSettings.findUniqueOrThrow({ where: { tenantId } }),
       client.employee.findMany({ select: { id: true, shiftId: true } }),
       client.attendanceRecord.findMany({ where: { date } }),
       client.shift.findFirst({ where: { tenantId, isDefault: true } }),
     ]);
+    // Before go-live the company ran attendance elsewhere — never invent
+    // ABSENT rows for those days (they'd become LOP in the first payroll).
+    if (settings.goLiveDate && date < settings.goLiveDate) return;
     const existingByEmployee = new Map(existingRecords.map((r: any) => [r.employeeId, r]));
     const baseStatus = baseStatusFor(date, holiday, settings.weeklyOffDays);
 

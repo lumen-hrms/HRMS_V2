@@ -309,6 +309,7 @@ function labelForAction(a: AccessAuditEntry['action']): string {
     'user.deactivated': 'Login deactivated',
     'password_reset.sent': 'Password reset sent',
     'user.created': 'Login created',
+    'user.linked': 'Login linked to employee',
   };
   return map[a];
 }

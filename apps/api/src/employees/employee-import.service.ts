@@ -15,6 +15,7 @@ import { assignableRoles, buildAccessAuditData, ROLE_LABELS } from '../access/ac
 import { AuditService, type AuditLogInput } from '../audit/audit.service';
 import { mapWithConcurrency } from '../common/concurrency.util';
 import { AuthEmailService } from '../notifications/auth-email.service';
+import { LeaveEntitlementService } from '../leave/leave-entitlement.service';
 import {
   buildReport,
   IMPORT_CONCURRENCY,
@@ -97,7 +98,7 @@ const LOGIN_ROLES: AppRole[] = [
 ];
 
 /** Plain (non-encrypted) Employee columns a row can set, as written to Prisma. */
-type EmployeeFields = Partial<{
+export type EmployeeFields = Partial<{
   firstName: string;
   lastName: string;
   personalEmail: string;
@@ -126,7 +127,7 @@ type EmployeeFields = Partial<{
   bankAccountType: BankAccountType;
 }>;
 
-interface PlannedRow {
+export interface PlannedRow {
   row: number;
   code: string | null;
   action: 'create' | 'update' | null;
@@ -141,7 +142,7 @@ interface PlannedRow {
   warnings: string[];
 }
 
-interface ExistingEmployee {
+export interface ExistingEmployee {
   id: string;
   employeeCode: string;
   reportingManagerId: string | null;
@@ -172,6 +173,7 @@ export class EmployeeImportService {
     @Inject(FIREBASE_AUTH) private readonly firebaseAuth: admin.auth.Auth,
     private readonly audit: AuditService,
     private readonly authEmails: AuthEmailService,
+    private readonly entitlement: LeaveEntitlementService,
   ) {}
 
   async import(
@@ -181,7 +183,6 @@ export class EmployeeImportService {
     onProgress?: OnImportProgress,
   ): Promise<ImportReport> {
     const sheet = await readSpreadsheet(buffer);
-    const ignoredColumns = sheet.headers.filter((h) => !COLUMN_BY_HEADER.has(h));
 
     const client = this.tenantPrisma.client;
     const [existing, departments, users] = await Promise.all([
@@ -191,28 +192,14 @@ export class EmployeeImportService {
       client.department.findMany({ select: { id: true, name: true } }),
       client.user.findMany({ select: { email: true } }),
     ]);
-    const existingByCode = new Map(existing.map((e) => [e.employeeCode, e]));
     const departmentByName = new Map(departments.map((d) => [d.name.toLowerCase(), d]));
-    const takenLoginEmails = new Set(users.map((u) => u.email.toLowerCase()));
 
-    const planned = sheet.rows.map((r) =>
-      this.parseRow(r, existingByCode, takenLoginEmails, actor.role as AppRole),
-    );
-    this.flagDuplicates(planned);
-    this.flagMissingEncryptionKey(planned);
-    await this.flagFirebaseEmailClashes(planned);
-    this.resolveManagers(planned, existing);
-
-    // Case-insensitive, first spelling wins: "Legal" and "legal" are one department.
-    const newDepartmentsByKey = new Map<string, string>();
-    for (const p of planned) {
-      if (p.errors.length > 0 || !p.departmentName) continue;
-      const key = p.departmentName.toLowerCase();
-      if (!departmentByName.has(key) && !newDepartmentsByKey.has(key)) {
-        newDepartmentsByKey.set(key, p.departmentName);
-      }
-    }
-    const newDepartments = [...newDepartmentsByKey.values()];
+    const { planned, newDepartments, ignoredColumns } = await this.plan(sheet.rows, sheet.headers, {
+      existing,
+      departmentNames: departments.map((d) => d.name),
+      takenLoginEmails: new Set(users.map((u) => u.email.toLowerCase())),
+      actorRole: actor.role as AppRole,
+    });
 
     if (dryRun) {
       const results = planned.map((p) => this.toResult(p, p.errors.length === 0));
@@ -235,6 +222,61 @@ export class EmployeeImportService {
   }
 
   // ---- Validation ----
+
+  /**
+   * Validates every row against `ctx` and returns the plan, writing nothing —
+   * `import()` builds `ctx` from the DB, company setup builds it from the DB
+   * *plus* its draft (departments not created yet, the admin's own profile).
+   * `strictDepartments` turns "department not found, will be created" into a
+   * row error; `reservedCodes` fails a row whose code is already spoken for.
+   */
+  async plan(
+    rows: SheetRow[],
+    headers: string[],
+    ctx: {
+      existing: ExistingEmployee[];
+      departmentNames: string[];
+      takenLoginEmails: Set<string>;
+      actorRole: AppRole;
+      strictDepartments?: boolean;
+      reservedCodes?: Map<string, string>;
+      checkFirebase?: boolean;
+    },
+  ): Promise<{ planned: PlannedRow[]; newDepartments: string[]; ignoredColumns: string[] }> {
+    const ignoredColumns = headers.filter((h) => !COLUMN_BY_HEADER.has(h));
+    const existingByCode = new Map(ctx.existing.map((e) => [e.employeeCode, e]));
+    const knownDepartments = new Set(ctx.departmentNames.map((n) => n.toLowerCase()));
+
+    const planned = rows.map((r) =>
+      this.parseRow(r, existingByCode, ctx.takenLoginEmails, ctx.actorRole),
+    );
+    for (const p of planned) {
+      const reason = p.code ? ctx.reservedCodes?.get(p.code) : undefined;
+      if (reason) p.errors.push(reason);
+      if (
+        ctx.strictDepartments &&
+        p.departmentName &&
+        !knownDepartments.has(p.departmentName.toLowerCase())
+      ) {
+        p.errors.push(`department "${p.departmentName}" isn't in your departments list`);
+      }
+    }
+    this.flagDuplicates(planned);
+    this.flagMissingEncryptionKey(planned);
+    if (ctx.checkFirebase !== false) await this.flagFirebaseEmailClashes(planned);
+    this.resolveManagers(planned, ctx.existing);
+
+    // Case-insensitive, first spelling wins: "Legal" and "legal" are one department.
+    const newDepartmentsByKey = new Map<string, string>();
+    for (const p of planned) {
+      if (p.errors.length > 0 || !p.departmentName) continue;
+      const key = p.departmentName.toLowerCase();
+      if (!knownDepartments.has(key) && !newDepartmentsByKey.has(key)) {
+        newDepartmentsByKey.set(key, p.departmentName);
+      }
+    }
+    return { planned, newDepartments: [...newDepartmentsByKey.values()], ignoredColumns };
+  }
 
   private parseRow(
     sheetRow: SheetRow,
@@ -584,6 +626,22 @@ export class EmployeeImportService {
       onProgress?.({ phase: 'linking', done: ++linked, total: toLink.length });
     });
 
+    // New hires get this year's leave now rather than at tonight's accrual
+    // run (which would credit it anyway — so a failure only delays it).
+    const createdIds = planned
+      .filter((p) => done.has(p) && p.action === 'create')
+      .map((p) => idByCode.get(p.code!)!);
+    try {
+      await this.entitlement.applyPolicyDefaults(client, tenantId, new Date(), {
+        employeeIds: createdIds,
+      });
+    } catch (err) {
+      this.logger.error(
+        'Bulk import: could not apply leave policy to new employees — the nightly accrual job will',
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
+
     // Invites last — only for logins whose employee row actually landed.
     const invites = planned.filter((p) => done.has(p) && p.login);
     let invited = 0;
@@ -782,7 +840,7 @@ export class EmployeeImportService {
     return e?.message ?? 'Unknown error';
   }
 
-  private toResult(p: PlannedRow, success: boolean): ImportRowResult {
+  toResult(p: PlannedRow, success: boolean): ImportRowResult {
     const detail = [
       p.departmentName ? `Dept: ${p.departmentName}` : null,
       p.managerCode ? `Reports to ${p.managerCode}` : null,

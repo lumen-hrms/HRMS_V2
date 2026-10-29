@@ -64,6 +64,67 @@ export class CreateLeaveTypeDto {
   @IsOptional()
   @IsBoolean()
   isCompOff?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isRestrictedHoliday?: boolean;
+
+  // ---- Event-based leave (grantMode ON_EVENT) — see leave/event-leave.ts ----
+
+  @IsOptional()
+  @IsIn(['ACCRUED', 'ON_EVENT'])
+  grantMode?: 'ACCRUED' | 'ON_EVENT';
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  daysPerEvent?: number | null;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  reducedDaysPerEvent?: number | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  reducedAfterEvents?: number | null;
+
+  @IsOptional()
+  @IsBoolean()
+  countCalendarDays?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxEventsPerEmployment?: number | null;
+
+  @IsOptional()
+  @IsString()
+  eventLabel?: string | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  eventWindowDaysBefore?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  eventWindowDaysAfter?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  minServiceDays?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  requiresDocument?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  statutoryMaternity?: boolean;
 }
 
 export class UpdateLeaveTypeDto {
@@ -119,6 +180,67 @@ export class UpdateLeaveTypeDto {
   @IsOptional()
   @IsBoolean()
   isCompOff?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isRestrictedHoliday?: boolean;
+
+  // ---- Event-based leave (grantMode ON_EVENT) — see leave/event-leave.ts ----
+
+  @IsOptional()
+  @IsIn(['ACCRUED', 'ON_EVENT'])
+  grantMode?: 'ACCRUED' | 'ON_EVENT';
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  daysPerEvent?: number | null;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  reducedDaysPerEvent?: number | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  reducedAfterEvents?: number | null;
+
+  @IsOptional()
+  @IsBoolean()
+  countCalendarDays?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxEventsPerEmployment?: number | null;
+
+  @IsOptional()
+  @IsString()
+  eventLabel?: string | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  eventWindowDaysBefore?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  eventWindowDaysAfter?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  minServiceDays?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  requiresDocument?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  statutoryMaternity?: boolean;
 }
 
 export class ApplyLeaveDto {
@@ -138,6 +260,11 @@ export class ApplyLeaveDto {
   @IsOptional()
   @IsString()
   reason?: string;
+
+  // Event-based leave only: the delivery / birth / marriage date.
+  @IsOptional()
+  @IsDateString()
+  eventDate?: string;
 }
 
 export class DecideLeaveDto {
@@ -211,4 +338,16 @@ export class UpdateLeaveSettingsDto {
   @IsInt()
   @Min(1)
   fyStartMonth?: number;
+}
+
+/** `POST /api/leave/policy/recalculate` — see LeavePolicyRecalcService. */
+export class RecalculatePolicyDto {
+  @IsOptional()
+  @IsDateString()
+  goLiveDate?: string;
+
+  /** Default true: preview only, nothing saved. */
+  @IsOptional()
+  @IsBoolean()
+  dryRun?: boolean;
 }

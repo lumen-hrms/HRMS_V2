@@ -15,6 +15,7 @@ import { LeaveModule } from './leave/leave.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { TenantConfigModule } from './tenant-config/tenant-config.module';
+import { SetupModule } from './setup/setup.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AuditModule } from './audit/audit.module';
 import { ContactModule } from './contact/contact.module';
@@ -41,6 +42,7 @@ import { BillingModule } from './billing/billing.module';
     AttendanceModule,
     DashboardModule,
     TenantConfigModule,
+    SetupModule,
     NotificationsModule,
     AuditModule,
     ContactModule,

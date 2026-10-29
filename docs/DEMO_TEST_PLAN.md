@@ -37,7 +37,7 @@
 
 `AUTH-01` = suite `AUTH`, case 01. Suite codes:
 `LAND` landing & contact · `AUTH` sign-in & session · `PA` platform admin ·
-`CFG` tenant configuration & first-run wizard · `EMP` employee master ·
+`CFG` tenant configuration & company setup · `EMP` employee master ·
 `ACC` access management · `LV` leave · `ATT` attendance · `DASH` dashboard ·
 `DOC` documents · `NTF` notifications · `RPT` reports · `AUD` audit log ·
 `RBAC` cross-role permission matrix · `ISO` tenant isolation · `SEC` security
@@ -52,7 +52,7 @@ non-negotiables · `NFR` non-functional.
 | 1 | Landing & contact (LAND) | 6 | | | | |
 | 2 | Sign-in & session (AUTH) | 12 | | | | |
 | 3 | Platform Admin console (PA) | 22 | | | | |
-| 4 | Tenant config & setup wizard (CFG) | 12 | | | | |
+| 4 | Tenant config & company setup (CFG) | 19 | | | | |
 | 5 | Employee Master (EMP) | 20 | | | | |
 | 6 | Access management (ACC) | 14 | | | | |
 | 7 | Leave management (LV) | 30 | | | | |
@@ -188,15 +188,22 @@ Sign in as **Platform Admin** at `/platform-admin`.
 
 ---
 
-## 6. Suite CFG — Tenant configuration & first-run setup wizard
+## 6. Suite CFG — Tenant configuration & company setup
 
 Sign in as **Company Admin** (first login of `acme-demo`).
 
 | ID | Steps | Expected | Result |
 |---|---|---|---|
-| CFG-01 | Sign in for the first time | First-run setup wizard appears | ☐ |
-| CFG-02 | Skip the wizard | Dashboard opens; wizard can be resumed later | ☐ |
-| CFG-03 | Re-open the wizard (from Settings or its link) | Resumes from the saved step; previously entered values kept | ☐ |
+| CFG-01 | Sign in for the first time | Full-screen company setup opens; no way into the app until it's submitted | ☐ |
+| CFG-02 | Fill two steps, **Save draft**, sign out, sign back in (another browser) | Resumes with everything you entered | ☐ |
+| CFG-03 | While setup is incomplete, sign in as an Employee / HR Manager | "Your workspace is being set up" screen; API calls to e.g. `/api/employees` return 403 `SETUP_INCOMPLETE` | ☐ |
+| CFG-03a | Leave a required field empty (e.g. PIN code) and press **Save and continue** | Stays on the step with the error shown inline | ☐ |
+| CFG-03b | Holidays step: upload a file with `03/04/2027` and a duplicate row | File not added; both rows reported | ☐ |
+| CFG-03c | Employee file with a department not in step 2, and your own employee code | Both rows flagged; Submit disabled until fixed | ☐ |
+| CFG-03d | Opening balances: a negative balance; a balance for an unknown leave type | Errors; a maternity balance for a male employee only warns | ☐ |
+| CFG-03e | Go-live mid-year (e.g. 1 Oct, leave year April); submit with an employee NOT in the balance file | Their annual types are prorated (~half the quota); monthly types credited from October | ☐ |
+| CFG-03f | Submit | One success screen with counts; app opens for everyone; dashboard shows **Set up payroll** | ☐ |
+| CFG-03g | Optional holiday: apply Restricted Holiday leave on it, then on a normal day | Allowed on the optional holiday; refused on the normal day; normal leave over the optional holiday counts it as a working day | ☐ |
 | CFG-04 | Set company details (name, FY start month, timezone, payroll cut-off day) and save | Saved; values persist after reload | ☐ |
 | CFG-05 | Create shift **General** 09:00–18:00, grace 10 min, target hours 9 | Shift saved; listed in Settings › Shifts | ☐ |
 | CFG-06 | Edit the shift (change grace to 15 min) | Updated; attendance late-marking uses the new grace (verify in ATT-06 later) | ☐ |
@@ -500,7 +507,7 @@ Each row must be tested as the persona named. "Refused" means: blocked in the UI
 | RBAC-20 | Email log & retry | ✅ | ✅ | ❌ | ❌ | ✅ read |
 | RBAC-21 | Departments create / edit / delete | ✅ | ✅ | ❌ | ❌ | ❌ |
 | RBAC-22 | Upload / delete documents for an employee | ✅ | ✅ | ✅ own reports (evidence only) | own (leave / regularization) | ❌ |
-| RBAC-23 | Tenant configuration & setup wizard | ✅ | ❌ | ❌ | ❌ | ✅ read settings |
+| RBAC-23 | Tenant configuration & company setup | ✅ | ❌ | ❌ | ❌ | ✅ read settings |
 | RBAC-24 | Line Manager sees only own reports' data (not company-wide) | n/a | n/a | ✅ enforced | n/a | n/a |
 
 > **Matrix caveat (open gap, owner-tracked):** Line-Manager row-scoping was
@@ -571,7 +578,7 @@ Run this in order. Each step cites the detailed case to fall back on.
 |---|---|---|---|
 | 1 | Public | Landing page; submit a demo-request form; show it arriving in Platform Leads | LAND-01, LAND-04, PA-17 |
 | 2 | Platform Admin | Create the tenant; show plan and subscription; suspend & resume to prove control | PA-05, PA-09, PA-10 |
-| 3 | Company Admin | First-run wizard; company settings; create shift and leave types; holidays | CFG-01, CFG-04, CFG-05, LV-01, LV-08 |
+| 3 | Company Admin | Company setup; company settings; create shift and leave types; holidays | CFG-01, CFG-04, CFG-05, LV-01, LV-08 |
 | 4 | HR Manager | Create departments; add Priya and Rahul; show org chart; bulk import 5 rows with one error | EMP-01, EMP-04, EMP-05, EMP-03, EMP-19 |
 | 5 | HR Manager | Upload Rahul's offer letter; show scan → CLEAN; show EICAR blocked | DOC-01, DOC-10 |
 | 6 | Employee (Rahul) | Clock in, break, clock out; apply casual leave (weekend & holiday excluded) | ATT-01, ATT-02, ATT-07, LV-10, LV-11 |
