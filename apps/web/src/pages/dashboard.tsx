@@ -19,6 +19,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/context/auth-context';
+import { Link } from 'react-router-dom';
+import { useSetupStatus } from '@/lib/setup-status';
+import { setupApi } from '@/lib/setup';
 
 const APPROVER_ROLES = ['LINE_MANAGER', 'HR_MANAGER', 'COMPANY_ADMIN'];
 
@@ -132,6 +135,8 @@ export function DashboardPage() {
         <h1 className="text-xl font-semibold">Welcome back{user ? `, ${user.email}` : ''}</h1>
         <p className="text-sm text-muted-foreground">Here's what's happening across your organization.</p>
       </div>
+
+      {user?.role === 'COMPANY_ADMIN' && <SetupFollowUps />}
 
       {data.todayAttendance && (
         <TodayAttendanceCard
@@ -400,4 +405,81 @@ export function StatusBadge({ status }: { status: string }) {
         ? 'destructive'
         : 'warning';
   return <Badge variant={variant}>{status.replace('_', ' ')}</Badge>;
+}
+
+/**
+ * What company setup leaves for later: payroll (deliberately not part of
+ * setup) and any imported logins whose provisioning failed after submit.
+ */
+function SetupFollowUps() {
+  const { status, refresh } = useSetupStatus();
+  const { toast } = useToast();
+  const [retrying, setRetrying] = React.useState(false);
+  if (!status) return null;
+  const failures = status.loginFailures;
+
+  async function retry() {
+    setRetrying(true);
+    try {
+      const { loginFailures } = await setupApi.retryLogins();
+      toast({
+        title: loginFailures.length === 0 ? 'All logins created' : `${loginFailures.length} still failing`,
+        tone: loginFailures.length === 0 ? 'success' : 'error',
+      });
+      await refresh();
+    } catch (err) {
+      toast({ title: isApiError(err) ? err.message : 'Retry failed', tone: 'error' });
+    } finally {
+      setRetrying(false);
+    }
+  }
+
+  if (status.payrollConfigured && failures.length === 0) return null;
+  return (
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+      {!status.payrollConfigured && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Wallet className="h-4 w-4" /> Set up payroll
+            </CardTitle>
+            <CardDescription>
+              Salary structures, statutory settings and your first run — whenever you’re ready. Days before your go-live
+              date have no attendance, so they count as worked in the first run.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link to="/payroll" className="text-sm font-medium text-primary hover:underline">
+              Go to Payroll →
+            </Link>
+          </CardContent>
+        </Card>
+      )}
+      {failures.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base text-warning">
+              <AlertTriangle className="h-4 w-4" /> {failures.length} login{failures.length === 1 ? '' : 's'} not created
+            </CardTitle>
+            <CardDescription>
+              These employees were imported during setup, but their login couldn’t be created.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-2">
+            <ul className="text-xs text-muted-foreground">
+              {failures.slice(0, 5).map((f) => (
+                <li key={f.email}>
+                  {f.employeeCode} · {f.email} — {f.error}
+                </li>
+              ))}
+              {failures.length > 5 && <li>…and {failures.length - 5} more</li>}
+            </ul>
+            <Button size="sm" variant="outline" className="self-start" disabled={retrying} onClick={() => void retry()}>
+              <RefreshCw className="h-3.5 w-3.5" /> {retrying ? 'Retrying…' : 'Retry'}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
 }

@@ -37,7 +37,12 @@ export function assignableRoles(actor: AppRole): AppRole[] {
 // ---------------------------------------------------------------------------
 
 export type FrontendAuditAction =
-  'role.changed' | 'user.activated' | 'user.deactivated' | 'password_reset.sent' | 'user.created';
+  | 'role.changed'
+  | 'user.activated'
+  | 'user.deactivated'
+  | 'password_reset.sent'
+  | 'user.created'
+  | 'user.linked';
 
 /** `role.changed` <-> `access.role_changed` */
 export const STORED_ACTION: Record<FrontendAuditAction, string> = {
@@ -46,6 +51,7 @@ export const STORED_ACTION: Record<FrontendAuditAction, string> = {
   'user.deactivated': 'access.user_deactivated',
   'password_reset.sent': 'access.password_reset_sent',
   'user.created': 'access.user_created',
+  'user.linked': 'access.user_linked',
 };
 
 const FRONTEND_ACTION: Record<string, FrontendAuditAction> = Object.fromEntries(

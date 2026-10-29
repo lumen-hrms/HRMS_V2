@@ -1,13 +1,19 @@
-import { IsIn, IsInt, Min } from 'class-validator';
+import { IsOptional, IsString } from 'class-validator';
 
-const WIZARD_STATUSES = ['PENDING', 'IN_PROGRESS', 'DISMISSED', 'COMPLETED'] as const;
-
-/** `PATCH /api/tenant-config/wizard` */
-export class UpdateWizardStateDto {
-  @IsIn(WIZARD_STATUSES)
-  status!: (typeof WIZARD_STATUSES)[number];
-
-  @IsInt()
-  @Min(0)
-  step!: number;
+/**
+ * `PATCH /api/tenant-config/company-profile`. Shape-only here; the business
+ * rules (required fields, PIN/GSTIN/CIN formats) live in `companyProfileErrors`
+ * so company setup applies the identical checks.
+ */
+export class UpdateCompanyProfileDto {
+  @IsString() legalName!: string;
+  @IsString() addressLine1!: string;
+  @IsOptional() @IsString() addressLine2?: string;
+  @IsString() city!: string;
+  @IsString() state!: string;
+  @IsString() pincode!: string;
+  @IsString() contactEmail!: string;
+  @IsString() contactPhone!: string;
+  @IsOptional() @IsString() gstin?: string;
+  @IsOptional() @IsString() cin?: string;
 }

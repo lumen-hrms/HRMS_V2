@@ -446,6 +446,7 @@ const ACTIVITY_ACTION_LABEL: Record<FrontendAuditAction, string> = {
   'user.deactivated': 'Login deactivated',
   'password_reset.sent': 'Password reset sent',
   'user.created': 'Login created',
+  'user.linked': 'Login linked to employee',
 };
 
 function humanizeEmail(email: string): string {

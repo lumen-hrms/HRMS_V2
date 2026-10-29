@@ -17,6 +17,9 @@ interface AuthContextValue {
   loading: boolean;
   login: (subdomain: string, email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Re-reads the signed-in user (e.g. after their login is linked to an
+   *  employee record, which changes `employeeId` but not the token). */
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = React.createContext<AuthContextValue | undefined>(undefined);
@@ -67,8 +70,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
   }, []);
 
+  // GET /auth/me, not POST /auth/session — a refresh isn't a sign-in and
+  // mustn't add a row to the login audit trail.
+  const refreshUser = React.useCallback(async () => {
+    setUser(await api.get<CurrentUser>('/auth/me'));
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{ user, loading, login, logout, refreshUser }}>
+      {children}
+    </AuthContext.Provider>
   );
 }
 

@@ -176,6 +176,11 @@ export async function createTenantFixture(label: string): Promise<TenantFixture>
   const dept = await superuserPrisma.department.create({
     data: { tenantId: tenant.id, name: 'Engineering' },
   });
+  // Fixture tenants skip company setup: every suite except the setup-gate
+  // one wants a working tenant, not the SETUP_INCOMPLETE gate.
+  await superuserPrisma.tenantSetup.create({
+    data: { tenantId: tenant.id, completedAt: new Date() },
+  });
 
   const adminEmail = `admin+${subdomain}@example.test`;
   const managerEmail = `manager+${subdomain}@example.test`;
@@ -293,6 +298,8 @@ export async function cleanupTenantFixture(tenantId: string) {
   await superuserPrisma.holiday.deleteMany({ where: { tenantId } });
   await superuserPrisma.attendanceSettings.deleteMany({ where: { tenantId } });
   await superuserPrisma.tenantSettings.deleteMany({ where: { tenantId } });
+  await superuserPrisma.tenantSetup.deleteMany({ where: { tenantId } });
+  await superuserPrisma.companyProfile.deleteMany({ where: { tenantId } });
   await superuserPrisma.auditLog.deleteMany({ where: { tenantId } });
   await superuserPrisma.notificationLog.deleteMany({ where: { tenantId } });
   await superuserPrisma.tenant.delete({ where: { id: tenantId } }).catch(() => undefined);

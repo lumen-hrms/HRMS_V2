@@ -8,6 +8,7 @@ import { SkeletonRows } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
 import { leaveApi } from '@/lib/leave/client';
 import type { LeaveApprovalLevel, LeaveSettings } from '@/lib/leave/types';
+import { RecalculateCard } from '@/pages/leave/components/recalculate-card';
 
 /**
  * Tenant-wide leave policy. Backed by `tenant_settings` — approval depth and
@@ -50,6 +51,7 @@ export function SettingsTab({ readOnly = false }: { readOnly?: boolean }) {
   }
 
   return (
+    <div className="flex flex-col gap-5">
     <Card className="max-w-lg p-4">
       <form onSubmit={save} className="flex flex-col gap-4">
         <Field label="Approval levels" hint="How many decision steps a request goes through before it's final.">
@@ -96,5 +98,7 @@ export function SettingsTab({ readOnly = false }: { readOnly?: boolean }) {
         )}
       </form>
     </Card>
+    {!readOnly && <RecalculateCard />}
+    </div>
   );
 }

@@ -14,8 +14,9 @@
 > + seed, the `EntitlementGuard` (Layer 1 enforcement),
 > `attendance.service.ts` reading `Shift`/`TenantSettings` instead of
 > hardcoded constants, in-app Settings screens (shift catalogue CRUD +
-> attendance/general settings), and a skippable/resumable first-run setup
-> wizard are all live. See "Build status" at the end.
+> attendance/general settings), and — since 2026-10-29 — a **mandatory
+> full-screen company setup** (replacing the old skippable wizard) are all
+> live. See "Company setup" and "Build status" below.
 
 ---
 
@@ -26,7 +27,7 @@ Mixing these up is the classic multi-tenant mistake. Keep them separate.
 | Layer | Question it answers | Stored in | Set by | When |
 |---|---|---|---|---|
 | **1. Plan entitlements** | *What is this tenant allowed to use?* | `platform.subscriptions` (`enabled_modules`, `features`) | **Platform operator (founder)** | Onboarding; re-derived on plan change |
-| **2. Tenant business config** | *How do this tenant's HR rules work?* | `public.*` config tables (RLS-scoped) | **Company Admin, in-app** | Setup wizard on first login; editable anytime |
+| **2. Tenant business config** | *How do this tenant's HR rules work?* | `public.*` config tables (RLS-scoped) | **Company Admin, in-app** | Company setup (mandatory) on first login; editable anytime |
 | **3. Per-employee override** | *Does this person differ from the tenant default?* | `public.employees.shift_id` (more later) | Tenant HR | Per employee / group |
 
 Rule of thumb: *"Is Payroll available?"* / *"Can they connect a biometric
@@ -176,9 +177,80 @@ finalization job and the punch write-path are the next slice.
 2. `seedTenantRows(tenantId, …)` writes the admin's `users` row,
    `tenant_settings` + `attendance_settings` + the default `General` shift
    + payroll settings/PT slabs, all in one transaction.
-3. **Company Admin**, on first login, walks a **setup wizard** (work week
-   → shift(s) → holidays → leave types → payroll cut-off). Skippable
-   (defaults already applied), resumable. — *wizard UI not built yet.*
+3. **Company Admin**, on first login, completes **company setup** (below).
+   Until it's submitted nobody in the workspace can use the app.
+
+---
+
+## Company setup (mandatory first run)
+
+`apps/api/src/setup` + `apps/web/src/pages/setup`. Replaces the old
+skippable wizard (owner decision, 2026-10-29): setup must be complete so
+there's no half-configured tenant.
+
+**The gate.** No `tenant_setups` row, or `completed_at` null, means setup is
+incomplete. `JwtAuthGuard` reads the row with its per-request user lookup;
+`TenantGuard` then answers **403 `SETUP_INCOMPLETE`** on every route except
+`/api/setup/*`, `/api/auth/*` and `/api/access/me` — for every role, so it's
+enforced by the API, not just hidden in the UI. The web app sends a Company
+Admin to `/setup` and shows everyone else "Your workspace is being set up".
+The nightly accrual and attendance-finalization jobs skip incomplete
+tenants. Every tenant that existed before this shipped goes through setup
+once (owner decision), pre-filled from its current config; for them setup
+only adds and updates, never deletes.
+
+**Steps** (each must be error-free to continue; dependencies only flow forward):
+
+| # | Step | Captures |
+|---|---|---|
+| 1 | Company | `company_profiles` (legal name, address, state, PIN, contact, optional GSTIN/CIN) + the **go-live date** (`tenant_settings.go_live_date`) |
+| 2 | Departments | at least one |
+| 3 | Your profile | the submitting admin's own employee record, linked to their login (or "I'm not an employee") |
+| 4 | Work week & shifts | time zone, weekly offs, shifts, exactly one default |
+| 5 | Attendance rules | mode, capture methods, regularization window/cap, unactioned behaviour, payroll cut-off |
+| 6 | Holidays | manual entry or CSV/XLSX import (`date, name, type`) |
+| 7 | Leave policy | leave-year start, approval levels, escalation, LOP, leave types (incl. Restricted Holiday / comp-off, and event-based maternity / adoption / commissioning mother / miscarriage / paternity / marriage presets) |
+| 8 | Import employees | optional employee file (strict: departments must exist, the admin's own code is reserved) |
+| 9 | Opening balances | optional `employeeCode, leaveTypeCode, openingBalance` file for companies migrating from another HRMS |
+| 10 | Review & submit | summary, every error/warning, submit |
+
+Payroll is **not** a setup step: a company can go live on the 1st and set
+payroll up at month end. The dashboard shows a "Set up payroll" card until
+the first salary structure exists.
+
+**Draft.** `PUT /api/setup/draft` saves the configuration; files go up
+through `POST /api/setup/files/:kind` and their rows never travel back to
+the browser. The whole draft is AES-256-GCM encrypted in
+`tenant_setups.draft_ciphertext` (an employee file can carry PAN/bank
+numbers) — so setup needs `FIELD_ENCRYPTION_KEY`. A browser can't forge an
+`existingId`: only ids of real rows survive a save, and saved departments
+and holidays always come from the DB.
+
+**Submit** (`POST /api/setup/submit`) is **strict** — one error anywhere
+blocks it — and writes company profile, settings, departments, shifts,
+holidays, leave types, the admin's employee record, imported employees
+(manager-first, so every reporting line points at an existing row),
+opening balances and policy-default leave credits in **one transaction**.
+The first statement claims the `tenant_setups` row, so a double-click or a
+second admin waits and then fails instead of writing twice. Firebase logins
+can't join a DB transaction: they're provisioned after the commit, and any
+that fail are kept on `tenant_setups.result` for `POST
+/api/setup/logins/retry` (dashboard card).
+
+**Mid-year edge cases** (go-live is the anchor — `leave-entitlement.ts`):
+
+| Case | Behaviour |
+|---|---|
+| Company goes live mid-year | Leave for anyone without an opening balance is prorated from go-live (owner decision); monthly/quarterly types accrue from the go-live period on |
+| Employee in the opening-balance file | ANNUAL types: exactly the imported balance (no grant on top). MONTHLY/QUARTERLY: the balance + accrual from go-live |
+| Joined after the leave-year start / in the future | Prorated from the joining date; nothing credited before they join |
+| Go-live mid-month | That month is credited prorated and rounded to whole days — 2 days/month gives 2 from the 1st, 1 from mid-month, 0 for the last few days |
+| Go-live before the current leave year | Warning: everyone gets this year's full entitlement |
+| Go-live within 30 days of year end | Warning; carry-forward rolls balances into the new year |
+| Negative balance in the old system | Error — enter 0 |
+| Holiday in an already-processed payroll month | Error (a paid month can't change) |
+| Days before go-live | Never marked ABSENT by finalization, so no LOP in the first payroll |
+| Go-live entered wrong | Leave › Settings › **Recalculate policy credits** — preview, then reverse and re-apply this year's credits with the corrected date |
 
 ---
 
@@ -192,7 +264,8 @@ finalization job and the punch write-path are the next slice.
 | `EntitlementGuard` (block modules not in plan) + `@RequiresFeature` | ✅ wired onto Leave + Attendance |
 | `attendance.service.ts` reads `shifts` / `tenant_settings` instead of hardcoded constants | ✅ |
 | In-app Settings screens (shift catalogue CRUD; attendance mode/capture/regularization guardrails; general tenant_settings — timezone/weekly-offs/payroll-cutoff) | ✅ `apps/web/src/pages/attendance/settings-tab.tsx`, a Settings tab on the Attendance page for Company Admin/HR Manager |
-| First-run setup wizard | ✅ `apps/web/src/components/setup-wizard/setup-wizard.tsx` — 5 steps (work week/timezone, default shift, holidays, leave types, payroll cut-off) orchestrating existing endpoints; skippable, resumable via `TenantSettings.setupWizardStatus`/`setupWizardStep` (`GET`/`PATCH /api/tenant-config/wizard`, new `apps/api/src/tenant-config` module) |
+| Company setup (mandatory, full-screen) | ✅ `apps/api/src/setup` + `apps/web/src/pages/setup` — 10 steps, encrypted server-side draft, strict one-transaction submit, `SETUP_INCOMPLETE` gate in `TenantGuard`, migration `20261201090000_company_setup`. Replaced the skippable wizard (`setup_wizard_*` columns dropped) |
+| Company profile | ✅ `company_profiles`; `GET`/`PATCH /api/tenant-config/company-profile`; web `/company` |
 | Nightly finalization job (punches + leave + holidays → status) | ✅ `AttendanceFinalizationProcessor` (module 05) |
 | Regularization approval + guardrails enforcement (cap, window, auto-resolve at cutoff) | ✅ (module 05) |
 | `POST /attendance/ingest` for biometric/CSV (per-tenant device key) | 🔴 per-client, deferred |

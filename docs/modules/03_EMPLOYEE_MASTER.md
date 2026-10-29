@@ -209,10 +209,24 @@ EXPERIENCE|OTHER`, settable via `PATCH /documents/:id/category`) ·
 **Derived (read-only)** — `reportingManager {firstName,lastName}` ·
 `directReports [{id,firstName,lastName,designation}]`.
 
-**Linked login (create-time, optional)** — `loginEmail` · `loginRole`
+**Linked login (create-time, optional)** — either a *new* login:
+`loginEmail` · `loginRole`
 (`COMPANY_ADMIN|HR_MANAGER|LINE_MANAGER|EMPLOYEE|AUDITOR`) ·
-`loginTempPassword` (or "send reset link"). Provisions a Firebase user +
-claims + `public.users` row (module 01).
+`loginTempPassword` (or "send reset link"), which provisions a Firebase
+user + claims + `public.users` row (module 01) — **or** `existingUserId`,
+which links a login that already exists in the tenant and has no employee
+yet (never both; 400). The existing-login path is how the first Company
+Admin — created at onboarding with no employee record — gets self-service
+Leave/Attendance/Payslips.
+
+**Link login (after create)** — `PATCH /employees/:id/login { userId }`
+(`EmployeesService.linkLogin()`, Company Admin / HR Manager). Rejects an
+employee that already has a login, a `SEPARATED` employee, a login already
+linked elsewhere (also caught by the `employees.user_id` unique index under
+a race), a login outside the tenant (404 — RLS hides it, plus an explicit
+`tenantId` check), and a login above the actor's RULE-2 ceiling. The
+login's role is never changed. Audited as `access.user_linked` (module 01's
+access-change feed). Unlinking is not offered.
 
 ### 4.3 `Department`
 
@@ -441,7 +455,8 @@ lists a bucket or returns a raw key.
 - **RULE-1** — Employee-editable fields are a fixed whitelist (contact +
   emergency); the API ignores anything else on an Employee-actor `PATCH`.
 - **RULE-2** — linked-login role ≤ actor's role; only Company Admin may set
-  `COMPANY_ADMIN`.
+  `COMPANY_ADMIN`. The same ceiling applies to linking an *existing* login
+  (an HR Manager can't link a Company Admin's login).
 - **RULE-3** — bulk import is row-transactional, never batch-transactional.
 - **RULE-4** — lifecycle transitions are restricted to the state machine in
   §4.4; each needs its mandatory date + reason.
@@ -478,6 +493,7 @@ not direct reports only.
 | Edit personal / contact / emergency | own | — | all | all | — |
 | Edit employment / comp / statutory / bank | — | — | ✅ | ✅ | — |
 | Add employee / linked login | — | — | ✅ (role ≤ HR) | ✅ (any role) | — |
+| Link an existing login (create-time or `PATCH /:id/login`) | — | — | ✅ (login role ≤ HR) | ✅ (any role) | — |
 | Lifecycle transitions | — | — | ✅ | ✅ | — |
 | Bulk import | — | — | ✅ | ✅ | — |
 | Reveal masked PAN / Aadhaar / bank (logged) | — | — | ✅ | ✅ | ✅ (read, logged) |
@@ -604,6 +620,13 @@ Supabase dev DB** via `./scripts/dev.sh migrate`):
       403, and an Employee editing anyone but themselves gets a 403 —
       covered by `employees.service.spec.ts`.
 - [ ] HR Manager creating a linked login cannot select `COMPANY_ADMIN`.
+- [x] Linking an existing login (create-time `existingUserId` and
+      `PATCH /:id/login`) rejects: both `existingUserId` and a new-login
+      email/password, a login already linked, a login from another tenant
+      (404), an HR Manager linking a Company Admin's login, an employee that
+      already has a login, a `SEPARATED` employee, and a lost race — and a
+      rejection writes nothing — covered by `employees.service.spec.ts`;
+      cross-tenant link 404s end to end in `tenant-isolation.e2e-spec.ts`.
 - [x] Every lifecycle transition writes one audit row and rejects illegal
       target states — covered by `employees.service.spec.ts`.
 - [x] A transition requiring a date (`CONFIRMED`/`NOTICE_PERIOD`/`SEPARATED`)

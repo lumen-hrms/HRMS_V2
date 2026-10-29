@@ -4,6 +4,7 @@ import { PrismaClient } from '@prisma/client';
 import { createTestApp } from './utils/test-app';
 import {
   cleanupTenantFixture,
+  createFirebaseTestUser,
   deleteTrackedFirebaseUsers,
   createTenantFixture,
   getIdTokenForEmail,
@@ -115,6 +116,67 @@ describe('Tenant isolation (e2e)', () => {
     // their own balances) before RLS even gets a chance to run — either
     // way, tenant B's data is inaccessible.
     expect([403, 404]).toContain(res.status);
+  });
+
+  it('400s (not 500s) a non-UUID employee id on the leave self-service routes', async () => {
+    // The fixture "admin" is an AUDITOR, which skips the per-employee check —
+    // the exact path that used to hand `'me'` to a uuid column and 500.
+    const idToken = await getIdTokenForEmail(tenantA.adminEmail);
+    for (const path of ['/api/leave/balances/me', '/api/leave/requests/employee/me']) {
+      const res = await request(server())
+        .get(path)
+        .set('Authorization', `Bearer ${idToken}`)
+        .set('X-Tenant-Subdomain', tenantA.subdomain);
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it('cannot link tenant B’s login to a tenant A employee', async () => {
+    const caEmail = `ca+${tenantA.subdomain}@example.test`;
+    const caUid = await createFirebaseTestUser(caEmail, {
+      tenantId: tenantA.tenantId,
+      role: 'COMPANY_ADMIN',
+    });
+    await superuserPrisma.user.create({
+      data: {
+        tenantId: tenantA.tenantId,
+        email: caEmail,
+        firebaseUid: caUid,
+        role: 'COMPANY_ADMIN',
+      },
+    });
+    const strayEmail = `unlinked+${tenantB.subdomain}@example.test`;
+    const strayUid = await createFirebaseTestUser(strayEmail, {
+      tenantId: tenantB.tenantId,
+      role: 'EMPLOYEE',
+    });
+    const strayLoginB = await superuserPrisma.user.create({
+      data: {
+        tenantId: tenantB.tenantId,
+        email: strayEmail,
+        firebaseUid: strayUid,
+        role: 'EMPLOYEE',
+      },
+    });
+    const unlinkedA = await superuserPrisma.employee.create({
+      data: {
+        tenantId: tenantA.tenantId,
+        employeeCode: `${tenantA.subdomain}-UNLINKED`,
+        firstName: 'Unlinked',
+        lastName: 'a',
+      },
+    });
+
+    const res = await request(server())
+      .patch(`/api/employees/${unlinkedA.id}/login`)
+      .set('Authorization', `Bearer ${await getIdTokenForEmail(caEmail)}`)
+      .set('X-Tenant-Subdomain', tenantA.subdomain)
+      .send({ userId: strayLoginB.id });
+
+    // RLS hides tenant B's users row, so it reads as "not found".
+    expect(res.status).toBe(404);
+    const after = await superuserPrisma.employee.findUnique({ where: { id: unlinkedA.id } });
+    expect(after?.userId).toBeNull();
   });
 
   it('blocks writes into tenant B via tenant A session (leave approval across tenants)', async () => {

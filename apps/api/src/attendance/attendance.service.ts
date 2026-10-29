@@ -154,7 +154,7 @@ export class AttendanceService {
 
     const now = new Date();
     const [holiday, settings, shift] = await Promise.all([
-      this.tenantPrisma.client.holiday.findFirst({ where: { date } }),
+      this.tenantPrisma.client.holiday.findFirst({ where: { date, isOptional: false } }),
       this.tenantPrisma.client.tenantSettings.findUniqueOrThrow({ where: { tenantId } }),
       this.resolveShift(employeeId, tenantId),
     ]);
@@ -893,7 +893,9 @@ export class AttendanceService {
     if (req.attendanceRecordId) {
       const tenantId = this.tenantPrisma.tenantId;
       const [holiday, settings] = await Promise.all([
-        this.tenantPrisma.client.holiday.findFirst({ where: { date: req.targetDate } }),
+        this.tenantPrisma.client.holiday.findFirst({
+          where: { date: req.targetDate, isOptional: false },
+        }),
         this.tenantPrisma.client.tenantSettings.findUniqueOrThrow({ where: { tenantId } }),
       ]);
       await this.tenantPrisma.client.attendanceRecord.update({

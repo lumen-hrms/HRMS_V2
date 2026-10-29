@@ -201,7 +201,9 @@ colleague's salary) layered **on top of** RLS, not instead of it.
   retro-revokes `UPDATE, DELETE` on `public.audit_log` from `hrms_app`.
 - **Access-change events** reuse `public.audit_log` — action namespaced
   `access.role_changed` / `access.user_activated` / `access.user_deactivated`
-  / `access.password_reset_sent` / `access.user_created`, with a
+  / `access.password_reset_sent` / `access.user_created` /
+  `access.user_linked` (an existing login linked to an employee record,
+  module 03), with a
   self-contained `metadata` snapshot (`module: "identity-access"`,
   `actorName`, `actorRole`, `targetEmail`, `before`, `after`, `note`) so
   `GET /api/access/audit?feed=access` maps straight to the frontend

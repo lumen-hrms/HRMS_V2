@@ -54,7 +54,7 @@ device payload to `Punch` rows) behind `subscription.features
 | **Employee** | Clocks in/out daily; needs to see and correct their own record. | Clock in/out, start/end break; view own "today" card, monthly calendar, monthly stats; raise/list/cancel their own regularisation requests. | Cannot see any colleague's attendance; cannot approve/reject a regularisation (even their own); cannot mark attendance manually; no shift/holiday/settings admin. |
 | **Line Manager** | Owns approval of their reports' corrections *(target — not built)*. | *(Target)* view team "today" roster, approve/reject a report's regularisation within the configured window; see team calendar. **Today:** none of this exists — every route is self-service only. | Cannot edit shifts/holidays/settings (HR/Admin only). |
 | **HR Manager** | Owns tenant attendance config and exception handling. | *(Target)* mark attendance manually with a reason (audited); approve/reject any regularisation; bulk-approve; manage `Shift`/`Holiday`/`AttendanceSettings`; run/inspect the finalization job. **Today:** can read/write `Holiday` and `TenantSettings` (shared with Leave, module 04) but has **no attendance-specific admin surface**. | Cannot bypass the append-only audit trail once built. |
-| **Company Admin** | Same operational surface as HR Manager for this module. | Same as HR Manager, plus first-run setup wizard *(not built)*. | — |
+| **Company Admin** | Same operational surface as HR Manager for this module. | Same as HR Manager, plus the mandatory company setup (module 13), which captures the work week, shifts, attendance rules and holidays. | — |
 | **Auditor** (read-only) | Reviews attendance decisions for compliance / labour-law exposure. | *(Target)* view any employee's attendance history, regularisation decisions, and the finalization/audit trail, read-only. **Today:** no attendance read surface exists for this role at all — gap. | Every mutating control absent. |
 | **Platform Admin** | Out of scope — separate console, cannot read `public.attendance_records`. | — | — |
 
@@ -368,8 +368,10 @@ almost entirely the target state, not current behaviour. See §9.
 7. **Month-end LOP export contract for Payroll** —
    `getLopDays(employeeId, month)`; define the interface **before** Payroll
    starts so the two build against a stable contract.
-8. **Per-tenant Settings screens + first-run setup wizard** (frontend) —
-   shifts, holidays (shared with Leave), attendance mode/guardrails.
+8. ~~**Per-tenant Settings screens + first-run setup wizard**~~ — built:
+   the Attendance Settings tab, and the mandatory company setup (module 13)
+   that replaced the wizard. Finalization skips tenants still in setup and
+   never marks a day before the go-live date.
 9. `POST /attendance/ingest` for biometric/CSV — per client, gated behind
    `subscription.features.biometricIntegration`.
 10. **Audit trail** — no attendance-specific audit rows exist yet; decide

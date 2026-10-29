@@ -249,8 +249,9 @@ list), Audit log.
       *(TODO)*.
 4. Platform Admin shares `acme.hrms-platform.com`; the customer admin runs a
    hosted password reset and logs in.
-5. `TENANT_CONFIGURATION.md` layer-2 setup wizard runs on that first login
-   (tenant-side).
+5. On that first login the customer admin completes the mandatory company
+   setup (`TENANT_CONFIGURATION.md` "Company setup", tenant-side); until it's
+   submitted the tenant's business routes answer `SETUP_INCOMPLETE`.
 
 ### 5.2 Suspend / resume a tenant
 

@@ -42,7 +42,9 @@ export class JwtAuthGuard implements CanActivate {
     ]);
     if (isPublic) return true;
 
-    const request = context.switchToHttp().getRequest<Request & { user?: AuthenticatedUser }>();
+    const request = context
+      .switchToHttp()
+      .getRequest<Request & { user?: AuthenticatedUser; setupComplete?: boolean }>();
     const token = extractBearerToken(request);
     if (!token) throw new UnauthorizedException('Missing bearer token');
 
@@ -60,14 +62,20 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     const scoped = withTenantContext(this.tenantPrismaRaw, tenantId);
-    const user = await scoped.user.findUnique({
-      where: { firebaseUid: decoded.uid },
-      include: { employee: { select: { id: true } } },
-    });
+    const [user, setup] = await Promise.all([
+      scoped.user.findUnique({
+        where: { firebaseUid: decoded.uid },
+        include: { employee: { select: { id: true } } },
+      }),
+      // Company setup status, for TenantGuard's setup gate — read here so a
+      // request costs one more indexed lookup, not another guard round-trip.
+      scoped.tenantSetup.findUnique({ where: { tenantId }, select: { completedAt: true } }),
+    ]);
     if (!user || !user.isActive) {
       throw new UnauthorizedException('Account not found or inactive');
     }
 
+    request.setupComplete = !!setup?.completedAt;
     request.user = {
       sub: user.id,
       tenantId,

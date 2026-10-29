@@ -105,7 +105,7 @@ model Tenant {
   createdAt     DateTime     @default(now()) @map("created_at")
   updatedAt     DateTime     @updatedAt @map("updated_at")
 
-  subscription Subscription?
+  subscription     Subscription?
   breakGlassGrants BreakGlassGrant[]
 
   @@map("tenants")
@@ -113,21 +113,21 @@ model Tenant {
 }
 
 model Subscription {
-  id       String           @id @default(uuid()) @db.Uuid
-  tenantId String           @unique @map("tenant_id") @db.Uuid
-  tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  plan     SubscriptionPlan @default(TRIAL)
-  seats    Int              @default(50)
-  renewsAt DateTime?        @map("renews_at")
+  id                     String           @id @default(uuid()) @db.Uuid
+  tenantId               String           @unique @map("tenant_id") @db.Uuid
+  tenant                 Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plan                   SubscriptionPlan @default(TRIAL)
+  seats                  Int              @default(50)
+  renewsAt               DateTime?        @map("renews_at")
   // End of the trial window set by the operator at onboarding. Null once the
   // tenant is converted to a paid plan (or for tenants that never had a trial).
-  trialEndsAt DateTime?     @map("trial_ends_at")
+  trialEndsAt            DateTime?        @map("trial_ends_at")
   // Razorpay subscription driving this tenant's monthly charge (module 14).
   // Null for tenants billed offline (operator "Convert to paid").
-  razorpaySubscriptionId String?  @unique @map("razorpay_subscription_id")
+  razorpaySubscriptionId String?          @unique @map("razorpay_subscription_id")
   // Set when a charge fails; the daily job moves the tenant READ_ONLY once it
   // passes. Cleared by the next successful charge.
-  graceEndsAt DateTime?     @map("grace_ends_at")
+  graceEndsAt            DateTime?        @map("grace_ends_at")
 
   // NEGOTIATED per-seat rate for THIS tenant (every deal is bespoke).
   // Effective monthly = pricePerSeat * seats. Snapshotted at assign-time,
@@ -223,17 +223,17 @@ model PlatformSettings {
 // escalation mechanism, deliberately not built yet (see docs/MODULE_SPECS.md
 // module 02 "Known gaps").
 model BreakGlassGrant {
-  id           String            @id @default(uuid()) @db.Uuid
-  tenantId     String            @map("tenant_id") @db.Uuid
-  tenant       Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  requestedBy  String            @map("requested_by")
-  reason       String
-  status       BreakGlassStatus  @default(ACTIVE)
-  accessCount  Int               @default(0) @map("access_count")
-  grantedAt    DateTime          @default(now()) @map("granted_at")
-  expiresAt    DateTime          @map("expires_at")
-  revokedAt    DateTime?         @map("revoked_at")
-  revokedBy    String?           @map("revoked_by")
+  id          String           @id @default(uuid()) @db.Uuid
+  tenantId    String           @map("tenant_id") @db.Uuid
+  tenant      Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  requestedBy String           @map("requested_by")
+  reason      String
+  status      BreakGlassStatus @default(ACTIVE)
+  accessCount Int              @default(0) @map("access_count")
+  grantedAt   DateTime         @default(now()) @map("granted_at")
+  expiresAt   DateTime         @map("expires_at")
+  revokedAt   DateTime?        @map("revoked_at")
+  revokedBy   String?          @map("revoked_by")
 
   @@index([tenantId])
   @@index([status, expiresAt])
@@ -425,15 +425,6 @@ enum ShiftType {
   @@schema("public")
 }
 
-enum TenantSetupWizardStatus {
-  PENDING
-  IN_PROGRESS
-  DISMISSED
-  COMPLETED
-
-  @@schema("public")
-}
-
 enum AttendanceMode {
   // Employees clock themselves in/out via the web app (startup default).
   SELF_SERVICE
@@ -497,16 +488,16 @@ model User {
 }
 
 model Department {
-  id        String   @id @default(uuid()) @db.Uuid
-  tenantId  String   @map("tenant_id") @db.Uuid
-  name      String
-  code      String?
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  name           String
+  code           String?
   // No FK to Employee — headEmployeeId is a plain reference, not a
   // relation, so deleting the head employee never cascades into the
   // department row (module 03 §4.3).
-  headEmployeeId String? @map("head_employee_id") @db.Uuid
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  headEmployeeId String?  @map("head_employee_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
   employees Employee[]
 
@@ -542,20 +533,20 @@ model Employee {
   departmentId String?     @map("department_id") @db.Uuid
   department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
 
-  designation      String?
-  employmentType   EmploymentType?  @map("employment_type")
-  workLocation     String?          @map("work_location")
+  designation           String?
+  employmentType        EmploymentType? @map("employment_type")
+  workLocation          String?         @map("work_location")
   // Payroll (module 07): state of the office the employee is attached to;
   // drives Professional Tax slab selection. Required before the employee
   // can be included in a payroll run.
-  workState        IndianState?     @map("work_state")
+  workState             IndianState?    @map("work_state")
   // Payroll (module 07, decision 14): this employee's weekly off-days, if
   // they differ from the tenant's `TenantSettings.weeklyOffDays` (e.g.
   // rotational shift staff). Empty (the default) falls back to the tenant
   // default — Prisma can't express an optional list. A fixed set of
   // weekdays, not a rotating per-week schedule.
-  weeklyOffDaysOverride Int[]       @default([]) @map("weekly_off_days_override")
-  dateOfJoining    DateTime?        @map("date_of_joining")
+  weeklyOffDaysOverride Int[]           @default([]) @map("weekly_off_days_override")
+  dateOfJoining         DateTime?       @map("date_of_joining")
 
   // Lifecycle state machine (module 03 §4.4). New employees start in
   // PROBATION (the common case: HR is adding someone who has already
@@ -591,12 +582,12 @@ model Employee {
   // application-layer encrypted (FieldEncryptionService, CLAUDE.md's KMS
   // non-negotiable); only the masked form and the ciphertext are stored —
   // plaintext never lands in a column. Aadhaar: last 4 digits only, ever.
-  panCiphertext String? @map("pan_ciphertext")
-  panMasked     String? @map("pan_masked")
-  aadhaarLast4  String? @map("aadhaar_last4")
+  panCiphertext String?    @map("pan_ciphertext")
+  panMasked     String?    @map("pan_masked")
+  aadhaarLast4  String?    @map("aadhaar_last4")
   uan           String?
-  pfNumber      String? @map("pf_number")
-  esicNumber    String? @map("esic_number")
+  pfNumber      String?    @map("pf_number")
+  esicNumber    String?    @map("esic_number")
   taxRegime     TaxRegime? @map("tax_regime")
 
   // Bank (disbursement) — bank account number is KMS-encrypted like PAN.
@@ -700,46 +691,86 @@ model EmergencyContact {
 }
 
 model LeaveType {
-  id               String           @id @default(uuid()) @db.Uuid
-  tenantId         String           @map("tenant_id") @db.Uuid
-  name             String
+  id                  String            @id @default(uuid()) @db.Uuid
+  tenantId            String            @map("tenant_id") @db.Uuid
+  name                String
   // Short label for dense UI (e.g. "CL", "SL") — user-set, unique per tenant.
-  code             String
+  code                String
   // A CSS color value for calendar chips / dots.
-  colorToken       String           @default("#2b5a8c") @map("color_token")
-  annualQuota      Decimal          @map("annual_quota") @db.Decimal(6, 2)
-  carryForwardCap  Decimal          @default(0) @map("carry_forward_cap") @db.Decimal(6, 2)
-  requiresApproval Boolean          @default(true) @map("requires_approval")
+  colorToken          String            @default("#2b5a8c") @map("color_token")
+  annualQuota         Decimal           @map("annual_quota") @db.Decimal(6, 2)
+  carryForwardCap     Decimal           @default(0) @map("carry_forward_cap") @db.Decimal(6, 2)
+  requiresApproval    Boolean           @default(true) @map("requires_approval")
   // Minimum calendar-days notice; enforced by LeaveService.apply().
-  minNoticeDays    Int              @default(0) @map("min_notice_days")
+  minNoticeDays       Int               @default(0) @map("min_notice_days")
   // Soft-delete: hides the type from the apply dropdown without losing history.
-  active           Boolean          @default(true)
+  active              Boolean           @default(true)
   // Periodic credit schedule the accrual job follows; ANNUAL types are still
   // seeded manually via the initialize-year endpoint.
-  accrualFrequency AccrualFrequency  @default(ANNUAL) @map("accrual_frequency")
+  accrualFrequency    AccrualFrequency  @default(ANNUAL) @map("accrual_frequency")
   // Who may apply for this type; enforced by LeaveService.apply().
-  genderRestriction GenderRestriction @default(ANY) @map("gender_restriction")
+  genderRestriction   GenderRestriction @default(ANY) @map("gender_restriction")
   // Whether this leave type is paid; informational only, no payroll linkage yet.
-  paid              Boolean           @default(true)
+  paid                Boolean           @default(true)
   // Marks the tenant's designated comp-off type — LeaveService.creditCompOff()
   // credits into whichever LeaveType has this set (at most one expected per
   // tenant; not DB-enforced). No-op if a tenant hasn't configured one.
-  isCompOff         Boolean           @default(false) @map("is_comp_off")
+  isCompOff           Boolean           @default(false) @map("is_comp_off")
   // Payroll (module 07 Phase 8, decision 17): counts toward a separated
   // employee's Full & Final leave-encashment balance. HR-set per type,
   // same pattern as isCompOff.
-  isEncashable      Boolean           @default(false) @map("is_encashable")
-  createdAt        DateTime         @default(now()) @map("created_at")
-  updatedAt        DateTime         @updatedAt @map("updated_at")
+  isEncashable        Boolean           @default(false) @map("is_encashable")
+  // Restricted (optional) holiday leave: each requested working day must be
+  // an optional holiday. Optional holidays are ordinary working days for
+  // everyone else — this type is how an employee opts in to one.
+  isRestrictedHoliday Boolean           @default(false) @map("is_restricted_holiday")
 
-  balances LeaveBalance[]
-  requests LeaveRequest[]
+  // Event-based leave (maternity, paternity, marriage, …): no yearly balance —
+  // each request names its event date and is granted `daysPerEvent` for that
+  // event (`leave/event-leave.ts`). The fields below only apply to ON_EVENT
+  // types; the entitlement engine skips ON_EVENT types entirely.
+  grantMode              LeaveGrantMode @default(ACCRUED) @map("grant_mode")
+  daysPerEvent           Decimal?       @map("days_per_event") @db.Decimal(6, 2)
+  // From the (reducedAfterEvents + 1)-th event on, the allowance drops to
+  // this — the Maternity Benefit Act's 26 weeks → 12 weeks from the third child.
+  reducedDaysPerEvent    Decimal?       @map("reduced_days_per_event") @db.Decimal(6, 2)
+  reducedAfterEvents     Int?           @map("reduced_after_events")
+  // Calendar days (maternity) vs working days (paternity, marriage).
+  countCalendarDays      Boolean        @default(false) @map("count_calendar_days")
+  // Null = no limit (marriage: 1).
+  maxEventsPerEmployment Int?           @map("max_events_per_employment")
+  // What the employee is asked for, e.g. "Expected delivery date".
+  eventLabel             String?        @map("event_label")
+  // The leave must start within [event − before, event + after] days.
+  eventWindowDaysBefore  Int            @default(0) @map("event_window_days_before")
+  eventWindowDaysAfter   Int            @default(0) @map("event_window_days_after")
+  // Days employed in the 12 months before the event (maternity: 80).
+  minServiceDays         Int            @default(0) @map("min_service_days")
+  // Final approval is refused until the request has an attachment.
+  requiresDocument       Boolean        @default(false) @map("requires_document")
+  // Statutory maternity-type leave: an ESI-covered employee's benefit is paid
+  // by ESIC, so their requests are flagged for HR/payroll.
+  statutoryMaternity     Boolean        @default(false) @map("statutory_maternity")
+  createdAt              DateTime       @default(now()) @map("created_at")
+  updatedAt              DateTime       @updatedAt @map("updated_at")
+
+  balances      LeaveBalance[]
+  requests      LeaveRequest[]
   ledgerEntries LeaveLedgerEntry[]
 
   @@unique([tenantId, name])
   @@unique([tenantId, code])
   @@index([tenantId])
   @@map("leave_types")
+  @@schema("public")
+}
+
+enum LeaveGrantMode {
+  // Credited by policy (annual grant / monthly / quarterly accrual).
+  ACCRUED
+  // Granted per life event on request — maternity, paternity, marriage.
+  ON_EVENT
+
   @@schema("public")
 }
 
@@ -788,11 +819,14 @@ model LeaveRequest {
   leaveTypeId String    @map("leave_type_id") @db.Uuid
   leaveType   LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
 
-  startDate DateTime @map("start_date")
-  endDate   DateTime @map("end_date")
-  days      Decimal  @db.Decimal(6, 2)
-  halfDay   Boolean  @default(false) @map("half_day")
-  isLop     Boolean  @default(false) @map("is_lop")
+  startDate DateTime  @map("start_date")
+  endDate   DateTime  @map("end_date")
+  days      Decimal   @db.Decimal(6, 2)
+  halfDay   Boolean   @default(false) @map("half_day")
+  isLop     Boolean   @default(false) @map("is_lop")
+  // Event-based leave only: the delivery / birth / marriage date this request
+  // is for. Requests with the same eventDate share one event's allowance.
+  eventDate DateTime? @map("event_date") @db.Date
   reason    String?
 
   status LeaveRequestStatus @default(PENDING_L1)
@@ -825,12 +859,12 @@ model LeaveApproval {
   leaveRequestId String       @map("leave_request_id") @db.Uuid
   leaveRequest   LeaveRequest @relation(fields: [leaveRequestId], references: [id], onDelete: Cascade)
 
-  level Int
+  level      Int
   // Null approverId marks a system-generated escalation entry.
-  approverId String?   @map("approver_id") @db.Uuid
-  approver   Employee? @relation("LeaveApprover", fields: [approverId], references: [id], onDelete: SetNull)
+  approverId String?               @map("approver_id") @db.Uuid
+  approver   Employee?             @relation("LeaveApprover", fields: [approverId], references: [id], onDelete: SetNull)
   decision   LeaveApprovalDecision
-  decidedAt  DateTime             @default(now()) @map("decided_at")
+  decidedAt  DateTime              @default(now()) @map("decided_at")
   comment    String?
 
   createdAt DateTime @default(now()) @map("created_at")
@@ -883,6 +917,15 @@ enum LeaveLedgerSource {
   REQUEST_CANCELLED
   HR_ADJUSTMENT
   COMP_OFF_CREDIT
+  // Balance carried over from the tenant's previous HRMS, imported during
+  // company setup — "available days as of go-live".
+  OPENING_BALANCE
+  // Event-based leave: the event's days, granted at final approval (and
+  // taken back if the request is cancelled).
+  EVENT_GRANT
+  // Policy recalculation (Leave › Settings): cancels an earlier ACCRUAL so the
+  // engine re-credits that period under the current rules / go-live date.
+  ACCRUAL_REVERSAL
 
   @@schema("public")
 }
@@ -1053,35 +1096,90 @@ model OvertimeClaim {
 // every other public table. See docs/TENANT_CONFIGURATION.md.
 // ─────────────────────────────────────────────────────────────────────────
 
+// Legal identity of the company, captured by company setup step 1 and
+// editable afterwards (Tenant Configuration). The platform-side
+// `platform.tenants.name` stays the operator's label; this is the tenant's
+// own record of itself.
+model CompanyProfile {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @unique @map("tenant_id") @db.Uuid
+
+  legalName    String      @map("legal_name")
+  addressLine1 String      @map("address_line1")
+  addressLine2 String?     @map("address_line2")
+  city         String
+  state        IndianState
+  pincode      String
+  contactEmail String      @map("contact_email")
+  contactPhone String      @map("contact_phone")
+  gstin        String?
+  cin          String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("company_profiles")
+  @@schema("public")
+}
+
+// Company setup (apps/api/src/setup) — the mandatory full-screen first run.
+// No row, or `completedAt` null, means setup is incomplete: the Company Admin
+// is held on the setup screen and every other tenant route answers
+// SETUP_INCOMPLETE. `draftCiphertext` is the whole in-progress draft,
+// AES-256-GCM encrypted (it can hold imported PAN/bank numbers).
+model TenantSetup {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @unique @map("tenant_id") @db.Uuid
+
+  draftCiphertext String?   @map("draft_ciphertext")
+  draftUpdatedAt  DateTime? @map("draft_updated_at")
+  draftUpdatedBy  String?   @map("draft_updated_by") @db.Uuid
+
+  completedAt DateTime? @map("completed_at")
+  completedBy String?   @map("completed_by") @db.Uuid
+  // Submit summary: counts written, plus logins whose Firebase provisioning
+  // failed after the commit ([{ employeeCode, email, role, error }]), which
+  // `POST /api/setup/logins/retry` works through.
+  result      Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("tenant_setups")
+  @@schema("public")
+}
+
 model TenantSettings {
   id       String @id @default(uuid()) @db.Uuid
   tenantId String @unique @map("tenant_id") @db.Uuid
 
   // IANA zone; wall-clock shift times and "today" boundaries resolve against this.
-  timezone            String @default("Asia/Kolkata")
+  timezone            String  @default("Asia/Kolkata")
   // Days of week that are weekly-offs. 0 = Sunday … 6 = Saturday.
-  weeklyOffDays       Int[]  @default([0, 6]) @map("weekly_off_days")
+  weeklyOffDays       Int[]   @default([0, 6]) @map("weekly_off_days")
   // Day of month the payroll period locks — the only hard deadline the
   // attendance/regularization auto-resolve flow hangs on.
-  payrollCutoffDay    Int    @default(25) @map("payroll_cutoff_day")
+  payrollCutoffDay    Int     @default(25) @map("payroll_cutoff_day")
   // Leave approval chain depth (1 or 2 for V1).
-  leaveApprovalLevels Int    @default(2) @map("leave_approval_levels")
+  leaveApprovalLevels Int     @default(2) @map("leave_approval_levels")
   // Days a leave request may sit undecided at a level before the escalation
   // job flags it (see apps/api/src/leave/leave-escalation.processor.ts).
-  leaveEscalationDays Int    @default(3) @map("leave_escalation_days")
+  leaveEscalationDays Int     @default(3) @map("leave_escalation_days")
   // Whether an employee may submit a request that will be Loss of Pay.
   // Enforced by LeaveService.apply().
   allowLopRequests    Boolean @default(true) @map("allow_lop_requests")
   // Financial-year start month (1-12; India default April). Used by
   // resolveLeaveYear() (apps/api/src/leave/leave-year.util.ts) to shift the
   // balance-year boundary for apply()/getBalances()/teamBalances()/the accrual job.
-  fyStartMonth        Int    @default(4) @map("fy_start_month")
+  fyStartMonth        Int     @default(4) @map("fy_start_month")
 
-  // First-run setup wizard (docs/TENANT_CONFIGURATION.md "Onboarding flow"
-  // step 3) — skippable, resumable. `setupWizardStep` is the 0-indexed step
-  // to resume at; meaningless once status is DISMISSED/COMPLETED.
-  setupWizardStatus TenantSetupWizardStatus @default(PENDING) @map("setup_wizard_status")
-  setupWizardStep   Int                     @default(0) @map("setup_wizard_step")
+  // The day the company started running HR on Lumen, set by company setup
+  // (apps/api/src/setup). Leave entitlement for anyone without an imported
+  // opening balance is prorated from here, and the accrual job never credits
+  // a period before it. Null = treat as "always" (no go-live clipping).
+  goLiveDate DateTime? @map("go_live_date") @db.Date
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -1348,11 +1446,11 @@ model SalaryComponent {
 // posture as PayrollRun.preparedBy — so a structure can be superseded/
 // deleted later without constraining this history row.
 model SalaryRevision {
-  id                  String @id @default(uuid()) @db.Uuid
-  tenantId            String @map("tenant_id") @db.Uuid
-  employeeId          String @map("employee_id") @db.Uuid
+  id                  String  @id @default(uuid()) @db.Uuid
+  tenantId            String  @map("tenant_id") @db.Uuid
+  employeeId          String  @map("employee_id") @db.Uuid
   previousStructureId String? @map("previous_structure_id") @db.Uuid
-  newStructureId      String @map("new_structure_id") @db.Uuid
+  newStructureId      String  @map("new_structure_id") @db.Uuid
 
   effectiveDate DateTime @map("effective_date") @db.Date
   reason        String
@@ -1361,7 +1459,7 @@ model SalaryRevision {
   approvedBy    String   @map("approved_by") @db.Uuid
   createdAt     DateTime @default(now()) @map("created_at")
 
-  employee        Employee          @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  employee         Employee          @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   arrearsLineItems ArrearsLineItem[]
 
   @@index([tenantId])
@@ -1389,8 +1487,8 @@ model ArrearsLineItem {
   employeeId String @map("employee_id") @db.Uuid
   revisionId String @map("revision_id") @db.Uuid
 
-  period        String // the corrected PayrollRun's period, YYYY-MM
-  originalRunId String  @map("original_run_id") @db.Uuid
+  period         String // the corrected PayrollRun's period, YYYY-MM
+  originalRunId  String  @map("original_run_id") @db.Uuid
   previousNetPay Decimal @map("previous_net_pay") @db.Decimal(14, 2)
   revisedNetPay  Decimal @map("revised_net_pay") @db.Decimal(14, 2)
   // revisedNetPay - previousNetPay; signed (negative if the revision pays less).
@@ -1452,13 +1550,13 @@ model FullAndFinalSettlement {
 
   calculationSnapshot Json @default("{}") @map("calculation_snapshot")
 
-  status FullAndFinalSettlementStatus @default(DRAFT)
+  status     FullAndFinalSettlementStatus @default(DRAFT)
   // The User (not Employee) who triggered generation/approval — plain
   // references, like PayrollRun.preparedBy.
-  preparedBy String    @map("prepared_by") @db.Uuid
-  approvedBy String?   @map("approved_by") @db.Uuid
-  approvedAt DateTime? @map("approved_at")
-  paidAt     DateTime? @map("paid_at")
+  preparedBy String                       @map("prepared_by") @db.Uuid
+  approvedBy String?                      @map("approved_by") @db.Uuid
+  approvedAt DateTime?                    @map("approved_at")
+  paidAt     DateTime?                    @map("paid_at")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -1528,12 +1626,12 @@ model PayrollSettings {
   // formula gratuityDaysPerYear/gratuityMonthDivisor x last-drawn Basic x
   // completed years of service, paid only once gratuityEligibilityYears is
   // reached. Tenant-editable, defaults are the common 15/26, 5-year rule.
-  gratuityEligibilityYears Int     @default(5) @map("gratuity_eligibility_years")
-  gratuityDaysPerYear      Decimal @default(15) @map("gratuity_days_per_year") @db.Decimal(5, 2)
-  gratuityMonthDivisor     Decimal @default(26) @map("gratuity_month_divisor") @db.Decimal(5, 2)
+  gratuityEligibilityYears  Int      @default(5) @map("gratuity_eligibility_years")
+  gratuityDaysPerYear       Decimal  @default(15) @map("gratuity_days_per_year") @db.Decimal(5, 2)
+  gratuityMonthDivisor      Decimal  @default(26) @map("gratuity_month_divisor") @db.Decimal(5, 2)
   // Statutory max gratuity payout (notification S.O. 1420(E), ₹20L) —
   // Phase 9 statutory review. Tenant-editable, not a constant.
-  gratuityMaxAmount        Decimal @default(2000000) @map("gratuity_max_amount") @db.Decimal(12, 2)
+  gratuityMaxAmount         Decimal  @default(2000000) @map("gratuity_max_amount") @db.Decimal(12, 2)
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -1578,10 +1676,10 @@ model PayrollRun {
   // warnings (RULE-7) — [{ employeeId?, type, detail }].
   exceptions Json @default("[]")
 
-  processedAt  DateTime? @map("processed_at")
-  disbursedAt  DateTime? @map("disbursed_at")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  processedAt DateTime? @map("processed_at")
+  disbursedAt DateTime? @map("disbursed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
 
   lineItems PayrollLineItem[]
   approvals PayrollRunApproval[]
@@ -1628,7 +1726,7 @@ model PayrollLineItem {
   // The scalar columns below are denormalized copies of its summary
   // figures for easy querying; calculationSnapshot is the source of truth
   // a future compliance filing (module 08) reads the EPF/ESI split from.
-  calculationSnapshot Json    @map("calculation_snapshot") @default("{}")
+  calculationSnapshot Json    @default("{}") @map("calculation_snapshot")
   workingDays         Int     @map("working_days")
   payableDays         Int     @map("payable_days")
   lopDays             Int     @map("lop_days")
@@ -1642,8 +1740,8 @@ model PayrollLineItem {
   // [{ type, amount, note? }] — advance/bonus/incentive/gratuity-payout
   // entries folded into netPay but never fed back into the statutory wage
   // base (V1 simplification).
-  adHocAdjustments   Json    @default("[]") @map("ad_hoc_adjustments")
-  netPay             Decimal @map("net_pay") @db.Decimal(14, 2)
+  adHocAdjustments    Json    @default("[]") @map("ad_hoc_adjustments")
+  netPay              Decimal @map("net_pay") @db.Decimal(14, 2)
 
   // S3 key of the DOB-locked payslip PDF (module 07 Phase 5), set during
   // `process()` — null for an employee excluded for missing dateOfBirth
@@ -1734,17 +1832,17 @@ model TdsRegimeChoice {
 
 // One row per captured Razorpay charge.
 model Payment {
-  id                     String   @id @default(uuid()) @db.Uuid
-  tenantId               String   @map("tenant_id") @db.Uuid
-  razorpayPaymentId      String   @unique @map("razorpay_payment_id")
-  razorpaySubscriptionId String   @map("razorpay_subscription_id")
+  id                     String    @id @default(uuid()) @db.Uuid
+  tenantId               String    @map("tenant_id") @db.Uuid
+  razorpayPaymentId      String    @unique @map("razorpay_payment_id")
+  razorpaySubscriptionId String    @map("razorpay_subscription_id")
   // Money is NUMERIC, never float. Razorpay sends paise; stored in rupees.
-  amount                 Decimal  @db.Decimal(12, 2)
-  currency               String   @default("INR")
-  paidAt                 DateTime @map("paid_at")
+  amount                 Decimal   @db.Decimal(12, 2)
+  currency               String    @default("INR")
+  paidAt                 DateTime  @map("paid_at")
   // End of the period this charge covers (becomes Subscription.renewsAt).
   periodEnd              DateTime? @map("period_end")
-  createdAt              DateTime @default(now()) @map("created_at")
+  createdAt              DateTime  @default(now()) @map("created_at")
 
   @@index([tenantId, paidAt])
   @@map("payments")

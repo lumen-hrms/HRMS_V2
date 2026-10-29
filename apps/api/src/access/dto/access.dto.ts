@@ -53,6 +53,7 @@ export class AuditQueryDto {
     'user.deactivated',
     'password_reset.sent',
     'user.created',
+    'user.linked',
     'ALL',
   ])
   action?: string;

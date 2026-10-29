@@ -83,14 +83,18 @@ function buildHarness(
     logMany: jest.fn().mockResolvedValue(undefined),
   };
   const authEmails = { sendPasswordReset: jest.fn().mockResolvedValue('ses') };
+  const entitlement = {
+    applyPolicyDefaults: jest.fn().mockResolvedValue({ credited: 0, balancesCreated: 0 }),
+  };
   const service = new EmployeeImportService(
     { tenantId: 'tenant-1', client } as any,
     fieldEncryption as any,
     firebaseAuth as any,
     audit as any,
     authEmails as any,
+    entitlement as any,
   );
-  return { service, client, firebaseAuth, fieldEncryption, audit, authEmails };
+  return { service, client, firebaseAuth, fieldEncryption, audit, authEmails, entitlement };
 }
 
 describe('EmployeeImportService — dry run', () => {
@@ -284,6 +288,38 @@ describe('EmployeeImportService — reporting managers', () => {
 });
 
 describe('EmployeeImportService — commit', () => {
+  it('gives the new hires (not the updated rows) this year’s leave right away', async () => {
+    const h = buildHarness({ employees: [{ id: 'emp-old', employeeCode: 'OLD' }] });
+    await h.service.import(
+      csv(
+        row({ employeeCode: 'E1', firstName: 'A', lastName: 'B' }),
+        row({ employeeCode: 'OLD', workState: 'KARNATAKA' }),
+      ),
+      actor(),
+      false,
+    );
+
+    expect(h.entitlement.applyPolicyDefaults).toHaveBeenCalledWith(
+      h.client,
+      'tenant-1',
+      expect.any(Date),
+      { employeeIds: ['emp-1'] },
+    );
+  });
+
+  it('does not fail the import when applying leave policy fails', async () => {
+    const h = buildHarness();
+    h.entitlement.applyPolicyDefaults.mockRejectedValue(new Error('db hiccup'));
+
+    const report = await h.service.import(
+      csv(row({ employeeCode: 'E1', firstName: 'A', lastName: 'B' })),
+      actor(),
+      false,
+    );
+
+    expect(report.succeeded).toBe(1);
+  });
+
   it('encrypts PAN and bank account, stores only ciphertext + mask, and audits field names only', async () => {
     const h = buildHarness();
     await h.service.import(

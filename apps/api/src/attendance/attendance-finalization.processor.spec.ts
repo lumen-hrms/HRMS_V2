@@ -6,6 +6,9 @@ jest.mock('../prisma/with-tenant-context');
 function buildTenantClient(overrides: Record<string, any> = {}) {
   return {
     holiday: { findFirst: jest.fn().mockResolvedValue(null) },
+    tenantSetup: {
+      findUnique: jest.fn().mockResolvedValue({ completedAt: new Date('2026-01-01') }),
+    },
     tenantSettings: {
       findUniqueOrThrow: jest
         .fn()
@@ -152,6 +155,34 @@ describe('AttendanceFinalizationProcessor', () => {
       expect(client.attendanceRecord.upsert).toHaveBeenCalledWith(
         expect.objectContaining({ create: expect.objectContaining({ status: 'ABSENT' }) }),
       );
+    });
+
+    it('skips a tenant that has not finished company setup', async () => {
+      const { processor, client } = buildProcessor(['t1'], {
+        tenantSetup: { findUnique: jest.fn().mockResolvedValue(null) },
+        employee: { findMany: jest.fn().mockResolvedValue([{ id: 'emp-1', shiftId: null }]) },
+      });
+
+      await processor.runFinalization(new Date('2026-03-03T02:00:00Z'));
+
+      expect(client.attendanceRecord.upsert).not.toHaveBeenCalled();
+    });
+
+    it('never marks a day before the tenant’s go-live date', async () => {
+      const { processor, client } = buildProcessor(['t1'], {
+        tenantSettings: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            weeklyOffDays: [0, 6],
+            payrollCutoffDay: 25,
+            goLiveDate: new Date('2026-03-15'),
+          }),
+        },
+        employee: { findMany: jest.fn().mockResolvedValue([{ id: 'emp-1', shiftId: null }]) },
+      });
+
+      await processor.runFinalization(new Date('2026-03-03T02:00:00Z'));
+
+      expect(client.attendanceRecord.upsert).not.toHaveBeenCalled();
     });
 
     it('never touches a day that already has a real outcome', async () => {

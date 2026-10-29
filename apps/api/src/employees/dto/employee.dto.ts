@@ -102,6 +102,19 @@ export class CreateEmployeeDto {
   @IsOptional()
   @IsIn(['COMPANY_ADMIN', 'HR_MANAGER', 'LINE_MANAGER', 'EMPLOYEE', 'AUDITOR'])
   loginRole?: string;
+
+  // Alternative to loginEmail/loginTempPassword: link a login that already
+  // exists in this tenant and has no employee yet (e.g. the Company Admin
+  // created at onboarding). Never both.
+  @IsOptional()
+  @IsUUID()
+  existingUserId?: string;
+}
+
+/** `PATCH /employees/:id/login` — link an existing, unlinked login to this employee. */
+export class LinkLoginDto {
+  @IsUUID()
+  userId!: string;
 }
 
 export class UpdateEmployeeDto {

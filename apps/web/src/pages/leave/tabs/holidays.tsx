@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { CalendarPlus, PartyPopper, Trash2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { CalendarPlus, PartyPopper, Trash2, Upload } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -47,15 +48,25 @@ export function HolidaysTab({ canManage }: { canManage: boolean }) {
           <Button variant="outline" size="sm" onClick={() => setYear((y) => y - 1)}>
             ‹ {year - 1}
           </Button>
-          <span className="text-sm font-semibold">{year}</span>
+          <span className="text-sm font-semibold" title="Leave year">
+            {year}
+          </span>
           <Button variant="outline" size="sm" onClick={() => setYear((y) => y + 1)}>
             {year + 1} ›
           </Button>
         </div>
         {canManage && (
-          <Button size="sm" onClick={() => setAddOpen(true)}>
-            <CalendarPlus className="h-4 w-4" /> Add holiday
-          </Button>
+          <div className="flex gap-2">
+            <Link
+              to="/leave/holidays/import"
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-3 text-sm font-medium hover:bg-accent"
+            >
+              <Upload className="h-4 w-4" /> Import
+            </Link>
+            <Button size="sm" onClick={() => setAddOpen(true)}>
+              <CalendarPlus className="h-4 w-4" /> Add holiday
+            </Button>
+          </div>
         )}
       </div>
 

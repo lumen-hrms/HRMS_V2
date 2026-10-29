@@ -4,10 +4,10 @@ import { Card } from '@/components/ui/card';
 import { SkeletonRows } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { BalanceCard } from '@/pages/leave/components/balance-card';
-import { LeaveStatusBadge, dayLabel, fmtDate, fmtRange } from '@/pages/leave/shared';
+import { LeaveStatusBadge, NoEmployeeProfile, dayLabel, fmtDate, fmtRange } from '@/pages/leave/shared';
 import { leaveApi } from '@/lib/leave/client';
 import { MOCK_CURRENT_YEAR } from '@/lib/leave/fixtures';
-import type { Holiday, LeaveBalance, LeaveRequest } from '@/lib/leave/types';
+import type { EventLeaveAllowance, Holiday, LeaveBalance, LeaveRequest } from '@/lib/leave/types';
 import { useLeaveCtx } from '@/pages/leave/use-leave-ctx';
 
 /**
@@ -19,17 +19,18 @@ export function OverviewTab({ onOpenRequest }: { onOpenRequest: (r: LeaveRequest
   const [balances, setBalances] = React.useState<LeaveBalance[] | null>(null);
   const [requests, setRequests] = React.useState<LeaveRequest[] | null>(null);
   const [holidays, setHolidays] = React.useState<Holiday[]>([]);
+  const [special, setSpecial] = React.useState<EventLeaveAllowance[]>([]);
 
   React.useEffect(() => {
-    if (!ctx) return;
+    if (!ctx?.employeeId) return;
     leaveApi.balances(ctx.employeeId, MOCK_CURRENT_YEAR).then(setBalances);
     leaveApi.requestsForEmployee(ctx.employeeId).then(setRequests);
+    leaveApi.eventLeave(ctx.employeeId).then(setSpecial);
     leaveApi.listHolidays(MOCK_CURRENT_YEAR).then(setHolidays);
   }, [ctx]);
 
-  if (!ctx) {
-    return <p className="text-sm text-muted-foreground">This account has no linked employee record.</p>;
-  }
+  if (!ctx) return null;
+  if (!ctx.employeeId) return <NoEmployeeProfile role={ctx.role} />;
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const nextHoliday = holidays.find((h) => h.date >= todayIso);
@@ -60,6 +61,27 @@ export function OverviewTab({ onOpenRequest }: { onOpenRequest: (r: LeaveRequest
           </div>
         )}
       </section>
+
+      {special.length > 0 && (
+        <section>
+          <h2 className="mb-3 text-sm font-medium text-muted-foreground">
+            Special leave — taken per event, no yearly balance
+          </h2>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {special.map((a) => (
+              <Card key={a.leaveType.id} className="p-4">
+                <p className="text-sm font-medium">{a.leaveType.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {a.nextAllowanceDays > 0
+                    ? `${a.nextAllowanceDays} ${a.countCalendarDays ? 'calendar' : 'working'} days per event`
+                    : 'Already used'}
+                  {a.maxEvents ? ` · ${a.eventsUsed} of ${a.maxEvents} used` : a.eventsUsed > 0 ? ` · used ${a.eventsUsed}×` : ''}
+                </p>
+              </Card>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <MiniStat

@@ -1,35 +1,43 @@
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
-import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
-import { AccrualFrequency } from '@prisma/client';
+import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { Job, Queue } from 'bullmq';
 import { PAUSED_WORKER, startBackgroundWorker } from '../common/background-workers';
 import { PlatformPrismaClientProvider } from '../prisma/platform-prisma-client.provider';
 import { TenantPrismaClientProvider } from '../prisma/tenant-prisma-client.provider';
 import { withTenantContext } from '../prisma/with-tenant-context';
 import { LEAVE_QUEUE } from './leave.constants';
-import { resolveLeaveYear } from './leave-year.util';
-
-const ACCRUAL_DIVISOR: Record<'MONTHLY' | 'QUARTERLY', number> = { MONTHLY: 12, QUARTERLY: 4 };
+import { LeaveEntitlementService } from './leave-entitlement.service';
 
 /**
- * Daily repeatable job (registered once at boot). Only does real work on the
- * 1st of a month: credits MONTHLY leave types every month, QUARTERLY types
- * every Jan/Apr/Jul/Oct. ANNUAL types are unaffected — those are still
- * seeded via the manual `initialize/:year` endpoint. Idempotent per
- * employee/type/month via a `LeaveLedgerEntry` existence check, so a missed
- * or re-run day never double-credits.
+ * Daily repeatable job (registered once at boot) that keeps every set-up
+ * tenant's balances in line with its leave policy, via
+ * `LeaveEntitlementService` (rules in `leave-entitlement.ts`):
  *
- * V1 scope: this loops per tenant/type/employee rather than a batched SQL
- * update — fine at startup/hospital-pilot scale, revisit if tenant or
- * headcount volume grows.
+ * 1. In the first week of a new leave year, carry unused balance forward
+ *    (capped per type).
+ * 2. Credit whatever the policy owes and the ledger doesn't hold yet — the
+ *    ANNUAL grant at the start of the year (prorated for mid-year joiners),
+ *    each MONTHLY/QUARTERLY period as it starts, and anything a newly added
+ *    or back-dated employee missed.
+ *
+ * Both steps are ledger-idempotent, so a missed or re-run day never
+ * double-credits. A tenant still in company setup is skipped — its policy
+ * isn't final until setup is submitted, and submit credits the opening
+ * year itself.
+ *
+ * V1 scope: loops per tenant rather than a batched cross-tenant query —
+ * fine at startup/hospital-pilot scale, revisit if tenant volume grows.
  */
 @Injectable()
 @Processor(LEAVE_QUEUE, PAUSED_WORKER)
 export class LeaveAccrualProcessor extends WorkerHost implements OnApplicationBootstrap {
+  private readonly logger = new Logger(LeaveAccrualProcessor.name);
+
   constructor(
     @InjectQueue(LEAVE_QUEUE) private readonly leaveQueue: Queue,
     private readonly platformPrisma: PlatformPrismaClientProvider,
     private readonly tenantPrismaRaw: TenantPrismaClientProvider,
+    private readonly entitlement: LeaveEntitlementService,
   ) {
     super();
   }
@@ -52,117 +60,31 @@ export class LeaveAccrualProcessor extends WorkerHost implements OnApplicationBo
   }
 
   async runAccrual(today: Date) {
-    if (today.getUTCDate() !== 1) return;
-
     const tenants = await this.platformPrisma.tenant.findMany({
       where: { status: { not: 'SUSPENDED' } },
       select: { id: true },
     });
     for (const tenant of tenants) {
-      await this.accrueForTenant(tenant.id, today);
+      try {
+        await this.accrueForTenant(tenant.id, today);
+      } catch (err) {
+        // One tenant's bad data must not stop every other tenant's accrual.
+        this.logger.error(
+          `Leave accrual failed for tenant ${tenant.id}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
     }
   }
 
-  private async accrueForTenant(tenantId: string, today: Date) {
+  async accrueForTenant(tenantId: string, today: Date) {
     const client = withTenantContext(this.tenantPrismaRaw, tenantId);
-    const year = today.getUTCFullYear();
-    const month = today.getUTCMonth(); // 0-based
-    const isQuarterBoundary = [0, 3, 6, 9].includes(month);
-    const frequencies: AccrualFrequency[] = isQuarterBoundary
-      ? [AccrualFrequency.MONTHLY, AccrualFrequency.QUARTERLY]
-      : [AccrualFrequency.MONTHLY];
-
-    const types = await client.leaveType.findMany({
-      where: { accrualFrequency: { in: frequencies } },
+    const setup = await client.tenantSetup.findUnique({
+      where: { tenantId },
+      select: { completedAt: true },
     });
-    if (types.length === 0) return;
-    const settings = await client.tenantSettings.findUniqueOrThrow({ where: { tenantId } });
-    const leaveYear = resolveLeaveYear(today, settings.fyStartMonth);
-    const employees = await client.employee.findMany({
-      select: { id: true, dateOfJoining: true },
-    });
-
-    for (const type of types) {
-      const divisor = ACCRUAL_DIVISOR[type.accrualFrequency as 'MONTHLY' | 'QUARTERLY'];
-      const fullIncrement = Number(type.annualQuota) / divisor;
-      const periodStart = new Date(Date.UTC(year, month, 1));
-      const periodEnd = new Date(Date.UTC(year, month + 1, 1));
-
-      for (const emp of employees) {
-        // Not yet joined this period — no accrual at all.
-        if (emp.dateOfJoining && emp.dateOfJoining.getTime() >= periodEnd.getTime()) continue;
-
-        // Joined mid-period — prorate this period's increment by the days actually employed.
-        let increment = fullIncrement;
-        if (
-          emp.dateOfJoining &&
-          emp.dateOfJoining.getTime() >= periodStart.getTime() &&
-          emp.dateOfJoining.getTime() < periodEnd.getTime()
-        ) {
-          const fraction =
-            (periodEnd.getTime() - emp.dateOfJoining.getTime()) /
-            (periodEnd.getTime() - periodStart.getTime());
-          increment = fullIncrement * fraction;
-        }
-
-        const already = await client.leaveLedgerEntry.findFirst({
-          where: {
-            employeeId: emp.id,
-            leaveTypeId: type.id,
-            source: 'ACCRUAL',
-            occurredAt: { gte: periodStart, lt: periodEnd },
-          },
-        });
-        if (already) continue;
-
-        const existing = await client.leaveBalance.findUnique({
-          where: {
-            tenantId_employeeId_leaveTypeId_year: {
-              tenantId,
-              employeeId: emp.id,
-              leaveTypeId: type.id,
-              year: leaveYear,
-            },
-          },
-        });
-        const currentAccrued = existing ? Number(existing.accrued) : 0;
-        const newAccrued = Math.min(currentAccrued + increment, Number(type.annualQuota));
-        const actualIncrement = newAccrued - currentAccrued;
-        if (actualIncrement <= 0) continue;
-
-        const balance = await client.leaveBalance.upsert({
-          where: {
-            tenantId_employeeId_leaveTypeId_year: {
-              tenantId,
-              employeeId: emp.id,
-              leaveTypeId: type.id,
-              year: leaveYear,
-            },
-          },
-          create: {
-            tenantId,
-            employeeId: emp.id,
-            leaveTypeId: type.id,
-            year: leaveYear,
-            accrued: newAccrued,
-            used: 0,
-          },
-          update: { accrued: newAccrued },
-        });
-
-        await client.leaveLedgerEntry.create({
-          data: {
-            tenantId,
-            employeeId: emp.id,
-            leaveTypeId: type.id,
-            delta: actualIncrement,
-            balanceAfter: newAccrued - Number(balance.used),
-            source: 'ACCRUAL',
-            note: `Periodic accrual for ${year}-${String(month + 1).padStart(2, '0')}`,
-            actorUserId: null,
-          },
-        });
-      }
-    }
+    if (!setup?.completedAt) return;
+    await this.entitlement.applyCarryForward(client, tenantId, today);
+    await this.entitlement.applyPolicyDefaults(client, tenantId, today);
   }
 }
