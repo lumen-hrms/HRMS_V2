@@ -136,6 +136,7 @@ use**, since it's printed in plaintext by the seed script.
 | Gamma Logistics (`gamma`) | `admin@gamma.test` | Company Admin  |
 | Gamma Logistics (`gamma`) | `hr@gamma.test`    | HR Manager     |
 | Gamma Logistics (`gamma`) | `employee@gamma.test` | Employee    |
+| Redbull Racing (`redbullracing`)| `anujm0707@gmail.com`| Company Admin (`pswd: Redbull@123`)
 
 **Password for all 15 accounts above: `Passw0rd!123`**
 
