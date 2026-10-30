@@ -189,7 +189,7 @@ export const setupApi = {
       savedAt: string | null;
       files: { employees: FileSummary | null; balances: FileSummary | null };
     }>('/setup/draft'),
-  save: (draft: SetupDraft) => api.put<{ savedAt: string }>('/setup/draft', { draft }),
+  save: (draft: SetupDraft) => api.put<{ savedAt: string; validation: SetupValidation }>('/setup/draft', { draft }),
   validate: () => api.post<SetupValidation>('/setup/validate'),
   uploadFile: (kind: 'employees' | 'balances', file: File) =>
     api.upload<{ file: FileSummary; report: ImportReport | null }>(`/setup/files/${kind}`, file),

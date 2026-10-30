@@ -255,6 +255,32 @@ describe('SetupService', () => {
       expect(saved.shifts[0].existingId).toBeUndefined();
     });
 
+    it('ignores new department rows left completely blank', async () => {
+      const { service, getSetup } = build();
+      const incoming = validDraft({
+        departments: [{ name: 'Sales' }, { name: '  ' }, { name: '', code: '' }],
+      });
+
+      await service.saveDraft(actor(), incoming);
+
+      const saved: SetupDraft = JSON.parse(getSetup().draftCiphertext.slice(4));
+      expect(saved.departments).toEqual([
+        { existingId: 'dept-saved', name: 'Operations', code: '' },
+        { name: 'Sales' },
+      ]);
+    });
+
+    it('returns the validation of what it saved, without the internal plan', async () => {
+      const { service } = build();
+
+      const res = await service.saveDraft(actor(), validDraft());
+
+      expect(res.savedAt).toBeInstanceOf(Date);
+      expect(res.validation.issues.filter((i) => i.level === 'error')).toEqual([]);
+      expect(res.validation).not.toHaveProperty('planned');
+      expect(res.validation).not.toHaveProperty('balances');
+    });
+
     it('stores the draft encrypted, never as plain JSON', async () => {
       const { service, getSetup } = build();
       await service.saveDraft(actor(), validDraft());

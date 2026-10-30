@@ -177,17 +177,23 @@ export class SetupService {
    * browser (they hold PII), so the stored ones are kept as they are.
    */
   async saveDraft(actor: AuthenticatedUser, incoming: Partial<SetupDraft>) {
-    const setup = await this.assertEditable();
+    const [setup, saved] = await Promise.all([this.assertEditable(), this.savedRows()]);
     const stored = setup?.draftCiphertext ? this.decrypt(setup.draftCiphertext) : null;
-    const draft = this.sanitize(incoming, stored, await this.savedRows());
+    const draft = this.sanitize(incoming, stored, saved);
     if (
       JSON.stringify({ ...draft.profile, forUserId: undefined }) !==
       JSON.stringify({ ...stored?.profile, forUserId: undefined })
     ) {
       draft.profile.forUserId = actor.sub;
     }
-    const savedAt = await this.persist(draft, actor);
-    return { savedAt };
+    // Saving and validating don't depend on each other, and the browser needs
+    // both before it moves on — so one request, run side by side.
+    const [savedAt, result] = await Promise.all([
+      this.persist(draft, actor),
+      this.validateDraft(draft, actor, { deep: false }),
+    ]);
+    const { ok, issues, employeeReport, balanceReport } = result;
+    return { savedAt, validation: { ok, issues, employeeReport, balanceReport } };
   }
 
   // ---- Uploads ----
@@ -1100,8 +1106,9 @@ export class SetupService {
       // reflect the DB; the browser only contributes new ones.
       departments: [
         ...saved.departments,
+        // A new row left blank (name and code) is just ignored.
         ...arr<SetupDraft['departments'][number]>(incoming.departments).filter(
-          (d) => !d.existingId,
+          (d) => !d.existingId && (d.name?.trim() || d.code?.trim()),
         ),
       ],
       workWeek: obj(incoming.workWeek, { timezone: 'Asia/Kolkata', weeklyOffDays: [] }),
