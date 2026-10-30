@@ -54,7 +54,8 @@ function Branch({ node, h }: { node: OrgNode; h: TreeHandlers }) {
               <div
                 className={cn(
                   'grid gap-2 rounded-2xl border border-dashed border-border bg-muted/30 p-2.5',
-                  node.directReports.length > 6 ? 'grid-cols-2' : 'grid-cols-1',
+                  // Fixed tracks = the compact card width (w-60), so columns can't squeeze into each other.
+                  node.directReports.length > 6 ? 'grid-cols-[repeat(2,15rem)]' : 'grid-cols-[15rem]',
                 )}
               >
                 {node.directReports.map((r) => (
