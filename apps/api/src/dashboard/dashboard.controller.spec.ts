@@ -32,8 +32,15 @@ function buildController(opts: {
       findUnique: jest.fn().mockResolvedValue({ enabledModules: opts.enabledModules }),
     },
   };
-  const controller = new DashboardController(tenantPrisma, leave, attendance, platformPrisma);
-  return { controller, attendance, platformPrisma };
+  const insights: any = { build: jest.fn().mockResolvedValue({ activeHeadcount: 7 }) };
+  const controller = new DashboardController(
+    tenantPrisma,
+    leave,
+    attendance,
+    platformPrisma,
+    insights,
+  );
+  return { controller, attendance, platformPrisma, insights };
 }
 
 describe('DashboardController', () => {
@@ -104,5 +111,33 @@ describe('DashboardController', () => {
 
     expect(result.view).toBe('admin');
     expect(result.todayAttendance?.status).toBe('LATE');
+  });
+
+  it('adds the workforce insights to the admin view, telling them which optional modules the plan has', async () => {
+    const { controller, insights } = buildController({
+      role: 'COMPANY_ADMIN',
+      enabledModules: ['CORE_HR', 'LEAVE', 'PAYROLL'],
+    });
+
+    const result: any = await controller.home({ ...baseUser, role: 'COMPANY_ADMIN' });
+
+    expect(result.insights).toEqual({ activeHeadcount: 7 });
+    expect(insights.build).toHaveBeenCalledWith({
+      pendingApprovals: expect.any(Promise),
+      attendance: false,
+      payroll: true,
+    });
+    await expect(insights.build.mock.calls[0][0].pendingApprovals).resolves.toEqual([]);
+  });
+
+  it('does not build admin insights for an Employee', async () => {
+    const { controller, insights } = buildController({
+      role: 'EMPLOYEE',
+      enabledModules: ['CORE_HR'],
+    });
+
+    await controller.home(baseUser);
+
+    expect(insights.build).not.toHaveBeenCalled();
   });
 });

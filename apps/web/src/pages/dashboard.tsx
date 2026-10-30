@@ -22,6 +22,7 @@ import { useAuth } from '@/context/auth-context';
 import { Link } from 'react-router-dom';
 import { useSetupStatus } from '@/lib/setup-status';
 import { setupApi } from '@/lib/setup';
+import { AdminOverview, type AdminDashboardData } from '@/pages/dashboard-admin';
 
 const APPROVER_ROLES = ['LINE_MANAGER', 'HR_MANAGER', 'COMPANY_ADMIN'];
 
@@ -34,13 +35,7 @@ interface TodayAttendanceSnapshot {
   targetHours: number;
 }
 
-interface AdminDashboard {
-  view: 'admin';
-  headcount: number;
-  departmentBreakdown: { name: string; count: number }[];
-  pendingApprovalsCount: number;
-  todayAttendance: TodayAttendanceSnapshot | null;
-}
+type AdminDashboard = AdminDashboardData & { todayAttendance: TodayAttendanceSnapshot | null };
 
 interface EmployeeDashboard {
   view: 'employee';
@@ -61,6 +56,11 @@ interface EmployeeDashboard {
 }
 
 type DashboardData = AdminDashboard | EmployeeDashboard;
+
+function greeting() {
+  const h = new Date().getHours();
+  return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+}
 
 export function DashboardPage() {
   const { user } = useAuth();
@@ -132,8 +132,11 @@ export function DashboardPage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold">Welcome back{user ? `, ${user.email}` : ''}</h1>
-        <p className="text-sm text-muted-foreground">Here's what's happening across your organization.</p>
+        <h1 className="text-xl font-semibold">{greeting()}</h1>
+        <p className="text-sm text-muted-foreground">
+          {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+          {' · '}Here's what's happening across your organization.
+        </p>
       </div>
 
       {user?.role === 'COMPANY_ADMIN' && <SetupFollowUps />}
@@ -147,49 +150,7 @@ export function DashboardPage() {
       )}
 
       {data.view === 'admin' ? (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <Card>
-            <CardHeader>
-              <CardDescription>Total headcount</CardDescription>
-              <CardTitle className="text-3xl">{data.headcount}</CardTitle>
-            </CardHeader>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardDescription>Pending approvals</CardDescription>
-              <CardTitle className="text-3xl">{data.pendingApprovalsCount}</CardTitle>
-            </CardHeader>
-          </Card>
-          <Card className="sm:col-span-2 lg:col-span-1">
-            <CardHeader>
-              <CardDescription>Departments</CardDescription>
-              <CardTitle className="text-3xl">{data.departmentBreakdown.length}</CardTitle>
-            </CardHeader>
-          </Card>
-          <Card className="sm:col-span-2 lg:col-span-3">
-            <CardHeader>
-              <CardTitle>Headcount by department</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-col gap-2">
-                {data.departmentBreakdown.map((d) => {
-                  const pct = (d.count / Math.max(1, data.headcount)) * 100;
-                  return (
-                    <div key={d.name} className="flex items-center gap-3">
-                      <span className="w-32 shrink-0 truncate text-sm">{d.name}</span>
-                      <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
-                        <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
-                      </div>
-                      <span className="w-24 shrink-0 text-right text-sm text-muted-foreground">
-                        {d.count} ({pct.toFixed(1)}%)
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+        <AdminOverview data={data} busyKey={busy} onDecide={decide} />
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <Card>
