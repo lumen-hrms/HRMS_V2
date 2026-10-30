@@ -325,6 +325,11 @@ export class UpdateLeaveSettingsDto {
   @IsIn([1, 2])
   leaveApprovalLevels?: 1 | 2;
 
+  /** Who decides at one level: HR, or the reporting manager alone. */
+  @IsOptional()
+  @IsIn(['HR', 'MANAGER'])
+  leaveSingleApprover?: 'HR' | 'MANAGER';
+
   @IsOptional()
   @IsInt()
   @Min(1)

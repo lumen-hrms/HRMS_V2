@@ -1021,6 +1021,105 @@ describe('LeaveService', () => {
       // single-level tenant skips L1 entirely.
       expect(result.status).toBe('PENDING_L2');
     });
+
+    const MANAGER_ONLY = {
+      leaveApprovalLevels: 1,
+      leaveSingleApprover: 'MANAGER',
+      leaveEscalationDays: 3,
+      weeklyOffDays: [0, 6],
+      allowLopRequests: true,
+      fyStartMonth: 1,
+    };
+
+    it.each([
+      ['mgr-1', 'PENDING_L1'],
+      [null, 'PENDING_L2'], // no reporting manager -> HR decides
+    ])(
+      'reporting-manager-only: an employee with manager %s starts at %s',
+      async (reportingManagerId, expected) => {
+        const tenantPrisma = buildFakeTenantPrisma({
+          employee: {
+            findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'emp-1', reportingManagerId }),
+          },
+          leaveBalance: { findUnique: jest.fn().mockResolvedValue({ accrued: 10, used: 0 }) },
+          tenantSettings: { findUniqueOrThrow: jest.fn().mockResolvedValue(MANAGER_ONLY) },
+        });
+        const service = new LeaveService(
+          tenantPrisma as any,
+          buildFakeDocuments(),
+          buildFakeQueue(),
+          buildFakeNotifications(),
+          new LeaveEntitlementService(),
+        );
+
+        const result = await service.apply(
+          { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-05' },
+          user(),
+        );
+        expect(result.status).toBe(expected);
+      },
+    );
+
+    it('reporting-manager-only: the manager’s L1 approval is final — balance, attendance, no HR step', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        leaveRequest: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            id: 'req-1',
+            status: 'PENDING_L1',
+            employeeId: 'emp-1',
+            leaveTypeId: 'lt-1',
+            days: 2,
+            isLop: false,
+            startDate: new Date('2026-01-05'),
+            endDate: new Date('2026-01-05'),
+            employee: { reportingManagerId: 'mgr-1' },
+          }),
+          update: jest.fn((args: any) => ({
+            id: args.where.id,
+            ...FAKE_REQUEST_SCALARS,
+            ...args.data,
+            ...FAKE_REQUEST_RELS,
+          })),
+        },
+        tenantSettings: { findUniqueOrThrow: jest.fn().mockResolvedValue(MANAGER_ONLY) },
+      });
+      const queue = buildFakeQueue();
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        queue,
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
+
+      // Someone who isn't the manager (or HR) still can't decide it.
+      await expect(
+        service.approve('req-1', user({ employeeId: 'someone-else', role: 'EMPLOYEE' })),
+      ).rejects.toThrow(ForbiddenException);
+
+      const result = await service.approve(
+        'req-1',
+        user({ employeeId: 'mgr-1', role: 'LINE_MANAGER' }),
+      );
+      expect(result.status).toBe('APPROVED');
+      expect(tenantPrisma.client.leaveRequest.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'APPROVED', l1ApproverId: 'mgr-1' }),
+        }),
+      );
+      expect(tenantPrisma.client.leaveApproval.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ level: 1, decision: 'APPROVED' }),
+        }),
+      );
+      expect(tenantPrisma.client.leaveBalance.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ update: expect.objectContaining({ used: { increment: 2 } }) }),
+      );
+      expect(tenantPrisma.client.attendanceRecord.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ create: expect.objectContaining({ status: 'ON_LEAVE' }) }),
+      );
+      expect(queue.add).not.toHaveBeenCalled(); // no L2 escalation timer
+    });
   });
 
   describe('apply() — escalation scheduling', () => {

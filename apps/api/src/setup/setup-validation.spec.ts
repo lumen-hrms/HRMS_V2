@@ -225,6 +225,21 @@ describe('validateConfig', () => {
       const c = ctx({ hasExistingBalances: true, savedFyStartMonth: 4 });
       expect(warnings(draft, c)).toContainEqual(expect.objectContaining({ field: 'fyStartMonth' }));
     });
+
+    it('accepts HR or the reporting manager as the single approver, and nothing else', () => {
+      const lp = validDraft().leavePolicy;
+      for (const leaveSingleApprover of ['HR', 'MANAGER'] as const) {
+        expect(
+          errors(
+            validDraft({ leavePolicy: { ...lp, leaveApprovalLevels: 1, leaveSingleApprover } }),
+          ),
+        ).toEqual([]);
+      }
+      const bad = validDraft({
+        leavePolicy: { ...lp, leaveSingleApprover: 'CEO' as unknown as 'HR' },
+      });
+      expect(errors(bad)).toEqual([expect.objectContaining({ field: 'leaveSingleApprover' })]);
+    });
   });
 });
 

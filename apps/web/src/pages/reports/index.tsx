@@ -83,13 +83,17 @@ export function ReportsPage() {
   const { toast } = useToast();
   const [tab, setTab] = React.useState<ReportKind>('headcount');
   const [period, setPeriod] = React.useState(defaultPeriod);
-  const [result, setResult] = React.useState<ReportResult<unknown> | null>(null);
+  // Tagged with its report so a previous tab's data is never drawn with the
+  // next tab's summary layout (they read different fields).
+  const [result, setResult] = React.useState<{ kind: ReportKind; data: ReportResult<unknown> } | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [exporting, setExporting] = React.useState(false);
+  const latestRequest = React.useRef(0);
 
   const load = React.useCallback(
     async (kind: ReportKind, p: typeof period) => {
+      const requestId = ++latestRequest.current;
       setLoading(true);
       setError(null);
       try {
@@ -105,12 +109,14 @@ export function ReportsPage() {
                   : kind === 'gratuity-register'
                     ? await fetchGratuityRegister({ from: p.from, to: p.to })
                     : await fetchRegister(kind, { period: p.period });
-        setResult(data);
+        if (requestId !== latestRequest.current) return; // a newer tab/period superseded this one
+        setResult({ kind, data });
       } catch (err) {
+        if (requestId !== latestRequest.current) return;
         setResult(null);
         setError(isApiError(err) ? err.message : 'Could not load this report — try again.');
       } finally {
-        setLoading(false);
+        if (requestId === latestRequest.current) setLoading(false);
       }
     },
     [],
@@ -140,6 +146,7 @@ export function ReportsPage() {
   }
 
   const active = TABS.find((t) => t.value === tab)!;
+  const shown = result?.kind === tab ? result.data : null;
 
   return (
     <div className="flex flex-col gap-5">
@@ -148,10 +155,10 @@ export function ReportsPage() {
         description="Workforce movement, payroll cost and statutory registers. Payroll figures come from processed runs only."
         actions={
           <>
-            <Button variant="outline" disabled={exporting || !result} onClick={() => handleExport('csv')}>
+            <Button variant="outline" disabled={exporting || !shown} onClick={() => handleExport('csv')}>
               <Download className="h-4 w-4" /> CSV
             </Button>
-            <Button variant="outline" disabled={exporting || !result} onClick={() => handleExport('xlsx')}>
+            <Button variant="outline" disabled={exporting || !shown} onClick={() => handleExport('xlsx')}>
               <Download className="h-4 w-4" /> Excel
             </Button>
           </>
@@ -212,32 +219,32 @@ export function ReportsPage() {
             </div>
 
             {error && <p className="text-sm text-destructive">{error}</p>}
-            {loading && !result && <p className="text-sm text-muted-foreground">Loading…</p>}
+            {loading && !shown && <p className="text-sm text-muted-foreground">Loading…</p>}
 
-            {result && tab === t.value && (
+            {shown && tab === t.value && (
               <>
-                <Summary kind={t.value} summary={result.summary} />
+                <Summary kind={t.value} summary={shown.summary} />
                 <Card>
                   <div className="overflow-x-auto">
                     <Table>
                       <THead>
                         <TR>
-                          {result.table.columns.map((c) => (
+                          {shown.table.columns.map((c) => (
                             <TH key={c.key}>{c.label}</TH>
                           ))}
                         </TR>
                       </THead>
                       <TBody>
-                        {result.table.rows.length === 0 && (
+                        {shown.table.rows.length === 0 && (
                           <TR>
-                            <TD colSpan={result.table.columns.length} className="text-center text-muted-foreground">
+                            <TD colSpan={shown.table.columns.length} className="text-center text-muted-foreground">
                               No data for this period.
                             </TD>
                           </TR>
                         )}
-                        {result.table.rows.map((row, i) => (
+                        {shown.table.rows.map((row, i) => (
                           <TR key={i}>
-                            {result.table.columns.map((c) => (
+                            {shown.table.columns.map((c) => (
                               <TD key={c.key} className="tabular-nums">
                                 {formatCell(row[c.key] ?? null, c.key)}
                               </TD>

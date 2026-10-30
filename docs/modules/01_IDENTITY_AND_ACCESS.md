@@ -107,10 +107,17 @@ every other module consumes them.
    A claim the client could set is never trusted.
 5. **Suspending a tenant is immediate.** A `SUSPENDED` tenant's users get
    403 at the resolution layer on their **next request**, not just next login.
+   *(Since 2026-10-30 the subdomain → tenant lookup is cached ≤ 30 s per API
+   instance — `auth-context-cache.ts`. Any tenant write clears it at once on
+   the instance that made it; other instances catch up within 30 s. The
+   console shows that window as a progress view. Owner-approved trade-off for
+   a ~0.7–1.4 s saving on every request.)*
 6. **Role changes take effect on next token refresh** (≤ 1 h, or immediately
    if the user re-authenticates) — acceptable for V1; document the window.
 7. **Deactivating a user** blocks their next request even with a still-valid
-   token (the `users` row is checked, not just the token).
+   token (the `users` row is checked, not just the token). Same ≤ 30 s
+   cross-instance window as rule 5. The cached row is cleared at once on any
+   user write or employee↔login link change.
 8. **Every login outcome is recorded** — success and failure, with IP,
    user-agent, tenant, timestamp, reason — retained 2 years. *(Not yet
    built — highest-value gap; see §9.)*
@@ -379,7 +386,8 @@ are noted below and in §9.
 - **RULE-4** — role set is **fixed** for V1 (`CLAUDE.md`). No custom roles,
   no per-module permission flags, no delegation.
 - **RULE-5** — deactivation is checked on every request against the `users`
-  row, so it does not wait for token expiry.
+  row (cached ≤ 30 s per API instance, cleared on write), so it does not
+  wait for token expiry.
 - **RULE-6** — login audit entries are append-only; `hrms_app` holds no
   `UPDATE`/`DELETE` grant on that table.
 

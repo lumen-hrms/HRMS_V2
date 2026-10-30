@@ -343,16 +343,22 @@ export class AttendanceService {
     const overtimeHours = this.sumOvertimeHours(records, shift);
 
     const balances = user.employeeId ? await this.leave.getBalances(user.employeeId, user) : [];
-    const remainingLeave = balances.reduce(
-      (sum, b) => sum + (Number(b.accrued) - Number(b.used)),
-      0,
-    );
+    // Same "available" figure the Leave page shows per type
+    // (accrued + carriedForward − used − pending), summed across every
+    // accrued leave type, with the per-type split so the UI can say so.
+    const leaveBreakdown = balances.map((b) => ({
+      code: b.leaveType.code,
+      name: b.leaveType.name,
+      available: b.accrued + b.carriedForward - b.used - b.pending,
+    }));
+    const remainingLeave = leaveBreakdown.reduce((sum, b) => sum + b.available, 0);
 
     return {
       daysPresent: presentDays,
       workingDays,
       punctualityRate,
       remainingLeave,
+      leaveBreakdown,
       overtimeHours,
     };
   }

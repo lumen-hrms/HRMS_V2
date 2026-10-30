@@ -392,7 +392,7 @@ function Review({
     [
       'leavePolicy',
       'Leave policy',
-      `Year starts ${MONTHS[lp.fyStartMonth - 1]} · ${lp.leaveApprovalLevels}-level approval · ${lp.types.map((t) => `${t.code} ${t.annualQuota}`).join(', ')}`,
+      `Year starts ${MONTHS[lp.fyStartMonth - 1]} · ${lp.leaveApprovalLevels === 2 ? 'manager then HR' : lp.leaveSingleApprover === 'MANAGER' ? 'manager-only' : 'HR-only'} approval · ${lp.types.map((t) => `${t.code} ${t.annualQuota}`).join(', ')}`,
     ],
     ['employees', 'Employees', files.employees ? `${files.employees.rowCount} rows from ${files.employees.fileName}` : 'None — add people after setup'],
     ['balances', 'Opening balances', files.balances ? `${files.balances.rowCount} rows from ${files.balances.fileName}` : 'None — everyone gets policy defaults'],

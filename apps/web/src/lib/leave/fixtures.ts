@@ -88,6 +88,7 @@ export const MOCK_HOLIDAYS: Holiday[] = [
 
 export const MOCK_SETTINGS: LeaveSettings = {
   approvalLevels: 2,
+  singleApprover: 'HR',
   allowLopRequests: true,
   fyStartMonth: 4,
 };

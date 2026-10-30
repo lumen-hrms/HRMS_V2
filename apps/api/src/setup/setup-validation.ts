@@ -305,6 +305,9 @@ function validateLeavePolicy(draft: SetupDraft, ctx: ConfigValidationContext, ad
   if (lp.leaveApprovalLevels !== 1 && lp.leaveApprovalLevels !== 2) {
     err('Approval levels must be 1 or 2', 'leaveApprovalLevels');
   }
+  if (lp.leaveSingleApprover !== undefined && !['HR', 'MANAGER'].includes(lp.leaveSingleApprover)) {
+    err('The single approver must be HR or the reporting manager', 'leaveSingleApprover');
+  }
   if (!(
     Number.isInteger(lp.leaveEscalationDays) &&
     lp.leaveEscalationDays >= 1 &&

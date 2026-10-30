@@ -773,10 +773,18 @@ export function LeavePolicyStep({ draft, update, err, issues }: StepProps) {
               ))}
             </Select>
           </Field>
-          <Field label="Approval levels" error={err('leaveApprovalLevels')}>
-            <Select value={lp.leaveApprovalLevels} onChange={(e) => set('leaveApprovalLevels', Number(e.target.value))}>
-              <option value={1}>1 — HR approves</option>
-              <option value={2}>2 — reporting manager, then HR</option>
+          <Field label="Approval levels" error={err('leaveApprovalLevels') ?? err('leaveSingleApprover')}>
+            <Select
+              value={lp.leaveApprovalLevels === 2 ? 'MANAGER_THEN_HR' : (lp.leaveSingleApprover ?? 'HR')}
+              onChange={(e) => {
+                const v = e.target.value;
+                set('leaveApprovalLevels', v === 'MANAGER_THEN_HR' ? 2 : 1);
+                set('leaveSingleApprover', v === 'MANAGER' ? 'MANAGER' : 'HR');
+              }}
+            >
+              <option value="HR">1 — HR approves</option>
+              <option value="MANAGER">1 — reporting manager only</option>
+              <option value="MANAGER_THEN_HR">2 — reporting manager, then HR</option>
             </Select>
           </Field>
           <Field label="Escalate after (days)" error={err('leaveEscalationDays')} hint="An undecided request is flagged after this long.">
