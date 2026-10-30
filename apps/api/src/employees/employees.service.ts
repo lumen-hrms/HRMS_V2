@@ -218,6 +218,17 @@ export class EmployeesService {
     return employees.map((e) => ({ ...this.sanitize(e), photoUrl: null as string | null }));
   }
 
+  /** Whether `code` is free for a new employee in this tenant (exact match, like the unique index). */
+  async isEmployeeCodeAvailable(code: string | undefined) {
+    const trimmed = code?.trim();
+    if (!trimmed) throw new BadRequestException('Employee code is required');
+    const existing = await this.tenantPrisma.client.employee.findFirst({
+      where: { employeeCode: trimmed },
+      select: { id: true },
+    });
+    return { available: !existing };
+  }
+
   async get(id: string, user: AuthenticatedUser) {
     const employee = await this.tenantPrisma.client.employee.findFirst({
       where: { id, ...(await this.scopeFor(user)) },
@@ -540,6 +551,26 @@ export class EmployeesService {
     'costCenter',
   ] as const;
 
+  /** Making `managerId` the manager of `id` must not put `id` above themselves in the chain. */
+  private async assertNoReportingLoop(id: string, managerId: string) {
+    const seen = new Set<string>();
+    for (let cur: string | null = managerId; cur && !seen.has(cur);) {
+      if (cur === id) {
+        throw new BadRequestException(
+          'That would create a reporting loop — the chosen manager already reports (directly or indirectly) to this employee',
+        );
+      }
+      seen.add(cur);
+      const row: { reportingManagerId: string | null } | null =
+        await this.tenantPrisma.client.employee.findUnique({
+          where: { id: cur },
+          select: { reportingManagerId: true },
+        });
+      if (!row && cur === managerId) throw new BadRequestException('Reporting manager not found');
+      cur = row?.reportingManagerId ?? null;
+    }
+  }
+
   async update(id: string, dto: UpdateEmployeeDto, user: AuthenticatedUser) {
     this.assertCanEditEmployee(id, user);
     const existing = await this.get(id, user); // 404 / scope check
@@ -552,6 +583,14 @@ export class EmployeesService {
       for (const k of disallowed) delete (dto as any)[k];
     } else if (dto.reportingManagerId === id) {
       throw new BadRequestException('An employee cannot be their own reporting manager');
+    } else if (dto.reportingManagerId) {
+      await this.assertNoReportingLoop(id, dto.reportingManagerId);
+    }
+    if (!isSelfEdit && dto.departmentId) {
+      const dept = await this.tenantPrisma.client.department.findUnique({
+        where: { id: dto.departmentId },
+      });
+      if (!dept) throw new BadRequestException('Department not found');
     }
 
     const data: Prisma.EmployeeUncheckedUpdateInput = isSelfEdit

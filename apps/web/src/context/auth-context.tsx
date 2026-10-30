@@ -2,6 +2,7 @@ import * as React from 'react';
 import { signInWithEmailAndPassword, signOut, onIdTokenChanged } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { api, getTenantSubdomain, setTenantSubdomain } from '@/lib/api';
+import { clearOrgLayouts } from '@/lib/org-layout';
 export { isApiError } from '@/lib/api';
 
 export interface CurrentUser {
@@ -67,6 +68,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = React.useCallback(async () => {
     await signOut(auth);
+    clearOrgLayouts();
     setUser(null);
   }, []);
 

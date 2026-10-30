@@ -6,6 +6,7 @@ import { TenantPrismaService } from '../prisma/tenant-prisma.service';
 import { LeaveService } from '../leave/leave.service';
 import { AttendanceService } from '../attendance/attendance.service';
 import { PlatformPrismaClientProvider } from '../prisma/platform-prisma-client.provider';
+import { AdminInsightsService } from './admin-insights.service';
 
 const ADMIN_ROLES = ['COMPANY_ADMIN', 'HR_MANAGER'];
 
@@ -17,6 +18,7 @@ export class DashboardController {
     private readonly leave: LeaveService,
     private readonly attendance: AttendanceService,
     private readonly platformPrisma: PlatformPrismaClientProvider,
+    private readonly insights: AdminInsightsService,
   ) {}
 
   @Get()
@@ -25,32 +27,42 @@ export class DashboardController {
     // (including admins) — only when the tenant's plan includes ATTENDANCE
     // (dashboard has no route-level @RequiresModule since its content
     // varies by what's entitled, so this mirrors EntitlementGuard inline).
+    const modules = await this.enabledModules(user.tenantId);
+    const hasAttendance = modules.includes('ATTENDANCE');
+    // Started now and awaited with each branch's other reads, so nothing waits on it.
     const todayAttendance =
-      user.employeeId && (await this.hasAttendanceEntitlement(user.tenantId))
-        ? await this.todayAttendanceSnapshot(user)
-        : null;
+      user.employeeId && hasAttendance ? this.todayAttendanceSnapshot(user) : Promise.resolve(null);
 
     if (ADMIN_ROLES.includes(user.role)) {
-      const [headcount, byDepartment, pendingApprovals] = await Promise.all([
+      const pendingApprovals = this.leave.pendingApprovals(user);
+      const [headcount, byDepartment, pending, today, insights] = await Promise.all([
         this.tenantPrisma.client.employee.count(),
         this.tenantPrisma.client.department.findMany({
           select: { name: true, _count: { select: { employees: true } } },
         }),
-        this.leave.pendingApprovals(user),
+        pendingApprovals,
+        todayAttendance,
+        this.insights.build({
+          pendingApprovals,
+          attendance: hasAttendance,
+          payroll: modules.includes('PAYROLL'),
+        }),
       ]);
       return {
         view: 'admin',
         headcount,
         departmentBreakdown: byDepartment.map((d) => ({ name: d.name, count: d._count.employees })),
-        pendingApprovalsCount: pendingApprovals.length,
-        todayAttendance,
+        pendingApprovalsCount: pending.length,
+        todayAttendance: today,
+        insights,
       };
     }
 
-    const [balances, pending, myRequests] = await Promise.all([
+    const [balances, pending, myRequests, today] = await Promise.all([
       user.employeeId ? this.leave.getBalances(user.employeeId, user) : [],
       this.leave.pendingApprovals(user),
       user.employeeId ? this.leave.listForEmployee(user.employeeId, user) : [],
+      todayAttendance,
     ]);
 
     return {
@@ -58,13 +70,13 @@ export class DashboardController {
       leaveBalances: balances,
       pendingApprovals: pending, // non-empty for Line Managers with reports
       myRecentRequests: myRequests.slice(0, 5),
-      todayAttendance,
+      todayAttendance: today,
     };
   }
 
-  private async hasAttendanceEntitlement(tenantId: string): Promise<boolean> {
+  private async enabledModules(tenantId: string): Promise<string[]> {
     const subscription = await this.platformPrisma.subscription.findUnique({ where: { tenantId } });
-    return subscription?.enabledModules.includes('ATTENDANCE') ?? false;
+    return subscription?.enabledModules ?? [];
   }
 
   private async todayAttendanceSnapshot(user: AuthenticatedUser) {
