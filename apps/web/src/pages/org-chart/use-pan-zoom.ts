@@ -16,7 +16,7 @@ const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), h
 
 /**
  * Pan/zoom for the org-chart canvas: a CSS transform on `contentRef` inside
- * the clipping `viewportRef`. Drag (anywhere, cards included) pans; the
+ * the clipping `viewportRef`. Drag the background pans (cards drag themselves); the
  * wheel pans, Ctrl/⌘+wheel (and trackpad pinch, which browsers report as
  * ctrl+wheel) zooms around the pointer. Programmatic moves (buttons, fit,
  * centring on a search hit) animate; direct manipulation doesn't.
@@ -61,8 +61,22 @@ export function usePanZoom({ onInteract }: { onInteract?: () => void } = {}) {
       const vp = viewportRef.current;
       const content = contentRef.current;
       if (!vp || !content) return;
-      const w = content.offsetWidth;
-      const h = content.offsetHeight;
+      // The content box plus every card — dragged cards can sit outside it.
+      const origin = content.getBoundingClientRect();
+      const s = content.offsetWidth ? origin.width / content.offsetWidth : 1;
+      let minX = 0;
+      let minY = 0;
+      let maxX = content.offsetWidth;
+      let maxY = content.offsetHeight;
+      content.querySelectorAll('[data-org-card]').forEach((el) => {
+        const r = el.getBoundingClientRect();
+        minX = Math.min(minX, (r.left - origin.left) / s);
+        minY = Math.min(minY, (r.top - origin.top) / s);
+        maxX = Math.max(maxX, (r.right - origin.left) / s);
+        maxY = Math.max(maxY, (r.bottom - origin.top) / s);
+      });
+      const w = maxX - minX;
+      const h = maxY - minY;
       const vw = vp.clientWidth;
       const vh = vp.clientHeight;
       const scale = clamp(
@@ -70,7 +84,7 @@ export function usePanZoom({ onInteract }: { onInteract?: () => void } = {}) {
         Math.max(minScale, MIN_SCALE),
         1,
       );
-      apply({ scale, x: (vw - w * scale) / 2, y: PAD }, true);
+      apply({ scale, x: (vw - w * scale) / 2 - minX * scale, y: PAD - minY * scale }, true);
     },
     [apply],
   );
@@ -100,6 +114,8 @@ export function usePanZoom({ onInteract }: { onInteract?: () => void } = {}) {
     (e: React.PointerEvent) => {
       if (e.button !== 0) return;
       draggedRef.current = false;
+      // A press on a card drags the card (see use-node-drag), not the canvas.
+      if ((e.target as HTMLElement).closest('[data-org-node]')) return;
       const startX = e.clientX;
       const startY = e.clientY;
       const origin = viewRef.current;

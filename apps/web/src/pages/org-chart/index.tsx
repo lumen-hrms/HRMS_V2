@@ -19,9 +19,19 @@ import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
-import { ancestorsOf, fullName, indexTree, matchesQuery, type OrgNode } from './model';
+import {
+  ancestorsOf,
+  fullName,
+  indexTree,
+  layoutSignature,
+  matchesQuery,
+  visibleEdges,
+  type OrgNode,
+} from './model';
 import { PersonAvatar } from './person-bits';
 import { OrgTree, type TreeHandlers } from './tree';
+import { OrgLinks } from './links';
+import { useNodeDrag } from './use-node-drag';
 import { PersonHoverCard } from './hover-card';
 import { useHoverCard } from './use-hover-card';
 import { PersonSheet } from './person-sheet';
@@ -55,13 +65,20 @@ export function OrgChartPage() {
     scale,
     dragging,
     onPointerDown,
-    wasDragging,
+    wasDragging: wasPanning,
     zoomIn,
     zoomOut,
     resetZoom,
     fit,
     centerOn,
   } = usePanZoom({ onInteract: hover.hideNow });
+
+  const nodeDrag = useNodeDrag({
+    storageKey: user ? `${user.tenantId}.${user.sub}` : null,
+    signature: React.useMemo(() => (roots ? layoutSignature(roots) : null), [roots]),
+    contentRef,
+    onDragStart: hover.hideNow,
+  });
 
   const index = React.useMemo(() => indexTree(roots ?? []), [roots]);
 
@@ -92,7 +109,23 @@ export function OrgChartPage() {
   React.useEffect(() => () => window.clearTimeout(highlightTimer.current), []);
 
   const focusNode = focusId ? index.byId.get(focusId) ?? null : null;
-  const visibleRoots = focusNode ? [focusNode] : roots ?? [];
+  const visibleRoots = React.useMemo(() => (focusNode ? [focusNode] : roots ?? []), [focusNode, roots]);
+  const edges = React.useMemo(
+    () => visibleEdges(visibleRoots, expanded, nodeDrag.offsets),
+    [visibleRoots, expanded, nodeDrag.offsets],
+  );
+
+  // After the chart re-lays-out (expand / collapse / focus / first load) a card
+  // the user parked somewhere may now sit on top of another — slide it clear.
+  const { settle } = nodeDrag;
+  React.useEffect(() => {
+    if (roots) afterLayout(settle);
+  }, [roots, expanded, focusId, settle]);
+
+  function resetLayout() {
+    nodeDrag.reset();
+    window.setTimeout(() => fit(0.6), 380);
+  }
   const breadcrumb = focusNode ? [...ancestorsOf(index, focusNode.id), focusNode] : [];
 
   const departments = React.useMemo(() => {
@@ -177,9 +210,13 @@ export function OrgChartPage() {
     },
     onSelect: (node) => setSelectedId(node.id),
     onFocusTeam: focusTeam,
-    onHoverStart: hover.show,
+    onHoverStart: (node, el, immediate) => {
+      if (!nodeDrag.isDragging()) hover.show(node, el, immediate);
+    },
     onHoverEnd: hover.hide,
-    wasDragging: wasDragging,
+    wasDragging: () => wasPanning() || nodeDrag.wasDragging(),
+    offsets: nodeDrag.offsets,
+    onDragStart: (e, node) => nodeDrag.begin(e, node.id),
   };
 
   const scoped = user?.role === 'EMPLOYEE' || user?.role === 'LINE_MANAGER';
@@ -290,6 +327,7 @@ export function OrgChartPage() {
         ) : (
           <>
             <div ref={contentRef} style={contentStyle} className="absolute left-0 top-0 p-4">
+              <OrgLinks contentRef={contentRef} edges={edges} subscribe={nodeDrag.subscribe} />
               <OrgTree roots={visibleRoots} h={handlers} />
             </div>
 
@@ -350,10 +388,23 @@ export function OrgChartPage() {
               <IconButton label="Fit to screen" onClick={() => fit()}>
                 <Maximize2 className="h-4 w-4" />
               </IconButton>
+              {Object.keys(nodeDrag.offsets).length > 0 && (
+                <>
+                  <span className="mx-0.5 h-5 w-px bg-border" />
+                  <button
+                    type="button"
+                    onClick={resetLayout}
+                    title="Put every card back in its original position"
+                    className="flex items-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" /> Reset layout
+                  </button>
+                </>
+              )}
             </div>
 
             <p className="pointer-events-none absolute bottom-4 left-4 hidden text-xs text-muted-foreground md:block">
-              Drag to pan · Ctrl + scroll to zoom · Hover for contact · Double-click a manager to focus their team
+              Drag the background to pan · Drag a card to move it (a manager takes their team) · Ctrl + scroll to zoom · Hover for contact · Double-click a manager to focus their team
             </p>
           </>
         )}

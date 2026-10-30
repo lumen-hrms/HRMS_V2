@@ -493,9 +493,9 @@
   --org-hue-7: #8f9cf2;
 }
 
-/* Classic nested-list tree: every <li> draws the horizontal rail above it
- * (::before = left half, ::after = right half + the drop into the card),
- * every nested <ul> draws the drop out of its parent card. */
+/* Nested-list tree layout. The connector lines aren't CSS: they're an SVG
+ * drawn from the cards' real positions (pages/org-chart/links.tsx), so they
+ * follow cards the user has dragged away from their slot. */
 .org-tree ul {
   position: relative;
   display: flex;
@@ -511,48 +511,10 @@
   align-items: center;
   padding: 28px 10px 0;
 }
-.org-tree li::before,
-.org-tree li::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 50%;
-  width: 50%;
-  height: 28px;
-  border-top: 1.5px solid var(--org-line);
-}
-.org-tree li::after {
-  right: auto;
-  left: 50%;
-  border-left: 1.5px solid var(--org-line);
-}
 .org-tree li:only-child {
   padding-top: 0;
 }
-.org-tree li:only-child::before,
-.org-tree li:only-child::after {
-  display: none;
-}
-.org-tree li:first-child::before,
-.org-tree li:last-child::after {
-  border: 0 none;
-}
-.org-tree li:last-child::before {
-  border-right: 1.5px solid var(--org-line);
-  border-radius: 0 10px 0 0;
-}
-.org-tree li:first-child::after {
-  border-radius: 10px 0 0 0;
-}
-.org-tree ul ul::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 50%;
-  height: 28px;
-  border-left: 1.5px solid var(--org-line);
-}
-/* Top level: separate root trees side by side, no rail between them. */
+/* Top level: separate root trees side by side. */
 .org-tree > ul {
   padding-top: 0;
   gap: 48px;
@@ -560,9 +522,20 @@
 .org-tree > ul > li {
   padding-top: 0;
 }
-.org-tree > ul > li::before,
-.org-tree > ul > li::after {
-  display: none;
+/* Dragged cards (and the team under them) float above the rest. */
+.org-tree [data-org-moved] {
+  z-index: 5;
+}
+.org-tree .org-dragging,
+.org-tree .org-settling {
+  z-index: 30;
+}
+.org-tree .org-dragging {
+  filter: drop-shadow(0 8px 14px rgb(0 0 0 / 0.18));
+}
+/* Keep in step with SETTLE_MS in use-node-drag.ts. */
+.org-tree .org-settling {
+  transition: transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 @keyframes orgPop {

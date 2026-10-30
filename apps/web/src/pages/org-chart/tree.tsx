@@ -1,16 +1,17 @@
 import * as React from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Crown } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { fullName, hueVar, type OrgNode } from './model';
+import type { Offsets } from '@/lib/org-layout';
+import {
+  fullName,
+  gridColumns,
+  hueVar,
+  LEADERSHIP_ID,
+  splitLeadership,
+  teamLayout,
+  type OrgNode,
+} from './model';
 import { DeptChip, PersonAvatar } from './person-bits';
-
-/**
- * A team whose members are all individual contributors (no reports of their
- * own) is stacked into a compact column under the manager instead of fanned
- * out horizontally (Teams does the same) — keeps the chart roughly one card
- * wide per manager, so a 12-nurse ward doesn't become a 3,000px strip.
- */
-const STACK_LEAVES_FROM = 2;
 
 export interface TreeHandlers {
   expanded: Set<string>;
@@ -25,53 +26,98 @@ export interface TreeHandlers {
   onHoverEnd: () => void;
   /** Swallows the click that ends a canvas drag. */
   wasDragging: () => boolean;
+  /** Where each dragged card sits relative to its automatic slot. */
+  offsets: Offsets;
+  /** A press on a card: may turn into dragging it (and its team). */
+  onDragStart: (e: React.PointerEvent<HTMLElement>, node: OrgNode) => void;
 }
 
+const moveProps = (id: string, offsets: Offsets) => {
+  const o = offsets[id];
+  return {
+    'data-org-move': id,
+    'data-org-moved': o ? '' : undefined,
+    style: o ? { transform: `translate(${o.x}px, ${o.y}px)` } : undefined,
+  };
+};
+
 export function OrgTree({ roots, h }: { roots: OrgNode[]; h: TreeHandlers }) {
+  const { leaders, others } = splitLeadership(roots);
+  // Leadership always sits in its own row on top; everyone else hangs below it.
+  if (leaders.length === 0 || others.length === 0) {
+    return (
+      <div className="org-tree inline-block">
+        <TopRow roots={roots} h={h} />
+      </div>
+    );
+  }
   return (
-    <div className="org-tree inline-block">
-      <ul>
-        {roots.map((n) => (
-          <Branch key={n.id} node={n} h={h} />
-        ))}
-      </ul>
+    <div className="org-tree inline-flex flex-col items-center">
+      <TopRow roots={leaders} h={h} />
+      <div
+        data-org-card={LEADERSHIP_ID}
+        className="mb-12 mt-5 inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-muted-foreground shadow-sm"
+      >
+        <Crown className="h-3.5 w-3.5" /> Leadership
+      </div>
+      <TopRow roots={others} h={h} />
     </div>
+  );
+}
+
+function TopRow({ roots, h }: { roots: OrgNode[]; h: TreeHandlers }) {
+  return (
+    <ul>
+      {roots.map((n) => (
+        <Branch key={n.id} node={n} h={h} />
+      ))}
+    </ul>
   );
 }
 
 function Branch({ node, h }: { node: OrgNode; h: TreeHandlers }) {
   const open = h.expanded.has(node.id) && node.directReports.length > 0;
-  const allLeaves = node.directReports.every((r) => r.directReports.length === 0);
-  const stack = open && allLeaves && node.directReports.length >= STACK_LEAVES_FROM;
-
   return (
-    <li>
+    <li {...moveProps(node.id, h.offsets)}>
       <NodeCard node={node} h={h} open={open} />
-      {open &&
-        (stack ? (
-          <ul>
-            <li>
-              <div
-                className={cn(
-                  'grid gap-2 rounded-2xl border border-dashed border-border bg-muted/30 p-2.5',
-                  // Fixed tracks = the compact card width (w-60), so columns can't squeeze into each other.
-                  node.directReports.length > 6 ? 'grid-cols-[repeat(2,15rem)]' : 'grid-cols-[15rem]',
-                )}
-              >
-                {node.directReports.map((r) => (
-                  <NodeCard key={r.id} node={r} h={h} open={false} compact />
-                ))}
-              </div>
-            </li>
-          </ul>
-        ) : (
-          <ul>
-            {node.directReports.map((r) => (
-              <Branch key={r.id} node={r} h={h} />
-            ))}
-          </ul>
-        ))}
+      {open && <Team node={node} h={h} />}
     </li>
+  );
+}
+
+/** A manager's open team: spread horizontally, or (nobody has reports) stacked in a dashed column. */
+function Team({ node, h }: { node: OrgNode; h: TreeHandlers }) {
+  if (teamLayout(node) === 'fan') {
+    return (
+      <ul>
+        {node.directReports.map((r) => (
+          <Branch key={r.id} node={r} h={h} />
+        ))}
+      </ul>
+    );
+  }
+  const cols = gridColumns(node);
+  // Round-robin, so the members read left-to-right, top-to-bottom like a grid.
+  const columns = Array.from({ length: cols }, (_, c) => node.directReports.filter((_, i) => i % cols === c));
+  return (
+    <ul>
+      <li>
+        <div
+          data-org-group={node.id}
+          className="flex items-start gap-3 rounded-2xl border border-dashed border-border bg-muted/30 p-2.5"
+        >
+          {columns.map((column, i) => (
+            <div key={i} className="flex shrink-0 flex-col gap-3">
+              {column.map((r) => (
+                <div key={r.id} {...moveProps(r.id, h.offsets)}>
+                  <NodeCard node={r} h={h} open={false} compact />
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </li>
+    </ul>
   );
 }
 
@@ -94,11 +140,15 @@ function NodeCard({
   const hasReports = node.directReportCount > 0;
 
   return (
-    <div className={cn('relative flex flex-col items-center', !compact && 'pb-3')}>
+    <div
+      data-org-card={node.id}
+      className={cn('relative flex flex-col items-center', !compact && 'pb-3')}
+    >
       <button
         ref={ref}
         type="button"
         data-org-node={node.id}
+        onPointerDown={(e) => h.onDragStart(e, node)}
         onClick={() => {
           if (h.wasDragging()) return;
           h.onHoverEnd();
