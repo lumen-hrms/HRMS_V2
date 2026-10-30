@@ -124,6 +124,9 @@ jobs:
       S3_SECRET_KEY: test
       S3_BUCKET: hrms-documents-ci
       S3_FORCE_PATH_STYLE: "true"
+      # Saving a company-setup draft encrypts it. Throwaway test-only key
+      # (32 repeated 0x07 bytes, base64) — not a secret, never use it outside CI.
+      FIELD_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
 
     steps:
       - uses: actions/checkout@v4
