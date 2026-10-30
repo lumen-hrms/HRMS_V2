@@ -1,10 +1,12 @@
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Check, Loader2, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { isApiError, useAuth } from '@/context/auth-context';
 import { ROLE_LABELS } from '@/lib/roles';
 import { useLinkableLogins } from '@/pages/employees/linkable-logins';
 import { Button } from '@/components/ui/button';
+import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { Input, Label } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
@@ -16,9 +18,15 @@ interface EmployeeOption {
   id: string;
   firstName: string;
   lastName: string;
+  designation: string | null;
+  lifecycleState: string;
+  department: { name: string } | null;
 }
 
 type LoginMode = 'none' | 'new' | 'link';
+
+/** Pause after the last keystroke before asking the server whether the code is taken. */
+const CODE_CHECK_DEBOUNCE_MS = 400;
 
 export function EmployeeCreatePage() {
   const navigate = useNavigate();
@@ -41,11 +49,49 @@ export function EmployeeCreatePage() {
   const linkableLogins = useLinkableLogins();
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [codeCheck, setCodeCheck] = React.useState<{
+    code: string;
+    result: 'available' | 'taken' | 'error';
+  } | null>(null);
+  const code = form.employeeCode.trim();
+
+  // A–Z by name; ex-employees can't be picked as a manager.
+  const managerOptions = React.useMemo<ComboboxOption[]>(
+    () =>
+      managers
+        .filter((m) => m.lifecycleState !== 'SEPARATED')
+        .map((m) => ({
+          value: m.id,
+          label: `${m.firstName} ${m.lastName}`,
+          description: [m.designation, m.department?.name].filter(Boolean).join(' · '),
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' })),
+    [managers],
+  );
 
   React.useEffect(() => {
     api.get<Department[]>('/departments').then(setDepartments);
     api.get<EmployeeOption[]>('/employees').then(setManagers);
   }, []);
+
+  // Debounced "does this employee code already exist?" check. Only the latest
+  // keystroke's answer is kept; the server still enforces uniqueness on save.
+  React.useEffect(() => {
+    if (!code) return;
+    let stale = false;
+    const timer = window.setTimeout(() => {
+      api
+        .get<{ available: boolean }>(`/employees/code-available?code=${encodeURIComponent(code)}`)
+        .then((r) => !stale && setCodeCheck({ code, result: r.available ? 'available' : 'taken' }))
+        .catch(() => !stale && setCodeCheck({ code, result: 'error' }));
+    }, CODE_CHECK_DEBOUNCE_MS);
+    return () => {
+      stale = true;
+      window.clearTimeout(timer);
+    };
+  }, [code]);
+  // 'checking' covers both the debounce wait and the request in flight.
+  const codeStatus = !code ? 'idle' : codeCheck?.code === code ? codeCheck.result : 'checking';
 
   function set<K extends keyof typeof form>(key: K, value: string) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -59,6 +105,7 @@ export function EmployeeCreatePage() {
       const { loginEmail, loginTempPassword, loginRole, existingUserId, ...rest } = form;
       const payload: Record<string, string> = {
         ...rest,
+        employeeCode: code,
         ...(loginMode === 'new' ? { loginEmail, loginTempPassword, loginRole } : {}),
         ...(loginMode === 'link' ? { existingUserId } : {}),
       };
@@ -87,7 +134,14 @@ export function EmployeeCreatePage() {
         <CardContent>
           <form onSubmit={handleSubmit} className="flex flex-col gap-3">
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Employee code" value={form.employeeCode} onChange={(v) => set('employeeCode', v)} required />
+              <Field
+                label="Employee code"
+                value={form.employeeCode}
+                onChange={(v) => set('employeeCode', v)}
+                required
+                invalid={codeStatus === 'taken'}
+                status={<CodeStatus status={codeStatus} />}
+              />
               <Field label="Designation" value={form.designation} onChange={(v) => set('designation', v)} />
               <Field label="First name" value={form.firstName} onChange={(v) => set('firstName', v)} required />
               <Field label="Last name" value={form.lastName} onChange={(v) => set('lastName', v)} required />
@@ -111,18 +165,14 @@ export function EmployeeCreatePage() {
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label>Reporting manager</Label>
-                <select
-                  className="h-9 rounded-md border border-input bg-card px-2 text-sm"
+                <Combobox
                   value={form.reportingManagerId}
-                  onChange={(e) => set('reportingManagerId', e.target.value)}
-                >
-                  <option value="">—</option>
-                  {managers.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.firstName} {m.lastName}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(id) => set('reportingManagerId', id)}
+                  options={managerOptions}
+                  clearLabel="No reporting manager"
+                  placeholder="Select a manager"
+                  searchPlaceholder="Search by name, title or department…"
+                />
               </div>
             </div>
 
@@ -203,7 +253,7 @@ export function EmployeeCreatePage() {
             {error && <p className="text-sm text-destructive">{error}</p>}
             <Button
               type="submit"
-              disabled={busy || (loginMode === 'link' && linkableLogins?.length === 0)}
+              disabled={busy || codeStatus === 'taken' || (loginMode === 'link' && linkableLogins?.length === 0)}
               className="mt-2 self-start"
             >
               {busy ? 'Saving…' : 'Create employee'}
@@ -221,17 +271,54 @@ function Field({
   onChange,
   type = 'text',
   required,
+  invalid,
+  status,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   type?: string;
   required?: boolean;
+  invalid?: boolean;
+  /** Small line under the input (e.g. a live availability check). */
+  status?: React.ReactNode;
 }) {
   return (
     <div className="flex flex-col gap-1.5">
       <Label>{label}</Label>
-      <Input type={type} value={value} onChange={(e) => onChange(e.target.value)} required={required} />
+      <Input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        required={required}
+        aria-invalid={invalid || undefined}
+        className={invalid ? 'border-destructive focus-visible:ring-destructive' : undefined}
+      />
+      {status}
     </div>
   );
+}
+
+function CodeStatus({ status }: { status: 'idle' | 'checking' | 'available' | 'taken' | 'error' }) {
+  if (status === 'idle') return null;
+  const base = 'flex items-center gap-1.5 text-xs';
+  if (status === 'checking')
+    return (
+      <p className={`${base} text-muted-foreground`} role="status">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking…
+      </p>
+    );
+  if (status === 'available')
+    return (
+      <p className={`${base} text-success`} role="status">
+        <Check className="h-3.5 w-3.5" /> Employee code is available
+      </p>
+    );
+  if (status === 'taken')
+    return (
+      <p className={`${base} text-destructive`} role="alert">
+        <X className="h-3.5 w-3.5" /> This employee code already exists
+      </p>
+    );
+  return <p className={`${base} text-muted-foreground`}>Couldn’t check right now — it will be checked when you save.</p>;
 }

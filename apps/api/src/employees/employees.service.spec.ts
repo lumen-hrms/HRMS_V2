@@ -379,6 +379,19 @@ describe('EmployeesService emergency contacts', () => {
   });
 });
 
+describe('EmployeesService.updateDepartment', () => {
+  it('sets the department head, and clears it when null is sent', async () => {
+    const { service, tenantPrisma } = buildService({});
+
+    await service.updateDepartment('dept-1', { headEmployeeId: 'emp-9' });
+    await service.updateDepartment('dept-1', { headEmployeeId: null });
+
+    const calls = tenantPrisma.client.department.update.mock.calls;
+    expect(calls[0][0].data).toEqual({ headEmployeeId: 'emp-9' });
+    expect(calls[1][0].data).toEqual({ headEmployeeId: null });
+  });
+});
+
 describe('EmployeesService.deleteDepartment (RULE-6 reassign guard)', () => {
   it('blocks deleting a non-empty department with no reassignment target', async () => {
     const { service, tenantPrisma } = buildService({ id: 'emp-1', employeeCode: 'LUM-1' });
@@ -450,6 +463,43 @@ describe('EmployeesService line-manager recursive subtree scoping', () => {
     await expect(
       service.list(actor({ role: 'LINE_MANAGER', employeeId: 'mgr-1' })),
     ).resolves.toBeDefined();
+  });
+});
+
+describe('EmployeesService.isEmployeeCodeAvailable', () => {
+  it('is available when no employee has the code', async () => {
+    const { service, tenantPrisma } = buildService(
+      {},
+      {},
+      {
+        employee: { findFirst: jest.fn().mockResolvedValue(null) },
+      },
+    );
+
+    await expect(service.isEmployeeCodeAvailable(' RBR042 ')).resolves.toEqual({ available: true });
+    expect(tenantPrisma.client.employee.findFirst).toHaveBeenCalledWith({
+      where: { employeeCode: 'RBR042' },
+      select: { id: true },
+    });
+  });
+
+  it('is not available when an employee (any lifecycle state) already has it', async () => {
+    const { service } = buildService(
+      {},
+      {},
+      {
+        employee: { findFirst: jest.fn().mockResolvedValue({ id: 'emp-1' }) },
+      },
+    );
+
+    await expect(service.isEmployeeCodeAvailable('RBR001')).resolves.toEqual({ available: false });
+  });
+
+  it('rejects a blank code', async () => {
+    const { service } = buildService({});
+
+    await expect(service.isEmployeeCodeAvailable('  ')).rejects.toThrow(BadRequestException);
+    await expect(service.isEmployeeCodeAvailable(undefined)).rejects.toThrow(BadRequestException);
   });
 });
 
@@ -557,6 +607,155 @@ describe('EmployeesService.update (RULE-1 self-edit whitelist)', () => {
 
     const changes = tenantPrisma.client.auditLog.create.mock.calls[0][0].data.metadata.changes;
     expect(changes).toEqual([]);
+  });
+
+  describe('department', () => {
+    it('lets HR move an employee to another department and audits before/after', async () => {
+      const { service, tenantPrisma } = buildService({
+        id: 'emp-1',
+        employeeCode: 'LUM-1',
+        departmentId: 'dept-old',
+      });
+
+      await service.update('emp-1', { departmentId: 'dept-1' }, actor());
+
+      expect(tenantPrisma.client.employee.update.mock.calls[0][0].data.departmentId).toBe('dept-1');
+      const changes = tenantPrisma.client.auditLog.create.mock.calls[0][0].data.metadata.changes;
+      expect(changes).toContainEqual({
+        field: 'departmentId',
+        before: 'dept-old',
+        after: 'dept-1',
+      });
+    });
+
+    it('rejects a department that does not exist, writing nothing', async () => {
+      const { service, tenantPrisma } = buildService(
+        { id: 'emp-1', employeeCode: 'LUM-1' },
+        {},
+        {
+          department: { findUnique: jest.fn().mockResolvedValue(null) },
+        },
+      );
+
+      await expect(service.update('emp-1', { departmentId: 'ghost' }, actor())).rejects.toThrow(
+        /Department not found/,
+      );
+      expect(tenantPrisma.client.employee.update).not.toHaveBeenCalled();
+    });
+
+    it('does not let an Employee change their own department', async () => {
+      const { service, tenantPrisma } = buildService({ id: 'emp-1', employeeCode: 'LUM-1' });
+
+      await service.update(
+        'emp-1',
+        { phone: '999', departmentId: 'dept-1' },
+        actor({ role: 'EMPLOYEE', employeeId: 'emp-1' }),
+      );
+
+      expect(tenantPrisma.client.employee.update.mock.calls[0][0].data).not.toHaveProperty(
+        'departmentId',
+      );
+    });
+  });
+
+  describe('reporting manager', () => {
+    /** emp-1 is managed by mgr-1, who is managed by top; every id exists. */
+    const chain: Record<string, string | null> = {
+      'emp-1': 'mgr-1',
+      'mgr-1': 'top',
+      top: null,
+      other: null,
+    };
+    const build = () =>
+      buildService(
+        { id: 'emp-1', employeeCode: 'LUM-1', reportingManagerId: 'mgr-1' },
+        {},
+        {
+          employee: {
+            findFirst: jest.fn().mockResolvedValue({
+              id: 'emp-1',
+              employeeCode: 'LUM-1',
+              reportingManagerId: 'mgr-1',
+            }),
+            findUnique: jest.fn(({ where }: any) =>
+              where.id in chain ? { reportingManagerId: chain[where.id] } : null,
+            ),
+            findMany: jest.fn().mockResolvedValue([]),
+            update: jest.fn((args: any) => ({ id: 'emp-1', ...args.data })),
+          },
+        },
+      );
+
+    it('lets HR change the reporting manager and audits before/after', async () => {
+      const { service, tenantPrisma } = build();
+
+      await service.update('emp-1', { reportingManagerId: 'other' }, actor());
+
+      expect(tenantPrisma.client.employee.update.mock.calls[0][0].data.reportingManagerId).toBe(
+        'other',
+      );
+      const changes = tenantPrisma.client.auditLog.create.mock.calls[0][0].data.metadata.changes;
+      expect(changes).toContainEqual({
+        field: 'reportingManagerId',
+        before: 'mgr-1',
+        after: 'other',
+      });
+    });
+
+    it('clears the reporting manager when null is sent', async () => {
+      const { service, tenantPrisma } = build();
+
+      await service.update('emp-1', { reportingManagerId: null }, actor());
+
+      expect(
+        tenantPrisma.client.employee.update.mock.calls[0][0].data.reportingManagerId,
+      ).toBeNull();
+    });
+
+    it('rejects a manager who already reports (indirectly) to this employee, writing nothing', async () => {
+      const { service, tenantPrisma } = buildService(
+        { id: 'top', employeeCode: 'LUM-9' },
+        {},
+        {
+          employee: {
+            findFirst: jest.fn().mockResolvedValue({ id: 'top', employeeCode: 'LUM-9' }),
+            findUnique: jest.fn(({ where }: any) => ({
+              reportingManagerId: chain[where.id] ?? null,
+            })),
+            update: jest.fn(),
+          },
+        },
+      );
+
+      // emp-1 -> mgr-1 -> top, so making emp-1 the manager of top closes a loop.
+      await expect(service.update('top', { reportingManagerId: 'emp-1' }, actor())).rejects.toThrow(
+        /reporting loop/,
+      );
+      expect(tenantPrisma.client.employee.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a manager that does not exist', async () => {
+      const { service, tenantPrisma } = build();
+
+      await expect(
+        service.update('emp-1', { reportingManagerId: 'ghost' }, actor()),
+      ).rejects.toThrow(/Reporting manager not found/);
+      expect(tenantPrisma.client.employee.update).not.toHaveBeenCalled();
+    });
+
+    it('does not let an Employee change their own manager', async () => {
+      const { service, tenantPrisma } = build();
+
+      await service.update(
+        'emp-1',
+        { phone: '999', reportingManagerId: 'other' },
+        actor({ role: 'EMPLOYEE', employeeId: 'emp-1' }),
+      );
+
+      expect(tenantPrisma.client.employee.update.mock.calls[0][0].data).not.toHaveProperty(
+        'reportingManagerId',
+      );
+    });
   });
 
   it('lets HR set workState (Professional Tax state) but an Employee cannot set their own', async () => {

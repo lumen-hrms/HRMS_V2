@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Upload, Download, ArrowRightLeft, Eye, KeyRound, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Upload, Download, ArrowRightLeft, Eye, KeyRound, Pencil, Plus, Trash2 } from 'lucide-react';
 import { api, getAccessToken, getTenantSubdomain, isApiError } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader } from '@/components/ui/dialog';
 import { Field } from '@/components/ui/field';
 import { Select } from '@/components/ui/select';
+import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -88,7 +89,9 @@ interface EmployeeDetail {
   personalEmail: string | null;
   phone: string | null;
   gender: string | null;
+  departmentId: string | null;
   department: { name: string } | null;
+  reportingManagerId: string | null;
   reportingManager: { firstName: string; lastName: string } | null;
   directReports: { id: string; firstName: string; lastName: string }[];
   maritalStatus: string | null;
@@ -229,6 +232,12 @@ export function EmployeeDetailPage() {
 
   return (
     <div className="flex max-w-4xl flex-col gap-5">
+      <Link
+        to="/employees"
+        className="-mb-2 inline-flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+      >
+        <ArrowLeft className="h-4 w-4" /> Back to employees
+      </Link>
       <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-4">
           <label
@@ -766,6 +775,15 @@ function MaskedRow({
   );
 }
 
+interface ManagerCandidate {
+  id: string;
+  firstName: string;
+  lastName: string;
+  designation: string | null;
+  lifecycleState: string;
+  department: { name: string } | null;
+}
+
 function ProfileFieldsDialog({
   employee,
   selfEditOnly,
@@ -788,8 +806,47 @@ function ProfileFieldsDialog({
   const [ctcAnnual, setCtcAnnual] = React.useState(employee.ctcAnnual ?? '');
   const [payGrade, setPayGrade] = React.useState(employee.payGrade ?? '');
   const [costCenter, setCostCenter] = React.useState(employee.costCenter ?? '');
+  const [designation, setDesignation] = React.useState(employee.designation ?? '');
+  const [managerId, setManagerId] = React.useState(employee.reportingManagerId ?? '');
+  const [departmentId, setDepartmentId] = React.useState(employee.departmentId ?? '');
+  const [departments, setDepartments] = React.useState<{ id: string; name: string }[]>([]);
+  const [managers, setManagers] = React.useState<ManagerCandidate[]>([]);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (selfEditOnly) return;
+    api
+      .get<ManagerCandidate[]>('/employees')
+      .then((all) => setManagers(all.filter((e) => e.id !== employee.id)))
+      .catch(() => setManagers([]));
+    api
+      .get<{ id: string; name: string }[]>('/departments')
+      .then(setDepartments)
+      .catch(() => setDepartments([]));
+  }, [selfEditOnly, employee.id]);
+
+  // A-Z by name; ex-employees can't be picked (the current manager stays listed regardless).
+  const managerOptions = React.useMemo(() => {
+    const options: ComboboxOption[] = managers
+      .filter((m) => m.lifecycleState !== 'SEPARATED')
+      .map((m) => ({
+        value: m.id,
+        label: `${m.firstName} ${m.lastName}`,
+        description: [m.designation, m.department?.name].filter(Boolean).join(' · '),
+      }));
+    if (
+      employee.reportingManagerId &&
+      employee.reportingManager &&
+      !options.some((o) => o.value === employee.reportingManagerId)
+    ) {
+      options.push({
+        value: employee.reportingManagerId,
+        label: `${employee.reportingManager.firstName} ${employee.reportingManager.lastName}`,
+      });
+    }
+    return options.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+  }, [managers, employee.reportingManagerId, employee.reportingManager]);
 
   async function save() {
     setBusy(true);
@@ -808,11 +865,18 @@ function ProfileFieldsDialog({
         ...(selfEditOnly
           ? {}
           : {
+              designation: designation.trim() || undefined,
               employmentType: employmentType || undefined,
               workLocation: workLocation || undefined,
               ctcAnnual: ctcAnnual ? Number(ctcAnnual) : undefined,
               payGrade: payGrade || undefined,
               costCenter: costCenter || undefined,
+              // Only when changed.
+              ...(departmentId && departmentId !== (employee.departmentId ?? '') ? { departmentId } : {}),
+              // Null clears the manager.
+              ...(managerId !== (employee.reportingManagerId ?? '')
+                ? { reportingManagerId: managerId || null }
+                : {}),
             }),
       });
       onSaved();
@@ -871,6 +935,39 @@ function ProfileFieldsDialog({
                     </option>
                   ))}
                 </Select>
+              </Field>
+              <Field label="Designation" className="col-span-2">
+                <Input
+                  value={designation}
+                  onChange={(e) => setDesignation(e.target.value)}
+                  placeholder="e.g. Fan Engagement Executive"
+                />
+              </Field>
+              <Field label="Department" className="col-span-2">
+                <Select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
+                  {!departmentId && <option value="">—</option>}
+                  {/* Keep the current department selectable even before the list loads. */}
+                  {employee.departmentId &&
+                    !departments.some((d) => d.id === employee.departmentId) &&
+                    employee.department && (
+                      <option value={employee.departmentId}>{employee.department.name}</option>
+                    )}
+                  {departments.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Reporting manager" className="col-span-2">
+                <Combobox
+                  value={managerId}
+                  onChange={setManagerId}
+                  options={managerOptions}
+                  clearLabel="No reporting manager"
+                  placeholder="Select a manager"
+                  searchPlaceholder="Search by name, title or department…"
+                />
               </Field>
               <Field label="Work location" className="col-span-2">
                 <Input value={workLocation} onChange={(e) => setWorkLocation(e.target.value)} />

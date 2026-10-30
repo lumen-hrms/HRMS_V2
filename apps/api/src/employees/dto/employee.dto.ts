@@ -146,9 +146,10 @@ export class UpdateEmployeeDto {
   @IsString()
   designation?: string;
 
+  /** `null` clears the manager; omitted leaves it unchanged. */
   @IsOptional()
   @IsUUID()
-  reportingManagerId?: string;
+  reportingManagerId?: string | null;
 
   // Identity & personal extras (module 03 §4.2).
   @IsOptional()
@@ -342,9 +343,10 @@ export class UpdateDepartmentDto {
   @IsString()
   code?: string;
 
+  /** `null` clears the head; omitted leaves it unchanged. */
   @IsOptional()
   @IsUUID()
-  headEmployeeId?: string;
+  headEmployeeId?: string | null;
 }
 
 export class DeleteDepartmentDto {

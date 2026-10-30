@@ -67,6 +67,13 @@ export class EmployeesController {
     return this.service.orgChart(user);
   }
 
+  /** For the Add employee form: is this code still free? (Before `:id` so it isn't read as one.) */
+  @Get('code-available')
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  codeAvailable(@Query('code') code: string) {
+    return this.service.isEmployeeCodeAvailable(code);
+  }
+
   @Get(':id')
   get(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.service.get(id, user);
