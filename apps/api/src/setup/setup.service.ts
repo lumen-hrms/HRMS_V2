@@ -188,11 +188,12 @@ export class SetupService {
     }
     // Saving and validating don't depend on each other, and the browser needs
     // both before it moves on — so one request, run side by side.
-    const [savedAt, { planned: _planned, balances: _balances, ...validation }] = await Promise.all([
+    const [savedAt, result] = await Promise.all([
       this.persist(draft, actor),
       this.validateDraft(draft, actor, { deep: false }),
     ]);
-    return { savedAt, validation };
+    const { ok, issues, employeeReport, balanceReport } = result;
+    return { savedAt, validation: { ok, issues, employeeReport, balanceReport } };
   }
 
   // ---- Uploads ----
