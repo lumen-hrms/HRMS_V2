@@ -447,6 +447,7 @@ export class SetupService {
           payrollCutoffDay: draft.attendance.payrollCutoffDay,
           fyStartMonth: draft.leavePolicy.fyStartMonth,
           leaveApprovalLevels: draft.leavePolicy.leaveApprovalLevels,
+          leaveSingleApprover: draft.leavePolicy.leaveSingleApprover ?? 'HR',
           leaveEscalationDays: draft.leavePolicy.leaveEscalationDays,
           allowLopRequests: draft.leavePolicy.allowLopRequests,
           goLiveDate,
@@ -1029,6 +1030,7 @@ export class SetupService {
       leavePolicy: {
         fyStartMonth: fy,
         leaveApprovalLevels: (settings?.leaveApprovalLevels ?? 2) as 1 | 2,
+        leaveSingleApprover: settings?.leaveSingleApprover ?? 'HR',
         leaveEscalationDays: settings?.leaveEscalationDays ?? 3,
         allowLopRequests: settings?.allowLopRequests ?? true,
         types:

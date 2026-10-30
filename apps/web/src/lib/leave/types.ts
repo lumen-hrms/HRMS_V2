@@ -21,6 +21,8 @@ export type LeaveRequestStatus =
   | 'CANCELLED';
 
 export type LeaveApprovalLevel = 1 | 2;
+/** Who decides when there's one approval level. */
+export type LeaveSingleApprover = 'HR' | 'MANAGER';
 
 export type AccrualFrequency = 'ANNUAL' | 'MONTHLY' | 'QUARTERLY';
 export type GenderRestriction = 'ANY' | 'FEMALE' | 'MALE';
@@ -202,6 +204,8 @@ export interface BalanceAdjustmentInput {
 export interface LeaveSettings {
   /** tenant_settings.leave_approval_levels — 1 or 2 for V1. */
   approvalLevels: LeaveApprovalLevel;
+  /** tenant_settings.leave_single_approver — only read when approvalLevels = 1. */
+  singleApprover: LeaveSingleApprover;
   /** Allow submitting a request that will be LOP. */
   allowLopRequests: boolean;
   /** Financial-year start month (1–12); India default April = 4. */

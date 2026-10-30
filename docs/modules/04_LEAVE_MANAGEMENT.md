@@ -89,8 +89,10 @@ the schema/FE contract cap V1 at 2, per `CLAUDE.md`).
    requested duration excluding `Holiday` rows and
    `TenantSettings.weeklyOffDays`.
 2. **Approval routing is tenant-configurable.** 1 or 2 levels per
-   `TenantSettings.leaveApprovalLevels`; an employee with no
-   `reportingManagerId` routes straight to L2 (HR).
+   `TenantSettings.leaveApprovalLevels`; at 1 level,
+   `TenantSettings.leaveSingleApprover` picks HR (default) or the reporting
+   manager alone. An employee with no `reportingManagerId` routes straight
+   to L2 (HR) either way.
 3. **Balance deduction happens only on final approval**, and only if the
    request is not flagged LOP — never at apply time, never speculatively.
 4. **A short balance never blocks a request** — it's still created, but
@@ -309,10 +311,13 @@ weekly-offs, two holidays on one date, and a list that stops early.
 ```
 apply() → working-day count vs balance → isLop set if short
         → PENDING_L1 (or straight to PENDING_L2 if
-          leaveApprovalLevels = 1, or employee has no reportingManagerId)
+          leaveApprovalLevels = 1 with leaveSingleApprover = HR,
+          or employee has no reportingManagerId)
         → schedule an L1 escalation job for +leaveEscalationDays
 
 L1 approve → PENDING_L2 → schedule a fresh L2 escalation job
+           (reporting-manager-only tenants: L1 approve is final — same
+            effects as L2 approve below, recorded as a level-1 decision)
 L1 reject  → REJECTED (terminal)
 
 L1 escalation fires (undecided) → auto-advance to PENDING_L2,
@@ -337,7 +342,8 @@ BullMQ in this repo, per `CLAUDE.md`).
   `isCompOff` `LeaveType` — idempotent per employee/day, opt-in per tenant
   (no-op if no type has `isCompOff = true`).
 - **`ON_LEAVE` sync** (Attendance called from Leave): approving a request at
-  L2 (or the sole level, if `leaveApprovalLevels = 1`) writes
+  L2 (or the sole level, if `leaveApprovalLevels = 1`, whether HR or the
+  reporting manager) writes
   `AttendanceRecord.status = 'ON_LEAVE'` for the request's working days —
   via **direct Prisma access from `LeaveService`**, deliberately **not** an
   `AttendanceService` import, to avoid a circular module dependency.
@@ -575,7 +581,9 @@ queue — first use of BullMQ in this repo).
 - [ ] A request from an employee with no `reportingManagerId` routes
       straight to `PENDING_L2`.
 - [ ] `TenantSettings.leaveApprovalLevels = 1` routes every new request
-      straight to `PENDING_L2` (single-level approval).
+      straight to `PENDING_L2` (single-level approval) — or, with
+      `leaveSingleApprover = MANAGER`, to `PENDING_L1`, where the manager's
+      approval is final.
 - [ ] Balance is **not** deducted at apply time; **is** deducted exactly
       once, at final (L2, or sole-level) approval, only if `!isLop`.
 - [ ] An undecided L1 auto-escalates to `PENDING_L2` after

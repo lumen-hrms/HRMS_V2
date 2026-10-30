@@ -35,6 +35,7 @@ import {
   type LeaveRequest,
   type LeaveRequestPreview,
   type LeaveSettings,
+  type LeaveSingleApprover,
   type LeaveType,
   type TeamBalanceRow,
   type TeamCalendarEntry,
@@ -60,6 +61,22 @@ const store = {
   settings: { ...MOCK_SETTINGS },
   adjustments: [] as { employeeId: string; leaveTypeId: string; year: number; delta: number }[],
 };
+
+/** `tenant_settings` as `/leave/settings` returns it (leave slice). */
+interface LeaveSettingsResponse {
+  leaveApprovalLevels: 1 | 2;
+  leaveSingleApprover: LeaveSingleApprover;
+  allowLopRequests: boolean;
+  fyStartMonth: number;
+}
+function toLeaveSettings(s: LeaveSettingsResponse): LeaveSettings {
+  return {
+    approvalLevels: s.leaveApprovalLevels,
+    singleApprover: s.leaveSingleApprover,
+    allowLopRequests: s.allowLopRequests,
+    fyStartMonth: s.fyStartMonth,
+  };
+}
 
 function delay<T>(value: T, ms = 260): Promise<T> {
   return new Promise((res) => setTimeout(() => res(value), ms));
@@ -117,8 +134,13 @@ function computeBalances(employeeId: string, year: number): LeaveBalance[] {
 function firstApproverName(employeeId: string): string | null {
   const me = scopeId(employeeId);
   const person = MOCK_PEOPLE.find((p) => p.id === me);
-  if (person?.managerId && store.settings.approvalLevels === 2) return personName(person.managerId);
+  if (person?.managerId && managerDecides()) return personName(person.managerId);
   return 'Meera Iyer'; // HR — L2 / sole approver
+}
+
+/** Mirrors LeaveService.apply(): the manager is L1 at two levels or when they're the sole approver. */
+function managerDecides(): boolean {
+  return store.settings.approvalLevels === 2 || store.settings.singleApprover === 'MANAGER';
 }
 
 function directReportIds(ctx: LeaveCtx): string[] {
@@ -353,7 +375,7 @@ export const leaveApi = {
       const avail = preview ? availableDays(preview) : 0;
       const isLop = days > Math.max(avail, 0);
       const person = MOCK_PEOPLE.find((p) => p.id === scopeId(ctx.employeeId ?? ME_ID))!;
-      const startsAtL2 = !person.managerId || store.settings.approvalLevels === 1;
+      const startsAtL2 = !person.managerId || !managerDecides();
       const req: LeaveRequest = {
         id: uid('req'),
         employeeId: ME_ID,
@@ -602,18 +624,15 @@ export const leaveApi = {
 
   /** `GET /api/leave/settings` · Company Admin, HR Manager, Auditor · live.
    *  Backend field names differ from the frontend's (`leaveApprovalLevels`
-   *  vs `approvalLevels`) — mapped here rather than renaming either side. */
+   *  vs `approvalLevels`, `leaveSingleApprover` vs `singleApprover`) —
+   *  mapped here rather than renaming either side. */
   getSettings(): Promise<LeaveSettings> {
     if (USE_MOCK) return delay({ ...store.settings });
     return api
-      .get<{ leaveApprovalLevels: 1 | 2; allowLopRequests: boolean; fyStartMonth: number }>(
+      .get<LeaveSettingsResponse>(
         '/leave/settings',
       )
-      .then((s) => ({
-        approvalLevels: s.leaveApprovalLevels,
-        allowLopRequests: s.allowLopRequests,
-        fyStartMonth: s.fyStartMonth,
-      }));
+      .then(toLeaveSettings);
   },
 
   /** `PATCH /api/leave/settings` · Company Admin · live (see `getSettings` field mapping). */
@@ -623,19 +642,16 @@ export const leaveApi = {
       return delay({ ...store.settings });
     }
     return api
-      .patch<{ leaveApprovalLevels: 1 | 2; allowLopRequests: boolean; fyStartMonth: number }>(
+      .patch<LeaveSettingsResponse>(
         '/leave/settings',
         {
           leaveApprovalLevels: patch.approvalLevels,
+          leaveSingleApprover: patch.singleApprover,
           allowLopRequests: patch.allowLopRequests,
           fyStartMonth: patch.fyStartMonth,
         },
       )
-      .then((s) => ({
-        approvalLevels: s.leaveApprovalLevels,
-        allowLopRequests: s.allowLopRequests,
-        fyStartMonth: s.fyStartMonth,
-      }));
+      .then(toLeaveSettings);
   },
 
   /** Directory slice the admin screens need for pickers. Real screens will use

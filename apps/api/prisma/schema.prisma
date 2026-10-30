@@ -765,6 +765,13 @@ model LeaveType {
   @@schema("public")
 }
 
+enum LeaveSingleApprover {
+  HR
+  MANAGER
+
+  @@schema("public")
+}
+
 enum LeaveGrantMode {
   // Credited by policy (annual grant / monthly / quarterly accrual).
   ACCRUED
@@ -1156,24 +1163,27 @@ model TenantSettings {
   tenantId String @unique @map("tenant_id") @db.Uuid
 
   // IANA zone; wall-clock shift times and "today" boundaries resolve against this.
-  timezone            String  @default("Asia/Kolkata")
+  timezone            String              @default("Asia/Kolkata")
   // Days of week that are weekly-offs. 0 = Sunday … 6 = Saturday.
-  weeklyOffDays       Int[]   @default([0, 6]) @map("weekly_off_days")
+  weeklyOffDays       Int[]               @default([0, 6]) @map("weekly_off_days")
   // Day of month the payroll period locks — the only hard deadline the
   // attendance/regularization auto-resolve flow hangs on.
-  payrollCutoffDay    Int     @default(25) @map("payroll_cutoff_day")
+  payrollCutoffDay    Int                 @default(25) @map("payroll_cutoff_day")
   // Leave approval chain depth (1 or 2 for V1).
-  leaveApprovalLevels Int     @default(2) @map("leave_approval_levels")
+  leaveApprovalLevels Int                 @default(2) @map("leave_approval_levels")
+  // Who decides when leaveApprovalLevels = 1: HR, or the reporting manager
+  // alone (falls back to HR for an employee with no reporting manager).
+  leaveSingleApprover LeaveSingleApprover @default(HR) @map("leave_single_approver")
   // Days a leave request may sit undecided at a level before the escalation
   // job flags it (see apps/api/src/leave/leave-escalation.processor.ts).
-  leaveEscalationDays Int     @default(3) @map("leave_escalation_days")
+  leaveEscalationDays Int                 @default(3) @map("leave_escalation_days")
   // Whether an employee may submit a request that will be Loss of Pay.
   // Enforced by LeaveService.apply().
-  allowLopRequests    Boolean @default(true) @map("allow_lop_requests")
+  allowLopRequests    Boolean             @default(true) @map("allow_lop_requests")
   // Financial-year start month (1-12; India default April). Used by
   // resolveLeaveYear() (apps/api/src/leave/leave-year.util.ts) to shift the
   // balance-year boundary for apply()/getBalances()/teamBalances()/the accrual job.
-  fyStartMonth        Int     @default(4) @map("fy_start_month")
+  fyStartMonth        Int                 @default(4) @map("fy_start_month")
 
   // The day the company started running HR on Lumen, set by company setup
   // (apps/api/src/setup). Leave entitlement for anyone without an imported

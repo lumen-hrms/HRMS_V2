@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import * as admin from 'firebase-admin';
+import { invalidateOnIdentityWrites } from '../../src/common/tenancy/auth-context-cache';
 
 /**
  * Connects as the migration/superuser role (DATABASE_URL) which owns every
@@ -10,6 +11,9 @@ import * as admin from 'firebase-admin';
  * or a raw connection opened with those same low-privilege roles.
  */
 export const superuserPrisma = new PrismaClient();
+// Fixture writes (deactivating a user, re-opening setup, ...) must clear the
+// app's in-process auth cache just as the app's own writes do.
+superuserPrisma.$use(invalidateOnIdentityWrites());
 
 export const TEST_PASSWORD = 'Test-Passw0rd!1';
 

@@ -7,8 +7,20 @@ import { Select } from '@/components/ui/select';
 import { SkeletonRows } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
 import { leaveApi } from '@/lib/leave/client';
-import type { LeaveApprovalLevel, LeaveSettings } from '@/lib/leave/types';
+import type { LeaveSettings } from '@/lib/leave/types';
 import { RecalculateCard } from '@/pages/leave/components/recalculate-card';
+
+/** The approval-levels dropdown's three choices, onto the two stored settings. */
+const APPROVAL_FLOWS = {
+  HR: { approvalLevels: 1, singleApprover: 'HR' },
+  MANAGER: { approvalLevels: 1, singleApprover: 'MANAGER' },
+  MANAGER_THEN_HR: { approvalLevels: 2, singleApprover: 'HR' },
+} satisfies Record<string, Pick<LeaveSettings, 'approvalLevels' | 'singleApprover'>>;
+type ApprovalFlow = keyof typeof APPROVAL_FLOWS;
+
+function approvalFlow(s: LeaveSettings): ApprovalFlow {
+  return s.approvalLevels === 2 ? 'MANAGER_THEN_HR' : s.singleApprover;
+}
 
 /**
  * Tenant-wide leave policy. Backed by `tenant_settings` — approval depth and
@@ -54,16 +66,18 @@ export function SettingsTab({ readOnly = false }: { readOnly?: boolean }) {
     <div className="flex flex-col gap-5">
     <Card className="max-w-lg p-4">
       <form onSubmit={save} className="flex flex-col gap-4">
-        <Field label="Approval levels" hint="How many decision steps a request goes through before it's final.">
+        <Field
+          label="Approval levels"
+          hint="Who decides a request before it's final. Employees with no reporting manager always go to HR."
+        >
           <Select
             disabled={readOnly}
-            value={settings.approvalLevels}
-            onChange={(e) =>
-              setSettings((s) => (s ? { ...s, approvalLevels: Number(e.target.value) as LeaveApprovalLevel } : s))
-            }
+            value={approvalFlow(settings)}
+            onChange={(e) => setSettings((s) => (s ? { ...s, ...APPROVAL_FLOWS[e.target.value as ApprovalFlow] } : s))}
           >
-            <option value={1}>1 — straight to HR</option>
-            <option value={2}>2 — manager, then HR</option>
+            <option value="HR">1 — straight to HR</option>
+            <option value="MANAGER">1 — reporting manager only</option>
+            <option value="MANAGER_THEN_HR">2 — manager, then HR</option>
           </Select>
         </Field>
 

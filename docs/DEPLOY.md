@@ -46,6 +46,10 @@ team testing. If you want to remove that hop, launch the box in
 ap-northeast-1 instead (everything else in this guide is unchanged
 either way — only the EC2 region picked in §2a moves).
 
+> **Planned:** the shared DB is moving to Mumbai so the box and the DB
+> share a region. Measured today, the Tokyo hop costs ~0.6–0.8 s per query
+> and 5–7 s per screen. Runbook: `docs/DB_REGION_MOVE.md`.
+
 ---
 
 ## 0. One-time prerequisites

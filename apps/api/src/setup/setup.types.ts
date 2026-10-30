@@ -134,6 +134,8 @@ export interface SetupDraft {
   leavePolicy: {
     fyStartMonth: number;
     leaveApprovalLevels: 1 | 2;
+    /** Who decides at one level. Optional: drafts saved before it existed mean HR. */
+    leaveSingleApprover?: 'HR' | 'MANAGER';
     leaveEscalationDays: number;
     allowLopRequests: boolean;
     types: DraftLeaveType[];

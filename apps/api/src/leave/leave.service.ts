@@ -140,6 +140,9 @@ export class LeaveService {
         ...(dto.leaveApprovalLevels !== undefined && {
           leaveApprovalLevels: dto.leaveApprovalLevels,
         }),
+        ...(dto.leaveSingleApprover !== undefined && {
+          leaveSingleApprover: dto.leaveSingleApprover,
+        }),
         ...(dto.leaveEscalationDays !== undefined && {
           leaveEscalationDays: dto.leaveEscalationDays,
         }),
@@ -944,12 +947,11 @@ export class LeaveService {
       );
     }
 
-    const status =
-      settings.leaveApprovalLevels === 1
-        ? 'PENDING_L2'
-        : employee.reportingManagerId
-          ? 'PENDING_L1'
-          : 'PENDING_L2';
+    // L1 = the reporting manager, L2 = HR. One level goes to whichever the
+    // tenant picked; anyone without a reporting manager goes to HR.
+    const managerDecides =
+      settings.leaveApprovalLevels === 2 || settings.leaveSingleApprover === 'MANAGER';
+    const status = managerDecides && employee.reportingManagerId ? 'PENDING_L1' : 'PENDING_L2';
 
     const request = await this.tenantPrisma.client.leaveRequest.create({
       data: {
@@ -1084,6 +1086,11 @@ export class LeaveService {
       if (!isReportingManager && !ADMIN_ROLES.includes(user.role)) {
         throw new ForbiddenException('Only the reporting manager or HR admin can give L1 approval');
       }
+      const settings = await this.getTenantSettings();
+      // "Reporting manager only": the manager's decision is final.
+      if (settings.leaveApprovalLevels === 1 && settings.leaveSingleApprover === 'MANAGER') {
+        return this.finalApprove(req, 1, user, dto);
+      }
       const [updated] = await Promise.all([
         this.tenantPrisma.client.leaveRequest.update({
           where: { id },
@@ -1096,7 +1103,6 @@ export class LeaveService {
         }),
         this.recordApproval(id, 1, user.employeeId ?? null, 'APPROVED', dto?.comment ?? null),
       ]);
-      const settings = await this.getTenantSettings();
       await this.scheduleEscalation(id, 2, settings.leaveEscalationDays);
       const ctx = leaveNotificationContext(updated);
       await this.notifications.notify({
@@ -1124,78 +1130,94 @@ export class LeaveService {
           'Only HR Manager or Company Admin can give final (L2) approval',
         );
       }
-      const settings = await this.getTenantSettings();
-      const leaveType = await this.tenantPrisma.client.leaveType.findUniqueOrThrow({
-        where: { id: req.leaveTypeId },
-      });
-      const year = resolveLeaveYear(req.startDate, settings.fyStartMonth);
-      if (leaveType.grantMode === 'ON_EVENT') {
-        if (leaveType.requiresDocument) {
-          const attachments = await this.documents.attachmentsFor('LEAVE_REQUEST', [id]);
-          if (!attachments.get(id)) {
-            throw new BadRequestException(
-              `${leaveType.name} needs a supporting document (e.g. a medical or marriage certificate) before it can be approved`,
-            );
-          }
-        }
-        await this.grantEventDays(
-          req.employeeId,
-          req.leaveTypeId,
-          year,
-          Number(req.days),
-          user.sub,
-          `${leaveType.name} granted for leave request ${id}`,
-        );
-      }
-      if (!req.isLop) {
-        await this.adjustUsedDays(
-          req.employeeId,
-          req.leaveTypeId,
-          year,
-          Number(req.days),
-          LeaveLedgerSource.REQUEST_APPROVED,
-          user.sub,
-          `Leave request ${id} approved`,
-        );
-      }
-      // Physically on leave regardless of LOP — LOP only affects pay/balance.
-      const holidayDates = await this.holidayDatesBetween(req.startDate, req.endDate);
-      await this.syncAttendanceForLeave(
-        req.employeeId,
-        req.startDate,
-        req.endDate,
-        holidayDates,
-        settings.weeklyOffDays,
-        true,
-      );
-      const [updated] = await Promise.all([
-        this.tenantPrisma.client.leaveRequest.update({
-          where: { id },
-          data: {
-            status: 'APPROVED',
-            l2ApproverId: user.employeeId ?? undefined,
-            l2DecidedAt: new Date(),
-          },
-          include: REQUEST_INCLUDE,
-        }),
-        this.recordApproval(id, 2, user.employeeId ?? null, 'APPROVED', dto?.comment ?? null),
-      ]);
-      await this.notifications.notify({
-        tenantId: this.tenantPrisma.tenantId,
-        template: 'LEAVE_DECIDED',
-        context: {
-          ...leaveNotificationContext(updated),
-          outcome: 'APPROVED',
-          comment: dto?.comment ?? null,
-        },
-        dedupeKey: `leave:${id}:decided:APPROVED`,
-        to: { employeeIds: [req.employeeId] },
-        actorUserId: user.sub,
-      });
-      return this.toRequestDtoOne(updated);
+      return this.finalApprove(req, 2, user, dto);
     }
 
     throw new BadRequestException(`Request is not pending approval (status: ${req.status})`);
+  }
+
+  /**
+   * The final decision on a request: posts used days / event grants, marks
+   * attendance ON_LEAVE and approves. `level` is the step making it — 2 (HR)
+   * normally, 1 when the tenant runs "reporting manager only".
+   */
+  private async finalApprove(
+    req: Prisma.LeaveRequestGetPayload<{ include: { employee: true } }>,
+    level: 1 | 2,
+    user: AuthenticatedUser,
+    dto?: DecideLeaveDto,
+  ) {
+    const id = req.id;
+    const settings = await this.getTenantSettings();
+    const leaveType = await this.tenantPrisma.client.leaveType.findUniqueOrThrow({
+      where: { id: req.leaveTypeId },
+    });
+    const year = resolveLeaveYear(req.startDate, settings.fyStartMonth);
+    if (leaveType.grantMode === 'ON_EVENT') {
+      if (leaveType.requiresDocument) {
+        const attachments = await this.documents.attachmentsFor('LEAVE_REQUEST', [id]);
+        if (!attachments.get(id)) {
+          throw new BadRequestException(
+            `${leaveType.name} needs a supporting document (e.g. a medical or marriage certificate) before it can be approved`,
+          );
+        }
+      }
+      await this.grantEventDays(
+        req.employeeId,
+        req.leaveTypeId,
+        year,
+        Number(req.days),
+        user.sub,
+        `${leaveType.name} granted for leave request ${id}`,
+      );
+    }
+    if (!req.isLop) {
+      await this.adjustUsedDays(
+        req.employeeId,
+        req.leaveTypeId,
+        year,
+        Number(req.days),
+        LeaveLedgerSource.REQUEST_APPROVED,
+        user.sub,
+        `Leave request ${id} approved`,
+      );
+    }
+    // Physically on leave regardless of LOP — LOP only affects pay/balance.
+    const holidayDates = await this.holidayDatesBetween(req.startDate, req.endDate);
+    await this.syncAttendanceForLeave(
+      req.employeeId,
+      req.startDate,
+      req.endDate,
+      holidayDates,
+      settings.weeklyOffDays,
+      true,
+    );
+    const [updated] = await Promise.all([
+      this.tenantPrisma.client.leaveRequest.update({
+        where: { id },
+        data: {
+          status: 'APPROVED',
+          ...(level === 1
+            ? { l1ApproverId: user.employeeId ?? undefined, l1DecidedAt: new Date() }
+            : { l2ApproverId: user.employeeId ?? undefined, l2DecidedAt: new Date() }),
+        },
+        include: REQUEST_INCLUDE,
+      }),
+      this.recordApproval(id, level, user.employeeId ?? null, 'APPROVED', dto?.comment ?? null),
+    ]);
+    await this.notifications.notify({
+      tenantId: this.tenantPrisma.tenantId,
+      template: 'LEAVE_DECIDED',
+      context: {
+        ...leaveNotificationContext(updated),
+        outcome: 'APPROVED',
+        comment: dto?.comment ?? null,
+      },
+      dedupeKey: `leave:${id}:decided:APPROVED`,
+      to: { employeeIds: [req.employeeId] },
+      actorUserId: user.sub,
+    });
+    return this.toRequestDtoOne(updated);
   }
 
   async reject(id: string, user: AuthenticatedUser, dto?: DecideLeaveDto) {

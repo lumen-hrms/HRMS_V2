@@ -343,6 +343,53 @@ describe('AttendanceService', () => {
     });
   });
 
+  describe('stats()', () => {
+    it('sums the Leave page’s per-type available balance (incl. carry-forward, minus pending) and returns the split', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        attendanceRecord: { findMany: jest.fn().mockResolvedValue([]) },
+      });
+      const leave = fakeLeave();
+      leave.getBalances.mockResolvedValue([
+        {
+          leaveType: { code: 'EL', name: 'Earned Leave' },
+          accrued: 0,
+          carriedForward: 0,
+          used: 0,
+          pending: 0,
+        },
+        {
+          leaveType: { code: 'CL', name: 'Casual Leave' },
+          accrued: 1,
+          carriedForward: 0,
+          used: 0,
+          pending: 0,
+        },
+        {
+          leaveType: { code: 'SL', name: 'Sick Leave' },
+          accrued: 2,
+          carriedForward: 1,
+          used: 0.5,
+          pending: 1,
+        },
+      ]);
+      const service = new AttendanceService(
+        tenantPrisma as any,
+        leave as any,
+        fakeDocuments(),
+        fakeNotifications(),
+        fakeAudit(tenantPrisma),
+      );
+
+      const result = await service.stats(user(), '2026-03');
+      expect(result.remainingLeave).toBe(2.5);
+      expect(result.leaveBreakdown).toEqual([
+        { code: 'EL', name: 'Earned Leave', available: 0 },
+        { code: 'CL', name: 'Casual Leave', available: 1 },
+        { code: 'SL', name: 'Sick Leave', available: 1.5 },
+      ]);
+    });
+  });
+
   describe('clockOut()', () => {
     it('rejects clocking out without having clocked in', async () => {
       const tenantPrisma = buildFakeTenantPrisma({

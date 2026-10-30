@@ -21,8 +21,29 @@
 > spec draft that is no longer maintained — ignore them; this file and the
 > code are the source of truth.)
 >
-> **Last synced to code:** 2026-10-29. Landed since the previous sync
-> (dated 2026-10-28):
+> **Last synced to code:** 2026-10-30. Landed since the previous sync
+> (dated 2026-10-29):
+>
+> - **Leave (module 04): "reporting manager only" approval.** A third
+>   approval option next to "straight to HR" and "manager, then HR" —
+>   `TenantSettings.leaveSingleApprover` (`HR` | `MANAGER`, read when
+>   `leaveApprovalLevels = 1`); settable in Leave › Settings and company
+>   setup. Needs migration `20261204090000_leave_manager_only_approval`.
+>   Leave stays ✅ 100%.
+> - **Performance (cross-cutting, Identity & Access / Platform Admin):** the
+>   per-request tenant and user/setup lookups are cached ≤ 30 s in-process
+>   (`apps/api/src/common/tenancy/auth-context-cache.ts`; cleared on any
+>   tenant / user / login-link / setup write). Saves ~0.7–1.4 s per request
+>   on the cross-region dev stack. Deactivate and suspend dialogs show the
+>   propagation window as a progress view. The DB move to Mumbai is planned in
+>   `docs/DB_REGION_MOVE.md`. No module % changes.
+> - **Reports (module 11):** switching tabs no longer blanks the page
+>   (stale result rendered with the next tab's layout). Display fix.
+> - **Attendance (module 05):** the "Remaining Leave" card is now "Total
+>   Leave Balance" — the Leave page's available figure summed over all leave
+>   types, with a per-type split. Display fix; Attendance stays ✅ 100%.
+>
+> Previously, as of 2026-10-29 (since 2026-10-28):
 >
 > - **Tenant Configuration (module 13): mandatory full-screen company setup
 >   replaces the skippable wizard.** `apps/api/src/setup` +
@@ -935,7 +956,7 @@ attendance and flag LOP when the balance is short.
 | Per-employee per-year balances; init for a year | FR-LVE-004 | ✅ `initializeYearlyBalances()` upserts ANNUAL types; MONTHLY/QUARTERLY types auto-accrue via `LeaveAccrualProcessor` (daily BullMQ job, idempotent via `LeaveLedgerEntry`), now prorating a new joiner's first period by `Employee.dateOfJoining`; balance-year bucketing follows `TenantSettings.fyStartMonth` via `resolveLeaveYear()` |
 | Company holiday calendar (national + state optional) | FR-LVE-003 | ✅ `Holiday` table + full CRUD (`/api/leave/holidays`); `apply()` counts working days (holidays + `TenantSettings.weeklyOffDays` excluded) |
 | Apply for leave (dates, type, reason, attachment) | FR-LVE-005 | ✅ dates/type/reason/attachment all wired (`POST /api/leave/requests/:id/attachment`, stored + scanned via module 09 Documents; downloadable from the request sheet) |
-| Multi-level approval (1 or 2, tenant-configurable) + escalation timers | FR-LVE-006 | ✅ `TenantSettings.leaveApprovalLevels` (1 or 2) now actually read by `apply()` — previously hardcoded to 2. `LeaveEscalationProcessor` auto-escalates an undecided L1 to L2 after `leaveEscalationDays`, and flags an undecided L2 for manual HR follow-up (no auto-approve). *(The old SRS's "up to 4 levels" is stale — the schema/FE contract cap V1 at 2; see `CLAUDE.md`.)* |
+| Multi-level approval (1 or 2, tenant-configurable) + escalation timers | FR-LVE-006 | ✅ `TenantSettings.leaveApprovalLevels` (1 or 2) now actually read by `apply()` — previously hardcoded to 2. A single level can be HR or the reporting manager alone (`TenantSettings.leaveSingleApprover`, migration `20261204090000_leave_manager_only_approval`; manager's L1 approval is final, no-manager employees fall back to HR). `LeaveEscalationProcessor` auto-escalates an undecided L1 to L2 after `leaveEscalationDays`, and flags an undecided L2 for manual HR follow-up (no auto-approve). *(The old SRS's "up to 4 levels" is stale — the schema/FE contract cap V1 at 2; see `CLAUDE.md`.)* |
 | Team calendar shown before submitting | FR-LVE-007 | ✅ `GET /leave/calendar` exists; the Apply tab renders it inline (`tabs/apply.tsx`) alongside the dedicated Team Calendar tab |
 | Approved leave syncs to attendance; flags LOP | FR-LVE-008 | ✅ `isLop` computed on apply; `LeaveService` writes `AttendanceRecord.status = 'ON_LEAVE'` for the request's working days on final approval (reversed on cancel) via direct Prisma access, not a nightly job — see "Known gaps" |
 | Comp-off credit for holiday/weekend work | FR-LVE-009 | ✅ `AttendanceService.clockIn()` detects a `Holiday`/`TenantSettings.weeklyOffDays` match and calls `LeaveService.creditCompOff()`, which credits +1 day to the tenant's `isCompOff` `LeaveType` (idempotent per employee/day, opt-in per tenant) |

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import type { NextFunction, Request, Response } from 'express';
 import { PlatformPrismaClientProvider } from '../../prisma/platform-prisma-client.provider';
 import type { AppConfig } from '../../config/configuration';
+import { tenantBySubdomain } from './auth-context-cache';
 
 export interface TenantResolvedRequest extends Request {
   tenantId?: string;
@@ -52,13 +53,18 @@ export class TenantResolutionMiddleware implements NestMiddleware {
       throw new NotFoundException('No tenant could be resolved for this request');
     }
 
-    const tenant = await this.platformPrisma.tenant.findUnique({
-      where: { subdomain },
-      select: { id: true, subdomain: true, name: true, status: true },
-    });
-
+    // Cached ~30 s (cleared on any tenant write) — see auth-context-cache.ts.
+    let tenant = tenantBySubdomain.get(subdomain);
     if (!tenant) {
-      throw new NotFoundException(`Unknown tenant: ${subdomain}`);
+      const row = await this.platformPrisma.tenant.findUnique({
+        where: { subdomain },
+        select: { id: true, subdomain: true, name: true, status: true },
+      });
+      if (!row) {
+        throw new NotFoundException(`Unknown tenant: ${subdomain}`);
+      }
+      tenant = row;
+      tenantBySubdomain.set(subdomain, row);
     }
     if (tenant.status === 'SUSPENDED') {
       throw new ForbiddenException('This tenant account has been suspended');

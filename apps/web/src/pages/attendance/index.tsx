@@ -41,6 +41,7 @@ interface StatsResponse {
   workingDays: number;
   punctualityRate: number;
   remainingLeave: number;
+  leaveBreakdown: { code: string; name: string; available: number }[];
   overtimeHours: number;
 }
 const REASON_LABELS: Record<string, string> = {
@@ -283,10 +284,10 @@ function MyAttendanceTab() {
               tone="warning"
             />
             <StatCard
-              label="Remaining Leave"
+              label="Total Leave Balance"
               value={`${stats?.remainingLeave ?? 0}`}
-              suffix="days balance"
-              footer=""
+              suffix="days, all leave types"
+              footer={(stats?.leaveBreakdown ?? []).map((b) => `${b.code} ${b.available}`).join(' · ')}
               tone="info"
             />
             <StatCard

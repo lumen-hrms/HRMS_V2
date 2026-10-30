@@ -185,7 +185,7 @@ events but has no aggregation/UI yet).
 **Leave Management — done, 100% of its originally-scoped gaps closed,
 running live:** the line-manager leave-visibility placeholder is a real
 `reportingManagerId` check, holiday-aware working-day counts, request
-attachments, a tenant-configurable 1-or-2-level approval chain with
+attachments, a tenant-configurable 1-or-2-level approval chain (one level = HR or the reporting manager alone) with
 escalation timers (BullMQ `leave` queue / Redis — first use of BullMQ in
 this repo), one entitlement engine (`leave/leave-entitlement.ts` +
 `LeaveEntitlementService` — prorated annual grants, monthly/quarterly
