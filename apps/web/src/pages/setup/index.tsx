@@ -67,12 +67,13 @@ export function SetupPage() {
   const [holidayImportIssues, setHolidayImportIssues] = React.useState<{ row?: number; message: string }[]>([]);
   const [result, setResult] = React.useState<SubmitResult | null>(null);
 
-  const validate = React.useCallback(async () => {
-    const v = await setupApi.validate();
+  const applyValidation = React.useCallback((v: SetupValidation) => {
     setIssues(v.issues);
     setReports({ employees: v.employeeReport, balances: v.balanceReport });
     return v;
   }, []);
+
+  const validate = React.useCallback(async () => applyValidation(await setupApi.validate()), [applyValidation]);
 
   React.useEffect(() => {
     if (user?.role !== 'COMPANY_ADMIN' || status?.complete) return;
@@ -111,9 +112,11 @@ export function SetupPage() {
     setBusy('save');
     try {
       if (dirty) {
-        const { savedAt: at } = await setupApi.save(draft);
+        // The save response already carries the validation of what was saved.
+        const { savedAt: at, validation } = await setupApi.save(draft);
         setSavedAt(at);
         setDirty(false);
+        return applyValidation(validation);
       }
       return await validate();
     } catch (err) {

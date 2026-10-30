@@ -36,6 +36,30 @@ const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const TIMEZONES = ['Asia/Kolkata', 'Asia/Dubai', 'Asia/Singapore', 'Europe/London', 'America/New_York'];
 const num = (v: string) => (v === '' ? 0 : Number(v));
 
+/** Number input that lets the field be emptied while typing (stores 0 meanwhile). */
+function NumberInput({
+  value,
+  onValue,
+  ...props
+}: { value: number; onValue: (n: number) => void } & Omit<
+  React.ComponentProps<typeof Input>,
+  'value' | 'onChange' | 'type'
+>) {
+  const [text, setText] = React.useState(String(value));
+  const shown = text === '' && value === 0 ? '' : Number(text) === value ? text : String(value);
+  return (
+    <Input
+      {...props}
+      type="number"
+      value={shown}
+      onChange={(e) => {
+        setText(e.target.value);
+        onValue(num(e.target.value));
+      }}
+    />
+  );
+}
+
 function downloadCsv(fileName: string, header: string[]) {
   const blob = new Blob([header.join(',') + '\n'], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
@@ -445,29 +469,14 @@ export function WorkWeekStep({ draft, update, err, issues }: StepProps) {
                   <Input type="time" value={s.endTime} onChange={(e) => set('endTime', e.target.value)} />
                 </Field>
                 <Field label="Grace (min)" error={f('graceMinutes')}>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={s.graceMinutes}
-                    onChange={(e) => set('graceMinutes', num(e.target.value))}
-                  />
+                  <NumberInput min={0} value={s.graceMinutes} onValue={(n) => set('graceMinutes', n)} />
                 </Field>
                 <div />
                 <Field label="Full-day hours" error={f('minHoursFullDay')}>
-                  <Input
-                    type="number"
-                    step="0.5"
-                    value={s.minHoursFullDay}
-                    onChange={(e) => set('minHoursFullDay', num(e.target.value))}
-                  />
+                  <NumberInput step="0.5" value={s.minHoursFullDay} onValue={(n) => set('minHoursFullDay', n)} />
                 </Field>
                 <Field label="Half-day hours" error={f('minHoursHalfDay')}>
-                  <Input
-                    type="number"
-                    step="0.5"
-                    value={s.minHoursHalfDay}
-                    onChange={(e) => set('minHoursHalfDay', num(e.target.value))}
-                  />
+                  <NumberInput step="0.5" value={s.minHoursHalfDay} onValue={(n) => set('minHoursHalfDay', n)} />
                 </Field>
                 {s.type === 'FLEXI' && (
                   <>

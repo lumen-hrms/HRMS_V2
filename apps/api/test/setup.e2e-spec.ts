@@ -93,6 +93,22 @@ describe('Company setup gate (e2e)', () => {
     expect(draft.body.draft.version).toBe(1);
   });
 
+  it('saves the draft and returns its validation in the same response', async () => {
+    const adminToken = await getIdTokenForEmail(pendingAdminEmail);
+    const { body } = await get('/api/setup/draft', adminToken, pending.subdomain);
+
+    const res = await request(server())
+      .put('/api/setup/draft')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .set('X-Tenant-Subdomain', pending.subdomain)
+      .send({ draft: body.draft });
+
+    expect(res.status).toBe(200);
+    expect(res.body.savedAt).toBeDefined();
+    expect(Array.isArray(res.body.validation.issues)).toBe(true);
+    expect(res.body.validation.planned).toBeUndefined();
+  });
+
   it('only lets a Company Admin touch the draft', async () => {
     const employeeToken = await getIdTokenForEmail(pending.employeeEmail);
     expect((await get('/api/setup/draft', employeeToken, pending.subdomain)).status).toBe(403);
