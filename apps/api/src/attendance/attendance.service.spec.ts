@@ -388,6 +388,36 @@ describe('AttendanceService', () => {
         { code: 'SL', name: 'Sick Leave', available: 1.5 },
       ]);
     });
+
+    it('returns the month day by day with the shift target, for the dashboard charts', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        attendanceRecord: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              date: new Date('2026-03-02T00:00:00Z'),
+              status: 'PRESENT',
+              checkInAt: new Date('2026-03-02T03:30:00Z'),
+              checkOutAt: new Date('2026-03-02T12:30:00Z'),
+              breaks: [],
+            },
+          ]),
+        },
+      });
+      const service = new AttendanceService(
+        tenantPrisma as any,
+        fakeLeave() as any,
+        fakeDocuments(),
+        fakeNotifications(),
+        fakeAudit(tenantPrisma),
+      );
+
+      const result = await service.stats(user(), '2026-03');
+
+      expect(result.daily).toEqual([
+        expect.objectContaining({ date: '2026-03-02', status: 'PRESENT', workedMinutes: 9 * 60 }),
+      ]);
+      expect(result.targetHours).toEqual(expect.any(Number));
+    });
   });
 
   describe('clockOut()', () => {

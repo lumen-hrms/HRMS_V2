@@ -29,6 +29,7 @@ import { DocumentsService } from '../documents/documents.service';
 import {
   CreateDepartmentDto,
   CreateEmployeeDto,
+  CreateLoginDto,
   DeleteDepartmentDto,
   LinkLoginDto,
   RevealFieldDto,
@@ -92,6 +93,22 @@ export class EmployeesController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.service.update(id, dto, user);
+  }
+
+  @Post(':id/login')
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  createLogin(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateLoginDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.createLogin(id, dto, user);
+  }
+
+  @Post(':id/login/sync-email')
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  syncLoginEmail(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.service.syncLoginEmail(id, user);
   }
 
   @Patch(':id/login')

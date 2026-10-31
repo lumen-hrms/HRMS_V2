@@ -54,6 +54,7 @@ export class AuditQueryDto {
     'password_reset.sent',
     'user.created',
     'user.linked',
+    'user.email_changed',
     'ALL',
   ])
   action?: string;

@@ -22,6 +22,7 @@ import type {
 } from './dto/attendance.dto';
 import {
   baseStatusFor,
+  dailySeries,
   dateOnly,
   isLateCheckIn,
   monthBoundsOf,
@@ -360,6 +361,10 @@ export class AttendanceService {
       remainingLeave,
       leaveBreakdown,
       overtimeHours,
+      // The month day by day (and the shift's full-day target) — what the
+      // dashboard's attendance charts plot, so they cost no extra queries.
+      daily: dailySeries(records),
+      targetHours: Number(shift.minHoursFullDay),
     };
   }
 

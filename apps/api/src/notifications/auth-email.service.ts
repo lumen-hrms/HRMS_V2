@@ -21,12 +21,19 @@ export interface PasswordResetEmail {
   kind: AuthEmailKind;
   /** Workspace the account belongs to — its display name goes in the From line and copy. */
   tenantId: string;
+  /** Who the email is addressed to — used by `ADMIN_RESET` to greet them by name. */
+  recipientName?: string;
 }
 
 /** Which path actually delivered the email — surfaced for logs/tests. */
 export type AuthEmailChannel = 'ses' | 'firebase';
 
-export function authEmailBody(kind: AuthEmailKind, tenantName: string, link: string): EmailBody {
+export function authEmailBody(
+  kind: AuthEmailKind,
+  tenantName: string,
+  link: string,
+  recipientName?: string,
+): EmailBody {
   switch (kind) {
     case 'INVITE':
       return {
@@ -40,10 +47,12 @@ export function authEmailBody(kind: AuthEmailKind, tenantName: string, link: str
     case 'ADMIN_RESET':
       return {
         subject: `Reset your ${tenantName} password`,
-        intro: `An administrator at ${tenantName} has asked you to set a new password for Lumen HRMS.`,
-        rows: [],
-        outro:
-          "If you weren't expecting this, contact your HR team — your current password stops working once you set a new one.",
+        intro: `${recipientName ? `Hi ${recipientName}, your` : 'Your'} HR team at ${tenantName} has requested a password reset for your Lumen HRMS account. Use the button below to set a new password.`,
+        rows: [
+          ...(recipientName ? [['Name', recipientName] as [string, string]] : []),
+          ['Company', tenantName],
+        ],
+        outro: `If you weren't expecting this, contact your HR team at ${tenantName} — your current password stops working once you set a new one.`,
         cta: { label: 'Set a new password', path: link },
       };
     case 'SELF_SERVICE':
@@ -56,6 +65,36 @@ export function authEmailBody(kind: AuthEmailKind, tenantName: string, link: str
         cta: { label: 'Reset password', path: link },
       };
   }
+}
+
+export interface LoginCredentialsEmail {
+  email: string;
+  tenantId: string;
+  employeeCode: string;
+  tempPassword: string;
+  recipientName?: string;
+}
+
+export function loginCredentialsBody(
+  tenantName: string,
+  employeeCode: string,
+  email: string,
+  tempPassword: string,
+  recipientName?: string,
+): EmailBody {
+  return {
+    subject: `Your ${tenantName} sign-in details`,
+    intro: `${recipientName ? `Hi ${recipientName}, your` : 'Your'} HR team at ${tenantName} has created a Lumen HRMS login for you. Use the details below to sign in.`,
+    rows: [
+      ['Company', tenantName],
+      ['Employee ID', employeeCode],
+      ['Username (sign in with this email)', email],
+      ['Temporary password', tempPassword],
+    ],
+    outro:
+      'For your security, set your own password after signing in for the first time — use "Forgot password?" on the sign-in page.',
+    cta: { label: 'Sign in', path: '/login' },
+  };
 }
 
 /**
@@ -100,8 +139,8 @@ export class AuthEmailService {
       select: { name: true },
     });
     const tenantName = tenant?.name ?? 'Your company';
-    const link = await this.generateLink(input.email);
-    const email = renderEmail(authEmailBody(input.kind, tenantName, link), {
+    const link = this.toAppLink(await this.generateLink(input.email));
+    const email = renderEmail(authEmailBody(input.kind, tenantName, link, input.recipientName), {
       appBaseUrl: this.appBaseUrl,
       tenantName,
     });
@@ -111,6 +150,50 @@ export class AuthEmailService {
       fromName: `${tenantName} via Lumen HRMS`,
     });
     return 'ses';
+  }
+
+  /**
+   * Emails a new login's credentials (employee ID, sign-in email, temporary
+   * password). Same rules as the reset link: sent synchronously, never
+   * written to `notification_log` since it carries a live credential. There is
+   * no Firebase fallback — Firebase can't send a custom password — so this
+   * throws when SES isn't configured and the caller surfaces that.
+   */
+  async sendLoginCredentials(input: LoginCredentialsEmail): Promise<void> {
+    if (!this.sender.isConfigured) {
+      throw new Error('Email delivery (SES) is not configured');
+    }
+    const tenant = await this.platformPrisma.tenant.findUnique({
+      where: { id: input.tenantId },
+      select: { name: true },
+    });
+    const tenantName = tenant?.name ?? 'Your company';
+    const email = renderEmail(
+      loginCredentialsBody(
+        tenantName,
+        input.employeeCode,
+        input.email,
+        input.tempPassword,
+        input.recipientName,
+      ),
+      { appBaseUrl: this.appBaseUrl, tenantName },
+    );
+    await this.sender.send({
+      ...email,
+      to: input.email,
+      fromName: `${tenantName} via Lumen HRMS`,
+    });
+  }
+
+  /**
+   * Swaps Firebase's hosted (unstyled) reset page for our own `/auth/action`
+   * page, keeping Firebase's one-time code — the page completes the reset
+   * with the Firebase SDK, so it's the same flow in the Lumen shell.
+   */
+  private toAppLink(firebaseLink: string): string {
+    const code = new URL(firebaseLink).searchParams.get('oobCode');
+    if (!code) return firebaseLink;
+    return `${this.appBaseUrl}/auth/action?mode=resetPassword&oobCode=${encodeURIComponent(code)}`;
   }
 
   /**

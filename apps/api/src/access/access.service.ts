@@ -208,10 +208,18 @@ export class AccessService {
   }
 
   async sendPasswordReset(actor: AuthenticatedUser, targetId: string): Promise<{ email: string }> {
-    const target = await this.tenantPrisma.client.user.findUnique({ where: { id: targetId } });
+    const target = await this.tenantPrisma.client.user.findUnique({
+      where: { id: targetId },
+      include: { employee: { select: { firstName: true, lastName: true } } },
+    });
     if (!target) throw new NotFoundException('User not found');
 
-    await this.sendResetEmail(target.email);
+    await this.sendResetEmail(
+      target.email,
+      target.employee
+        ? `${target.employee.firstName} ${target.employee.lastName}`.trim()
+        : undefined,
+    );
     await this.writeAccessAudit(
       actor,
       'password_reset.sent',
@@ -431,11 +439,12 @@ export class AccessService {
    * emailed from the workspace's own domain via SES (module 10's
    * AuthEmailService; falls back to Firebase's own email if SES isn't set up).
    */
-  private async sendResetEmail(email: string): Promise<void> {
+  private async sendResetEmail(email: string, recipientName?: string): Promise<void> {
     await this.authEmails.sendPasswordReset({
       email,
       kind: 'ADMIN_RESET',
       tenantId: this.tenantPrisma.tenantId,
+      recipientName,
     });
   }
 }
@@ -447,6 +456,7 @@ const ACTIVITY_ACTION_LABEL: Record<FrontendAuditAction, string> = {
   'password_reset.sent': 'Password reset sent',
   'user.created': 'Login created',
   'user.linked': 'Login linked to employee',
+  'user.email_changed': 'Login email changed',
 };
 
 function humanizeEmail(email: string): string {

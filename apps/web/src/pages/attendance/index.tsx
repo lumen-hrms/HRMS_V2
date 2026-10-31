@@ -11,6 +11,7 @@ import { useToast } from '@/components/ui/toast';
 import { UPLOAD_ACCEPT, uploadProblem } from '@/lib/documents';
 import { useAuth } from '@/context/auth-context';
 import { cn } from '@/lib/utils';
+import { EarlyClockOutDialog } from '@/components/attendance/early-clock-out-dialog';
 import { AttendanceSettingsTab } from './settings-tab';
 import { AttendanceTeamTab } from './team-tab';
 import { AttendanceApprovalsTab } from './approvals-tab';
@@ -129,6 +130,7 @@ function MyAttendanceTab() {
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [now, setNow] = React.useState(() => Date.now());
+  const [confirmingOut, setConfirmingOut] = React.useState(false);
 
   const load = React.useCallback(async () => {
     const mk = monthKey(month);
@@ -210,6 +212,17 @@ function MyAttendanceTab() {
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (
         <>
+          <EarlyClockOutDialog
+            open={confirmingOut}
+            workedMs={displayMs}
+            targetMs={targetMs}
+            busy={busy}
+            onCancel={() => setConfirmingOut(false)}
+            onConfirm={() => {
+              setConfirmingOut(false);
+              runAction(() => api.post('/attendance/clock-out'));
+            }}
+          />
           <Card className="p-6">
             <div className="flex flex-wrap items-center gap-8">
               <ProgressRing pct={pct} targetHours={today?.targetHours ?? 8} />
@@ -258,7 +271,9 @@ function MyAttendanceTab() {
                 <Button
                   disabled={busy || today?.isOnBreak}
                   onClick={() =>
-                    runAction(() => api.post(isClockedIn ? '/attendance/clock-out' : '/attendance/clock-in'))
+                    isClockedIn && displayMs < targetMs
+                      ? setConfirmingOut(true)
+                      : runAction(() => api.post(isClockedIn ? '/attendance/clock-out' : '/attendance/clock-in'))
                   }
                 >
                   {isClockedIn ? <LogOut className="h-4 w-4" /> : <LogIn className="h-4 w-4" />}

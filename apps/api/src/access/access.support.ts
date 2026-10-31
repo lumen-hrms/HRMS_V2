@@ -42,7 +42,8 @@ export type FrontendAuditAction =
   | 'user.deactivated'
   | 'password_reset.sent'
   | 'user.created'
-  | 'user.linked';
+  | 'user.linked'
+  | 'user.email_changed';
 
 /** `role.changed` <-> `access.role_changed` */
 export const STORED_ACTION: Record<FrontendAuditAction, string> = {
@@ -52,6 +53,7 @@ export const STORED_ACTION: Record<FrontendAuditAction, string> = {
   'password_reset.sent': 'access.password_reset_sent',
   'user.created': 'access.user_created',
   'user.linked': 'access.user_linked',
+  'user.email_changed': 'access.user_email_changed',
 };
 
 const FRONTEND_ACTION: Record<string, FrontendAuditAction> = Object.fromEntries(

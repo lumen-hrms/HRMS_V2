@@ -3,16 +3,13 @@ import { Link } from 'react-router-dom';
 import {
   ArrowUpRight,
   Cake,
-  CalendarClock,
   CalendarHeart,
   Check,
   CheckCircle2,
   Clock,
   PartyPopper,
-  Plane,
   UserMinus,
   UserPlus,
-  Users,
   Wallet,
   X,
 } from 'lucide-react';
@@ -20,6 +17,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
+import { BarList, ChartTile, SegmentBar, Sparkline } from '@/components/charts';
 
 interface PersonRef {
   id: string;
@@ -50,6 +48,8 @@ export interface AdminInsights {
   needsAttention: { noDepartment: number; noJoiningDate: number };
   onLeaveToday: {
     total: number;
+    /** Everyone on leave today, grouped by leave type. */
+    byType: { name: string; count: number }[];
     people: { id: string; name: string; leaveType: string; halfDay: boolean; until: string }[];
   };
   attendanceToday: { present: number; late: number; onLeave: number; absent: number } | null;
@@ -62,6 +62,8 @@ export interface AdminInsights {
     startDate: string;
     endDate: string;
   }[];
+  /** Every request waiting on this user, grouped by leave type. */
+  pendingByType: { name: string; requests: number; days: number }[];
   upcomingHolidays: { date: string; name: string; isOptional: boolean }[];
   latestPayroll: { period: string; status: string } | null;
 }
@@ -119,39 +121,73 @@ export function AdminOverview({
   return (
     <div className="flex flex-col gap-5">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <Kpi
-          to="/employees"
-          icon={Users}
+        <ChartTile
+          to="/dashboard/headcount"
           label="Headcount"
-          value={i.activeHeadcount}
+          value={String(i.activeHeadcount)}
           sub={i.joinedLast30Days > 0 ? `+${i.joinedLast30Days} in the last 30 days` : 'No new joiners this month'}
-        />
-        {hasAttendance ? (
-          <Kpi
-            to="/attendance"
-            icon={Clock}
-            label="Present today"
-            value={i.attendanceToday!.present}
-            sub={`${i.attendanceToday!.late} late · ${i.attendanceToday!.onLeave} on leave`}
+        >
+          <Sparkline
+            values={i.headcountTrend.map((t) => t.count)}
+            ariaLabel="Working employees at the end of each of the last six months"
           />
+        </ChartTile>
+        {hasAttendance ? (
+          <ChartTile
+            to="/dashboard/present-today"
+            label="Present today"
+            value={String(i.attendanceToday!.present)}
+            sub={`${i.attendanceToday!.late} late · ${i.attendanceToday!.onLeave} on leave`}
+          >
+            <SegmentBar
+              height={8}
+              ariaLabel={`Today: ${i.attendanceToday!.present - i.attendanceToday!.late} on time, ${i.attendanceToday!.late} late, ${i.attendanceToday!.onLeave} on leave, ${i.attendanceToday!.absent} absent`}
+              segments={[
+                { id: 'ontime', label: 'On time', value: i.attendanceToday!.present - i.attendanceToday!.late, tone: 1 },
+                { id: 'late', label: 'Late', value: i.attendanceToday!.late, tone: 2 },
+                { id: 'leave', label: 'On leave', value: i.attendanceToday!.onLeave, tone: 3 },
+                { id: 'absent', label: 'Absent', value: i.attendanceToday!.absent, tone: 4 },
+              ]}
+            />
+          </ChartTile>
         ) : (
           <Kpi
-            to="/employees"
             icon={Clock}
             label="In probation"
             value={i.status.probation}
             sub={`${i.status.confirmed} confirmed`}
           />
         )}
-        <Kpi icon={Plane} label="On leave today" value={i.onLeaveToday.total} sub="Approved leave" />
-        <Kpi
-          to="/leave"
-          icon={CalendarClock}
+        <ChartTile
+          to="/dashboard/on-leave"
+          label="On leave today"
+          value={String(i.onLeaveToday.total)}
+          sub="Approved leave"
+        >
+          {i.onLeaveToday.byType.length > 0 && (
+            <BarList
+              rows={i.onLeaveToday.byType.slice(0, 3).map((t) => ({ id: t.name, label: t.name, value: t.count }))}
+              ariaLabel="People on leave today, by leave type"
+              labelWidth="w-20"
+            />
+          )}
+        </ChartTile>
+        <ChartTile
+          to="/dashboard/pending-approvals"
           label="Pending approvals"
-          value={data.pendingApprovalsCount}
+          value={String(data.pendingApprovalsCount)}
           sub={data.pendingApprovalsCount > 0 ? 'Waiting on a decision' : 'All clear'}
           tone={data.pendingApprovalsCount > 0 ? 'warning' : undefined}
-        />
+        >
+          {i.pendingByType.length > 0 && (
+            <BarList
+              rows={i.pendingByType.slice(0, 3).map((t) => ({ id: t.name, label: t.name, value: t.days }))}
+              ariaLabel="Leave days waiting for approval, by leave type"
+              format={(n) => `${+n.toFixed(2)}d`}
+              labelWidth="w-20"
+            />
+          )}
+        </ChartTile>
         <Kpi
           icon={UserPlus}
           label="New joiners"
@@ -416,18 +452,17 @@ function Kpi({
   value,
   sub,
   icon: Icon,
-  to,
   tone,
 }: {
   label: string;
   value: number;
   sub?: string;
   icon: React.ComponentType<{ className?: string }>;
-  to?: string;
   tone?: 'warning';
 }) {
-  const body = (
-    <Card className={`flex h-full items-start justify-between gap-2 p-4 ${to ? 'transition-shadow hover:shadow-md' : ''}`}>
+  return (
+    <div className="min-w-0">
+      <Card className="flex h-full items-start justify-between gap-2 p-4">
       <div className="min-w-0">
         <p className="text-xs text-muted-foreground">{label}</p>
         <p className={`mt-1 text-2xl font-semibold tabular-nums ${tone === 'warning' ? 'text-warning' : ''}`}>{value}</p>
@@ -438,14 +473,8 @@ function Kpi({
         )}
       </div>
       <Icon className="h-5 w-5 shrink-0 text-muted-foreground" />
-    </Card>
-  );
-  return to ? (
-    <Link to={to} className="block min-w-0">
-      {body}
-    </Link>
-  ) : (
-    <div className="min-w-0">{body}</div>
+      </Card>
+    </div>
   );
 }
 

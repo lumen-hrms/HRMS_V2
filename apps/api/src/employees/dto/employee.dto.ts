@@ -111,6 +111,19 @@ export class CreateEmployeeDto {
   existingUserId?: string;
 }
 
+/**
+ * `POST /employees/:id/login` — create a brand-new login for an employee that
+ * has none. The temporary password is generated server-side and emailed.
+ */
+export class CreateLoginDto {
+  @IsEmail()
+  loginEmail!: string;
+
+  @IsOptional()
+  @IsIn(['COMPANY_ADMIN', 'HR_MANAGER', 'LINE_MANAGER', 'EMPLOYEE', 'AUDITOR'])
+  loginRole?: string;
+}
+
 /** `PATCH /employees/:id/login` — link an existing, unlinked login to this employee. */
 export class LinkLoginDto {
   @IsUUID()

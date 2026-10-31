@@ -5,6 +5,35 @@ import { computeWorkforceInsights } from './admin-insights.calc';
 
 const DAY_MS = 86_400_000;
 
+/** The few fields of a pending leave request the dashboard shows — never the whole row. */
+function toPendingRow(r: any) {
+  return {
+    id: r.id,
+    employee: { firstName: r.employee?.firstName ?? '', lastName: r.employee?.lastName ?? '' },
+    leaveType: { name: r.leaveType?.name ?? '' },
+    days: r.days,
+    startDate: r.startDate,
+    endDate: r.endDate,
+  };
+}
+
+/** Count (and, where given, days) per leave type name, biggest first — the data behind the tile charts. */
+function groupByType<T>(
+  rows: T[],
+  type: (r: T) => string,
+  days?: (r: T) => number,
+): { name: string; count: number; days: number }[] {
+  const groups = new Map<string, { name: string; count: number; days: number }>();
+  for (const r of rows) {
+    const name = type(r) || 'Other';
+    const g = groups.get(name) ?? { name, count: 0, days: 0 };
+    g.count++;
+    g.days += days ? days(r) : 0;
+    groups.set(name, g);
+  }
+  return [...groups.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
 /**
  * Everything the Company Admin / HR dashboard shows beyond the basics: who is
  * working, who is away today, what needs a decision, and what's coming up.
@@ -81,12 +110,18 @@ export class AdminInsightsService {
       (attendanceRows ?? []).map((r) => [r.status as string, r._count._all]),
     );
     const late = perStatus.get('LATE') ?? 0;
+    // Not truncated: the tile charts need every row, the lists below only a few.
+    const pendingAll = await opts.pendingApprovals;
 
     return {
       asOf: today.toISOString().slice(0, 10),
       ...workforce,
       onLeaveToday: {
         total: onLeave.length,
+        byType: groupByType(onLeave, (r) => r.leaveType.name).map(({ name, count }) => ({
+          name,
+          count,
+        })),
         people: onLeave.slice(0, 6).map((r) => ({
           id: r.employee.id,
           name: `${r.employee.firstName} ${r.employee.lastName}`.trim(),
@@ -104,14 +139,12 @@ export class AdminInsightsService {
           }
         : null,
       pendingRegularizations,
-      pendingApprovals: (await opts.pendingApprovals).slice(0, 5).map((r) => ({
-        id: r.id,
-        employee: { firstName: r.employee?.firstName ?? '', lastName: r.employee?.lastName ?? '' },
-        leaveType: { name: r.leaveType?.name ?? '' },
-        days: r.days,
-        startDate: r.startDate,
-        endDate: r.endDate,
-      })),
+      pendingApprovals: pendingAll.slice(0, 5).map(toPendingRow),
+      pendingByType: groupByType(
+        pendingAll,
+        (r) => r.leaveType?.name ?? '',
+        (r) => Number(r.days) || 0,
+      ).map(({ name, count, days }) => ({ name, requests: count, days })),
       upcomingHolidays: holidays.map((h) => ({
         date: h.date.toISOString().slice(0, 10),
         name: h.name,
@@ -119,5 +152,50 @@ export class AdminInsightsService {
       })),
       latestPayroll: payrollRun,
     };
+  }
+
+  /** Everyone on approved leave today, with department — the on-leave detail table. */
+  async onLeaveTodayDetail() {
+    const today = todayDateOnly();
+    const rows = await this.tenantPrisma.client.leaveRequest.findMany({
+      where: {
+        status: 'APPROVED',
+        startDate: { lte: new Date(today.getTime() + DAY_MS - 1) },
+        endDate: { gte: today },
+      },
+      select: {
+        id: true,
+        startDate: true,
+        endDate: true,
+        halfDay: true,
+        days: true,
+        employee: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            department: { select: { name: true } },
+          },
+        },
+        leaveType: { select: { name: true } },
+      },
+      orderBy: { endDate: 'asc' },
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      employeeId: r.employee.id,
+      name: `${r.employee.firstName} ${r.employee.lastName}`.trim(),
+      department: r.employee.department?.name ?? null,
+      leaveType: r.leaveType.name,
+      halfDay: r.halfDay,
+      from: r.startDate.toISOString().slice(0, 10),
+      until: r.endDate.toISOString().slice(0, 10),
+      days: Number(r.days),
+    }));
+  }
+
+  /** The full list of requests waiting on this user (the tile shows only five). */
+  pendingApprovalsDetail(pending: any[]) {
+    return pending.map(toPendingRow);
   }
 }
