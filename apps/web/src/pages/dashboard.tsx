@@ -23,6 +23,10 @@ import { Link } from 'react-router-dom';
 import { useSetupStatus } from '@/lib/setup-status';
 import { setupApi } from '@/lib/setup';
 import { AdminOverview, type AdminDashboardData } from '@/pages/dashboard-admin';
+import { EmployeeInsightsPanels, LeaveBalanceTile, type EmployeeInsights } from '@/pages/dashboard-employee';
+import { ChartLegend, RingChart, TONE_COLOR } from '@/components/charts';
+import { dayTotals, formatDuration } from '@/lib/attendance-day';
+import { EarlyClockOutDialog } from '@/components/attendance/early-clock-out-dialog';
 
 const APPROVER_ROLES = ['LINE_MANAGER', 'HR_MANAGER', 'COMPANY_ADMIN'];
 
@@ -30,6 +34,8 @@ interface TodayAttendanceSnapshot {
   status: string | null;
   checkInAt: string | null;
   checkOutAt: string | null;
+  /** Today's breaks; an open one has no endAt. Absent from an older API. */
+  breaks?: { startAt: string; endAt: string | null }[];
   isOnBreak: boolean;
   effectiveMs: number;
   targetHours: number;
@@ -42,7 +48,9 @@ interface EmployeeDashboard {
   leaveBalances: {
     id: string;
     accrued: string;
+    carriedForward?: string;
     used: string;
+    pending?: string;
     leaveType: { name: string };
   }[];
   pendingApprovals: {
@@ -53,6 +61,8 @@ interface EmployeeDashboard {
   }[];
   myRecentRequests: { id: string; status: string; days: string; startDate: string }[];
   todayAttendance: TodayAttendanceSnapshot | null;
+  /** Absent when the API is older than this screen. */
+  insights?: EmployeeInsights;
 }
 
 type DashboardData = AdminDashboard | EmployeeDashboard;
@@ -152,25 +162,12 @@ export function DashboardPage() {
       {data.view === 'admin' ? (
         <AdminOverview data={data} busyKey={busy} onDecide={decide} />
       ) : (
+        <>
+        {data.insights && (
+          <EmployeeInsightsPanels insights={data.insights} canViewTeam={user?.role === 'EMPLOYEE' || user?.role === 'LINE_MANAGER'} />
+        )}
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>My leave balances</CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-2">
-              {data.leaveBalances.length === 0 && (
-                <EmptyState icon={Wallet} title="No balances allocated yet" className="py-6" />
-              )}
-              {data.leaveBalances.map((b) => (
-                <div key={b.id} className="flex items-center justify-between text-sm">
-                  <span>{b.leaveType.name}</span>
-                  <span className="font-medium">
-                    {Number(b.accrued) - Number(b.used)} / {b.accrued} days left
-                  </span>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
+          <LeaveBalanceTile balances={data.leaveBalances} />
 
           <Card>
             <CardHeader>
@@ -234,6 +231,7 @@ export function DashboardPage() {
             </CardContent>
           </Card>
         </div>
+        </>
       )}
     </div>
   );
@@ -272,12 +270,8 @@ function DashboardSkeleton() {
   );
 }
 
-function formatHm(ms: number): string {
-  const totalMinutes = Math.round(ms / 60000);
-  const h = Math.floor(totalMinutes / 60);
-  const m = totalMinutes % 60;
-  return `${h}h ${m}m`;
-}
+const clockTime = (iso: string) =>
+  new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
 type AttendanceAction = '/attendance/clock-in' | '/attendance/clock-out' | '/attendance/break/start' | '/attendance/break/end';
 
@@ -292,6 +286,21 @@ function TodayAttendanceCard({
 }) {
   const isClockedIn = !!snapshot.checkInAt && !snapshot.checkOutAt;
   const isDayComplete = !!snapshot.checkOutAt;
+
+  // The ring counts on its own while you're clocked in, between refreshes.
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    if (!isClockedIn) return;
+    const id = setInterval(() => setNow(Date.now()), 10_000);
+    return () => clearInterval(id);
+  }, [isClockedIn]);
+
+  const [confirmingOut, setConfirmingOut] = React.useState(false);
+
+  const breaks = snapshot.breaks ?? [];
+  const { workedMs, breakMs, breakCount } = dayTotals({ ...snapshot, breaks }, now);
+  const targetMs = snapshot.targetHours * 3_600_000;
+  const remainingMs = Math.max(targetMs - workedMs, 0);
   const statusLabel = snapshot.isOnBreak
     ? 'On break'
     : isDayComplete
@@ -310,12 +319,20 @@ function TodayAttendanceCard({
 
   return (
     <Card>
+      <EarlyClockOutDialog
+        open={confirmingOut}
+        workedMs={workedMs}
+        targetMs={targetMs}
+        busy={busy}
+        onCancel={() => setConfirmingOut(false)}
+        onConfirm={() => {
+          setConfirmingOut(false);
+          onAction('/attendance/clock-out');
+        }}
+      />
       <CardHeader className="flex flex-row items-center justify-between">
-        <div>
-          <CardDescription>Today's attendance</CardDescription>
-          <CardTitle className="text-lg">{formatHm(snapshot.effectiveMs)} worked</CardTitle>
-        </div>
-        <div className="flex items-center gap-2">
+        <CardDescription>Today's attendance</CardDescription>
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <Badge variant={variant}>{statusLabel}</Badge>
           {!isDayComplete && !isClockedIn && (
             <Button size="sm" disabled={busy} onClick={() => onAction('/attendance/clock-in')}>
@@ -335,7 +352,7 @@ function TodayAttendanceCard({
               <Button
                 size="sm"
                 disabled={busy || snapshot.isOnBreak}
-                onClick={() => onAction('/attendance/clock-out')}
+                onClick={() => (workedMs < targetMs ? setConfirmingOut(true) : onAction('/attendance/clock-out'))}
               >
                 <LogOut className="h-4 w-4" /> Clock out
               </Button>
@@ -343,16 +360,61 @@ function TodayAttendanceCard({
           )}
         </div>
       </CardHeader>
-      <CardContent className="flex gap-6 text-sm text-muted-foreground">
-        <span>
-          Check-in:{' '}
-          {snapshot.checkInAt ? new Date(snapshot.checkInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
-        </span>
-        <span>
-          Check-out:{' '}
-          {snapshot.checkOutAt ? new Date(snapshot.checkOutAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
-        </span>
-        <span>Target: {snapshot.targetHours}h</span>
+      <CardContent className="flex flex-col items-center gap-6 sm:flex-row">
+        <RingChart
+          size={192}
+          thickness={20}
+          ariaLabel={`${formatDuration(workedMs)} worked, ${formatDuration(breakMs)} on ${breakCount} ${breakCount === 1 ? 'break' : 'breaks'}, ${formatDuration(remainingMs)} left of the ${snapshot.targetHours} hour target`}
+          segments={[
+            { id: 'worked', label: 'Worked', value: workedMs, tone: 1, display: formatDuration(workedMs) },
+            { id: 'breaks', label: 'Breaks', value: breakMs, tone: 2, display: formatDuration(breakMs) },
+            { id: 'left', label: 'Left to target', value: remainingMs, tone: 'muted', display: formatDuration(remainingMs) },
+          ]}
+        >
+          <span className="text-3xl font-semibold leading-none">{formatDuration(workedMs)}</span>
+          <span className="mt-1.5 text-xs text-muted-foreground">of {snapshot.targetHours}h target</span>
+        </RingChart>
+
+        <div className="flex w-full min-w-0 flex-1 flex-col gap-4">
+          <dl className="grid grid-cols-3 gap-3 text-sm">
+            <div>
+              <dt className="text-xs text-muted-foreground">Clocked in</dt>
+              <dd className="mt-0.5 text-lg font-semibold">{snapshot.checkInAt ? clockTime(snapshot.checkInAt) : '—'}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted-foreground">Breaks</dt>
+              <dd className="mt-0.5 text-lg font-semibold">
+                {breakCount === 0 ? 'None' : `${breakCount} · ${formatDuration(breakMs)}`}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted-foreground">Clocked out</dt>
+              <dd className="mt-0.5 text-lg font-semibold">
+                {snapshot.checkOutAt ? clockTime(snapshot.checkOutAt) : isClockedIn ? 'Working' : '—'}
+              </dd>
+            </div>
+          </dl>
+
+          {breaks.length > 0 && (
+            <ul className="flex flex-col gap-1 text-xs text-muted-foreground" aria-label="Today's breaks">
+              {breaks.slice(0, 4).map((b, i) => (
+                <li key={`${b.startAt}-${i}`}>
+                  {clockTime(b.startAt)} – {b.endAt ? clockTime(b.endAt) : 'now'}
+                  {b.endAt && ` · ${formatDuration(new Date(b.endAt).getTime() - new Date(b.startAt).getTime())}`}
+                </li>
+              ))}
+              {breaks.length > 4 && <li>+ {breaks.length - 4} more</li>}
+            </ul>
+          )}
+
+          <ChartLegend
+            items={[
+              { color: TONE_COLOR[1], label: 'Worked', value: formatDuration(workedMs) },
+              { color: TONE_COLOR[2], label: breakCount === 1 ? 'Break' : 'Breaks', value: formatDuration(breakMs) },
+              { color: TONE_COLOR.muted, label: 'Left to target', value: formatDuration(remainingMs) },
+            ]}
+          />
+        </div>
       </CardContent>
     </Card>
   );

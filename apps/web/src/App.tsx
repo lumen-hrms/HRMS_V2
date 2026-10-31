@@ -5,7 +5,9 @@ import { ToastProvider } from '@/components/ui/toast';
 import { ProtectedRoute } from '@/components/protected-route';
 import { AppLayout } from '@/components/app-layout';
 import { LoginPage } from '@/pages/login';
+import { ResetPasswordPage } from '@/pages/reset-password';
 import { DashboardPage } from '@/pages/dashboard';
+import { DashboardDetailPage } from '@/pages/dashboard-detail';
 import { EmployeeListPage } from '@/pages/employees/list';
 import { EmployeeDetailPage } from '@/pages/employees/detail';
 import { EmployeeCreatePage } from '@/pages/employees/create';
@@ -42,6 +44,7 @@ export default function App() {
                 <SetupStatusProvider>
                 <Routes>
                   <Route path="login" element={<LoginPage />} />
+                  <Route path="auth/action" element={<ResetPasswordPage />} />
                   <Route
                     path="setup"
                     element={
@@ -60,6 +63,7 @@ export default function App() {
                     }
                   >
                     <Route index element={<DashboardPage />} />
+                    <Route path="dashboard/:metric" element={<DashboardDetailPage />} />
                     <Route path="employees" element={<EmployeeListPage />} />
                     <Route path="employees/new" element={<EmployeeCreatePage />} />
                     <Route path="employees/import" element={<EmployeeBulkImportPage />} />

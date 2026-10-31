@@ -24,6 +24,61 @@ export function monthBoundsOf(d: Date): { start: Date; end: Date } {
   return { start, end };
 }
 
+/** One day of a month's attendance, shaped for the dashboard charts. */
+export interface DailyAttendance {
+  /** YYYY-MM-DD */
+  date: string;
+  status: string;
+  /** Minutes since midnight IST, or null when there is no punch. */
+  checkInMinutes: number | null;
+  checkOutMinutes: number | null;
+  /** Time worked net of breaks — null until the day is complete (checked out). */
+  workedMinutes: number | null;
+  breakMinutes: number;
+}
+
+const IST_OFFSET_MINUTES = 330;
+const minutesOfDayIst = (d: Date) =>
+  (d.getUTCHours() * 60 + d.getUTCMinutes() + IST_OFFSET_MINUTES) % 1440;
+
+/**
+ * A month's attendance records as a per-day series (oldest first). Worked
+ * time uses the same arithmetic as `sumOvertimeHours`: gross minus breaks,
+ * an unfinished break counting up to check-out.
+ */
+export function dailySeries(
+  records: Array<{
+    date: Date;
+    status: string;
+    checkInAt: Date | null;
+    checkOutAt: Date | null;
+    breaks: Array<{ startAt: Date; endAt: Date | null }>;
+  }>,
+): DailyAttendance[] {
+  return [...records]
+    .sort((a, b) => a.date.getTime() - b.date.getTime())
+    .map((r) => {
+      const breakMs = r.checkInAt
+        ? r.breaks.reduce((sum, b) => {
+            const end = b.endAt ?? r.checkOutAt;
+            return end ? sum + Math.max(end.getTime() - b.startAt.getTime(), 0) : sum;
+          }, 0)
+        : 0;
+      const workedMs =
+        r.checkInAt && r.checkOutAt
+          ? Math.max(r.checkOutAt.getTime() - r.checkInAt.getTime() - breakMs, 0)
+          : null;
+      return {
+        date: r.date.toISOString().slice(0, 10),
+        status: r.status,
+        checkInMinutes: r.checkInAt ? minutesOfDayIst(r.checkInAt) : null,
+        checkOutMinutes: r.checkOutAt ? minutesOfDayIst(r.checkOutAt) : null,
+        workedMinutes: workedMs === null ? null : Math.round(workedMs / 60000),
+        breakMinutes: Math.round(breakMs / 60000),
+      };
+    });
+}
+
 /** Shared by `AttendanceService.clockIn` and `AttendanceFinalizationProcessor`
  *  so "late" means the same thing whether a human clocked in or the nightly
  *  job derived it from punches. */

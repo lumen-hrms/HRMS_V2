@@ -2,11 +2,14 @@ import { Controller, Get, UseGuards } from '@nestjs/common';
 import { CurrentUser, AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../common/guards/tenant.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service';
 import { LeaveService } from '../leave/leave.service';
 import { AttendanceService } from '../attendance/attendance.service';
 import { PlatformPrismaClientProvider } from '../prisma/platform-prisma-client.provider';
 import { AdminInsightsService } from './admin-insights.service';
+import { EmployeeInsightsService } from './employee-insights.service';
 
 const ADMIN_ROLES = ['COMPANY_ADMIN', 'HR_MANAGER'];
 
@@ -19,6 +22,7 @@ export class DashboardController {
     private readonly attendance: AttendanceService,
     private readonly platformPrisma: PlatformPrismaClientProvider,
     private readonly insights: AdminInsightsService,
+    private readonly employeeInsights: EmployeeInsightsService,
   ) {}
 
   @Get()
@@ -58,11 +62,15 @@ export class DashboardController {
       };
     }
 
-    const [balances, pending, myRequests, today] = await Promise.all([
+    const [balances, pending, myRequests, today, insights] = await Promise.all([
       user.employeeId ? this.leave.getBalances(user.employeeId, user) : [],
       this.leave.pendingApprovals(user),
       user.employeeId ? this.leave.listForEmployee(user.employeeId, user) : [],
       todayAttendance,
+      this.employeeInsights.build(user, {
+        attendance: hasAttendance,
+        leave: modules.includes('LEAVE'),
+      }),
     ]);
 
     return {
@@ -71,7 +79,24 @@ export class DashboardController {
       pendingApprovals: pending, // non-empty for Line Managers with reports
       myRecentRequests: myRequests.slice(0, 5),
       todayAttendance: today,
+      insights,
     };
+  }
+
+  /** Detail behind the admin "On leave today" tile — everyone, not just the first few. */
+  @Get('on-leave')
+  @UseGuards(RolesGuard)
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  onLeave() {
+    return this.insights.onLeaveTodayDetail();
+  }
+
+  /** Detail behind the admin "Pending approvals" tile — every request waiting on this user. */
+  @Get('pending-approvals')
+  @UseGuards(RolesGuard)
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  async pendingApprovals(@CurrentUser() user: AuthenticatedUser) {
+    return this.insights.pendingApprovalsDetail(await this.leave.pendingApprovals(user));
   }
 
   private async enabledModules(tenantId: string): Promise<string[]> {
@@ -85,6 +110,9 @@ export class DashboardController {
       status: record?.status ?? null,
       checkInAt: record?.checkInAt ?? null,
       checkOutAt: record?.checkOutAt ?? null,
+      // Today's breaks (an open one has endAt null) — the ring chart counts and
+      // totals them itself so it can keep ticking between refreshes.
+      breaks: (record?.breaks ?? []).map((b) => ({ startAt: b.startAt, endAt: b.endAt })),
       isOnBreak,
       effectiveMs,
       targetHours,

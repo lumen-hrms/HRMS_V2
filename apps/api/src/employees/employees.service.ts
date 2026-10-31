@@ -6,6 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { randomInt } from 'crypto';
 import { Prisma } from '@prisma/client';
 import type * as admin from 'firebase-admin';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service';
@@ -21,9 +22,12 @@ import type { AppRole } from '../common/decorators/roles.decorator';
 import { assignableRoles, buildAccessAuditData, ROLE_LABELS } from '../access/access.support';
 import { AuditService } from '../audit/audit.service';
 import { LeaveEntitlementService } from '../leave/leave-entitlement.service';
+import { AuthEmailService } from '../notifications/auth-email.service';
+import { teamRelations, type TeamRelation } from './team';
 import type {
   CreateDepartmentDto,
   CreateEmployeeDto,
+  CreateLoginDto,
   DeleteDepartmentDto,
   LinkLoginDto,
   RevealFieldDto,
@@ -68,6 +72,33 @@ function humanizeEmail(email: string): string {
     .trim();
 }
 
+const TEMP_PASSWORD_LENGTH = 12;
+const TEMP_PASSWORD_CHARS = {
+  upper: 'ABCDEFGHJKLMNPQRSTUVWXYZ',
+  lower: 'abcdefghijkmnopqrstuvwxyz',
+  digit: '23456789',
+};
+
+/**
+ * Random alphanumeric temporary password (ambiguous 0/O/1/l/I left out so it
+ * survives being read off an email), with at least one upper, lower and digit.
+ */
+function generateTempPassword(): string {
+  const all = Object.values(TEMP_PASSWORD_CHARS).join('');
+  const pick = (set: string) => set[randomInt(set.length)];
+  const chars = [
+    pick(TEMP_PASSWORD_CHARS.upper),
+    pick(TEMP_PASSWORD_CHARS.lower),
+    pick(TEMP_PASSWORD_CHARS.digit),
+  ];
+  while (chars.length < TEMP_PASSWORD_LENGTH) chars.push(pick(all));
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = randomInt(i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join('');
+}
+
 @Injectable()
 export class EmployeesService {
   private readonly logger = new Logger(EmployeesService.name);
@@ -79,6 +110,7 @@ export class EmployeesService {
     @Inject(FIREBASE_AUTH) private readonly firebaseAuth: admin.auth.Auth,
     private readonly audit: AuditService,
     private readonly entitlement: LeaveEntitlementService,
+    private readonly authEmails: AuthEmailService,
   ) {}
 
   /**
@@ -207,7 +239,58 @@ export class EmployeesService {
 
   // ---- Employees ----
 
+  /**
+   * The view-only company directory an Employee or Line Manager gets instead
+   * of the scoped list below: everyone still employed, but only what the org
+   * chart already shows them — no compensation, DOB, personal email or
+   * statutory IDs, and no lifecycle status (notice period / suspension isn't
+   * for colleagues to see). Each row also says how it relates to the caller
+   * (`teamRelation`) so the UI can offer a *My team* filter. Rows are never
+   * openable as a full profile beyond what `get()` allows: an Employee only
+   * their own, a Line Manager their own and their reports'. A Line Manager
+   * additionally keeps status and employment type for those rows (including
+   * reports who have left), as the old scoped list gave them.
+   */
+  private async directory(user: AuthenticatedUser) {
+    const rows = await this.tenantPrisma.client.employee.findMany({
+      select: {
+        id: true,
+        employeeCode: true,
+        firstName: true,
+        lastName: true,
+        designation: true,
+        workLocation: true,
+        dateOfJoining: true,
+        phone: true,
+        lifecycleState: true,
+        employmentType: true,
+        reportingManagerId: true,
+        department: { select: { name: true } },
+        reportingManager: { select: { firstName: true, lastName: true } },
+        user: { select: { email: true } },
+      },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+    });
+    // Relations are worked out over everyone, including people who have left,
+    // so a departed manager in the middle doesn't cut off the chain below them.
+    const relations = user.employeeId
+      ? teamRelations(rows, user.employeeId)
+      : new Map<string, TeamRelation>();
+    const isManager = user.role === 'LINE_MANAGER';
+    const inManagerScope = (id: string) =>
+      isManager && ['SELF', 'REPORT'].includes(relations.get(id) ?? '');
+    return rows
+      .filter((r) => r.lifecycleState !== 'SEPARATED' || inManagerScope(r.id))
+      .map(({ user: login, lifecycleState, employmentType, ...e }) => ({
+        ...e,
+        workEmail: login?.email ?? null,
+        teamRelation: relations.get(e.id) ?? null,
+        ...(inManagerScope(e.id) ? { lifecycleState, employmentType } : {}),
+      }));
+  }
+
   async list(user: AuthenticatedUser) {
+    if (user.role === 'EMPLOYEE' || user.role === 'LINE_MANAGER') return this.directory(user);
     const employees = await this.tenantPrisma.client.employee.findMany({
       where: await this.scopeFor(user),
       include: { department: true, reportingManager: true },
@@ -231,12 +314,26 @@ export class EmployeesService {
 
   async get(id: string, user: AuthenticatedUser) {
     const employee = await this.tenantPrisma.client.employee.findFirst({
-      where: { id, ...(await this.scopeFor(user)) },
-      include: { department: true, reportingManager: true, directReports: true },
+      // AND, not a spread: the Employee / Line Manager scope has its own `id`
+      // key, which would silently replace the requested one.
+      where: { AND: [{ id }, await this.scopeFor(user)] },
+      include: {
+        department: true,
+        reportingManager: true,
+        directReports: true,
+        user: { select: { email: true } },
+      },
     });
     if (!employee) throw new NotFoundException('Employee not found');
-    const { photoKey, ...rest } = this.sanitize(employee);
-    return { ...rest, photoUrl: await this.resolvedPhotoUrl(photoKey) };
+    const { photoKey, user: login, ...rest } = this.sanitize(employee);
+    // The login's actual sign-in email, so HR can spot a mismatch with the
+    // employee's email — only for the roles that can fix it.
+    const seesLogin = user.role === 'COMPANY_ADMIN' || user.role === 'HR_MANAGER';
+    return {
+      ...rest,
+      ...(seesLogin ? { loginEmail: login?.email ?? null } : {}),
+      photoUrl: await this.resolvedPhotoUrl(photoKey),
+    };
   }
 
   /** Resolves the private object-storage key into a short-lived, viewable URL. */
@@ -339,7 +436,8 @@ export class EmployeesService {
           employeeCode: dto.employeeCode,
           firstName: dto.firstName,
           lastName: dto.lastName,
-          personalEmail: dto.personalEmail,
+          // The login's email doubles as the employee's email.
+          personalEmail: dto.personalEmail ?? pendingUser?.email,
           phone: dto.phone,
           dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined,
           gender: dto.gender,
@@ -459,6 +557,188 @@ export class EmployeesService {
   }
 
   /**
+   * Creates a NEW login for an employee that has none (the counterpart to
+   * `linkLogin`, which attaches an existing one). The temporary password is
+   * generated here and only ever goes out by email — it is never returned to
+   * the caller or stored. If the email can't be sent the login still exists
+   * and `emailSent: false` tells the admin to send a password reset instead.
+   */
+  async createLogin(employeeId: string, dto: CreateLoginDto, actor: AuthenticatedUser) {
+    const tenantId = this.tenantPrisma.tenantId;
+    const employee = await this.tenantPrisma.client.employee.findUnique({
+      where: { id: employeeId },
+      select: {
+        id: true,
+        employeeCode: true,
+        firstName: true,
+        lastName: true,
+        userId: true,
+        lifecycleState: true,
+      },
+    });
+    if (!employee) throw new NotFoundException('Employee not found');
+    if (employee.userId) throw new BadRequestException('This employee already has a login');
+    if (employee.lifecycleState === 'SEPARATED') {
+      throw new BadRequestException('Cannot create a login for a separated employee');
+    }
+    const role = (dto.loginRole ?? 'EMPLOYEE') as AppRole;
+    if (!assignableRoles(actor.role as AppRole).includes(role)) {
+      throw new ForbiddenException(`Only a Company Admin can grant the ${ROLE_LABELS[role]} role`);
+    }
+
+    // Firebase first (a network call, not a DB write); undone below if the
+    // DB write then fails so a retry doesn't hit "email already registered".
+    const tempPassword = generateTempPassword();
+    let firebaseUid: string;
+    try {
+      ({ uid: firebaseUid } = await this.firebaseAuth.createUser({
+        email: dto.loginEmail,
+        password: tempPassword,
+      }));
+    } catch (err: any) {
+      if (err?.code === 'auth/email-already-exists') {
+        throw new BadRequestException('That login email is already registered with Firebase');
+      }
+      throw err;
+    }
+
+    let userId: string;
+    try {
+      await this.firebaseAuth.setCustomUserClaims(firebaseUid, { tenantId, role });
+      userId = await this.tenantPrisma.client.$transaction(async (tx) => {
+        const user = await tx.user.create({
+          data: { tenantId, email: dto.loginEmail, firebaseUid, role: role as any },
+        });
+        // `userId: null` closes the race with a concurrent login for the same employee.
+        // The login email becomes the employee's email too (one email, everywhere).
+        const { count } = await tx.employee.updateMany({
+          where: { id: employeeId, userId: null },
+          data: { userId: user.id, personalEmail: dto.loginEmail },
+        });
+        if (count === 0) throw new BadRequestException('This employee already has a login');
+        return user.id;
+      });
+    } catch (err) {
+      await this.firebaseAuth.deleteUser(firebaseUid).catch((e) => {
+        this.logger.error(`Could not roll back Firebase user ${firebaseUid}`, String(e));
+      });
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new BadRequestException('That login email is already in use in this workspace');
+      }
+      throw err;
+    }
+
+    const data = buildAccessAuditData({
+      tenantId,
+      actorUserId: actor.sub,
+      actorName: actor.email ? humanizeEmail(actor.email) : 'System',
+      actorRole: actor.role,
+      action: 'user.created',
+      targetUserId: userId,
+      targetEmail: dto.loginEmail,
+      after: ROLE_LABELS[role] ?? role,
+      note: `Login created for ${employee.firstName} ${employee.lastName} (${employee.employeeCode}) from Employee Master.`,
+    });
+    await this.audit.log({ ...data, metadata: data.metadata as Record<string, unknown> });
+
+    let emailSent = true;
+    try {
+      await this.authEmails.sendLoginCredentials({
+        email: dto.loginEmail,
+        tenantId,
+        employeeCode: employee.employeeCode,
+        tempPassword,
+        recipientName: `${employee.firstName} ${employee.lastName}`.trim(),
+      });
+    } catch (err) {
+      emailSent = false;
+      this.logger.error(
+        `Login created for ${dto.loginEmail} but the credentials email failed`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
+    return { employeeId, userId, email: dto.loginEmail, emailSent };
+  }
+
+  /**
+   * Manual "refresh": makes the login's sign-in email match the employee's
+   * current email. `update()` does this automatically on an email edit; this
+   * covers a wrong email at creation, an email edited before the login
+   * existed, or any drift since.
+   */
+  async syncLoginEmail(employeeId: string, actor: AuthenticatedUser) {
+    const employee = await this.tenantPrisma.client.employee.findUnique({
+      where: { id: employeeId },
+      select: { id: true, userId: true, personalEmail: true },
+    });
+    if (!employee) throw new NotFoundException('Employee not found');
+    if (!employee.userId) throw new BadRequestException('This employee has no login');
+    if (!employee.personalEmail) {
+      throw new BadRequestException('Set the employee’s email first, then sync the login');
+    }
+    const changed = await this.changeLoginEmail(employee.userId, employee.personalEmail, actor);
+    return { employeeId, email: employee.personalEmail, changed };
+  }
+
+  /**
+   * Changes a login's sign-in email in Firebase and the `users` row together
+   * (Firebase first; undone if the DB write then fails). Returns false when
+   * it already matches. The user's password and sessions are untouched.
+   */
+  private async changeLoginEmail(
+    userId: string,
+    newEmail: string,
+    actor: AuthenticatedUser,
+  ): Promise<boolean> {
+    const user = await this.tenantPrisma.client.user.findUnique({ where: { id: userId } });
+    if (!user || user.tenantId !== this.tenantPrisma.tenantId) {
+      throw new NotFoundException('Login not found');
+    }
+    if (user.email.toLowerCase() === newEmail.toLowerCase()) return false;
+
+    try {
+      await this.firebaseAuth.updateUser(user.firebaseUid, { email: newEmail });
+    } catch (err: any) {
+      if (err?.code === 'auth/email-already-exists') {
+        throw new BadRequestException('That email is already used by another login');
+      }
+      if (err?.code === 'auth/invalid-email') {
+        throw new BadRequestException('That is not a valid email address');
+      }
+      throw err;
+    }
+    try {
+      await this.tenantPrisma.client.user.update({
+        where: { id: userId },
+        data: { email: newEmail },
+      });
+    } catch (err) {
+      await this.firebaseAuth.updateUser(user.firebaseUid, { email: user.email }).catch((e) => {
+        this.logger.error(`Could not roll back Firebase email for ${user.firebaseUid}`, String(e));
+      });
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new BadRequestException('That email is already used by another login');
+      }
+      throw err;
+    }
+
+    const data = buildAccessAuditData({
+      tenantId: this.tenantPrisma.tenantId,
+      actorUserId: actor.sub,
+      actorName: actor.email ? humanizeEmail(actor.email) : 'System',
+      actorRole: actor.role,
+      action: 'user.email_changed',
+      targetUserId: userId,
+      targetEmail: newEmail,
+      before: user.email,
+      after: newEmail,
+      note: 'Login email updated to match the employee’s email.',
+    });
+    await this.audit.log({ ...data, metadata: data.metadata as Record<string, unknown> });
+    return true;
+  }
+
+  /**
    * A linkable login: in this tenant, not already linked, and within the
    * actor's RULE-2 privilege ceiling (an HR Manager can't attach a Company
    * Admin's login to an employee record — same ceiling as role assignment).
@@ -511,9 +791,10 @@ export class EmployeesService {
    * body is silently ignored, never a 403 (keeps the same PATCH shape usable
    * by every role). Line Manager and Auditor have no edit rights at all here
    * (module 03 §8 permission matrix). Admin/HR get the full field set.
+   * The email is deliberately absent: it is the login's sign-in email, so
+   * only HR sets it.
    */
   private static readonly EMPLOYEE_EDITABLE_FIELDS = [
-    'personalEmail',
     'phone',
     'gender',
     'maritalStatus',
@@ -593,9 +874,15 @@ export class EmployeesService {
       if (!dept) throw new BadRequestException('Department not found');
     }
 
+    // One email everywhere: an HR edit also moves the login's sign-in email
+    // (which is also where notifications go). Done before the employee write
+    // so a clash with another login rejects the whole edit.
+    if (!isSelfEdit && dto.personalEmail && existing.userId) {
+      await this.changeLoginEmail(existing.userId, dto.personalEmail, user);
+    }
+
     const data: Prisma.EmployeeUncheckedUpdateInput = isSelfEdit
       ? {
-          personalEmail: dto.personalEmail,
           phone: dto.phone,
           gender: dto.gender,
           maritalStatus: dto.maritalStatus,

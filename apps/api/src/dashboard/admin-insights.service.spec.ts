@@ -56,6 +56,7 @@ describe('AdminInsightsService', () => {
 
     expect(r.onLeaveToday).toEqual({
       total: 1,
+      byType: [{ name: 'Casual Leave', count: 1 }],
       people: [
         {
           id: 'e1',
@@ -103,6 +104,101 @@ describe('AdminInsightsService', () => {
       startDate: '2026-11-01',
       endDate: '2026-11-01',
     });
+  });
+
+  it('totals pending requests per leave type over ALL of them, not just the five listed', async () => {
+    const { service } = build();
+    const rows = [
+      ...pending(6).map((r) => ({ ...r, days: '2' })),
+      ...pending(2).map((r) => ({ ...r, leaveType: { name: 'Casual Leave' }, days: '0.5' })),
+    ];
+
+    const r: any = await service.build({
+      pendingApprovals: rows,
+      attendance: false,
+      payroll: false,
+    });
+
+    expect(r.pendingApprovals).toHaveLength(5);
+    expect(r.pendingByType).toEqual([
+      { name: 'Sick Leave', requests: 6, days: 12 },
+      { name: 'Casual Leave', requests: 2, days: 1 },
+    ]);
+  });
+
+  it('groups today’s leave by type across everyone, though it lists only six people', async () => {
+    const leave = (id: string, type: string) => ({
+      id,
+      endDate: new Date('2026-11-02T00:00:00Z'),
+      halfDay: false,
+      employee: { id, firstName: 'P', lastName: id },
+      leaveType: { name: type },
+    });
+    const { service } = build({
+      leaveRequest: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            ...Array.from({ length: 5 }, (_, i) => leave(`s${i}`, 'Sick Leave')),
+            ...Array.from({ length: 4 }, (_, i) => leave(`c${i}`, 'Casual Leave')),
+          ]),
+      },
+    });
+
+    const r: any = await service.build({ pendingApprovals: [], attendance: false, payroll: false });
+
+    expect(r.onLeaveToday.total).toBe(9);
+    expect(r.onLeaveToday.people).toHaveLength(6);
+    expect(r.onLeaveToday.byType).toEqual([
+      { name: 'Sick Leave', count: 5 },
+      { name: 'Casual Leave', count: 4 },
+    ]);
+  });
+
+  it('lists every pending request for the detail page, in the same trimmed shape', () => {
+    const { service } = build();
+
+    const rows = service.pendingApprovalsDetail(pending(8));
+
+    expect(rows).toHaveLength(8);
+    expect(rows[0]).not.toHaveProperty('secret');
+  });
+
+  it('returns everyone on leave today with department, name and dates for the detail page', async () => {
+    const { service } = build({
+      leaveRequest: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'l1',
+            startDate: new Date('2026-10-30T00:00:00Z'),
+            endDate: new Date('2026-11-02T00:00:00Z'),
+            halfDay: true,
+            days: '2.5',
+            employee: {
+              id: 'e1',
+              firstName: 'Priya',
+              lastName: 'Das',
+              department: { name: 'Eng' },
+            },
+            leaveType: { name: 'Casual Leave' },
+          },
+        ]),
+      },
+    });
+
+    await expect(service.onLeaveTodayDetail()).resolves.toEqual([
+      {
+        id: 'l1',
+        employeeId: 'e1',
+        name: 'Priya Das',
+        department: 'Eng',
+        leaveType: 'Casual Leave',
+        halfDay: true,
+        from: '2026-10-30',
+        until: '2026-11-02',
+        days: 2.5,
+      },
+    ]);
   });
 
   it('only asks for approved leave that overlaps today', async () => {

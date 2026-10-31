@@ -569,3 +569,38 @@
     animation: none;
   }
 }
+
+/*
+ * Chart colours (components/charts). The first four slots of the validated
+ * categorical palette — blue, orange, aqua, yellow — checked against the card
+ * surface in both modes; dark values are their own steps, not a flip.
+ * --viz-muted is the de-emphasis grey for context marks.
+ */
+.viz-root {
+  --viz-1: #2a78d6;
+  --viz-2: #eb6834;
+  --viz-3: #1baf7a;
+  --viz-4: #eda100;
+  --viz-muted: #b4bac4;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme='light'])) .viz-root {
+    --viz-1: #3987e5;
+    --viz-2: #d95926;
+    --viz-3: #199e70;
+    --viz-4: #c98500;
+    --viz-muted: #4b5563;
+  }
+}
+:root[data-theme='dark'] .viz-root {
+  --viz-1: #3987e5;
+  --viz-2: #d95926;
+  --viz-3: #199e70;
+  --viz-4: #c98500;
+  --viz-muted: #4b5563;
+}
+@media (prefers-reduced-motion: reduce) {
+  .viz-root * {
+    transition: none !important;
+  }
+}

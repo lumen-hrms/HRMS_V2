@@ -90,7 +90,8 @@ export type AccessAuditAction =
   | 'user.deactivated'
   | 'password_reset.sent'
   | 'user.created'
-  | 'user.linked';
+  | 'user.linked'
+  | 'user.email_changed';
 
 export interface AccessAuditEntry {
   id: string;
@@ -143,4 +144,5 @@ export const ACCESS_ACTION_LABELS: Record<AccessAuditAction, string> = {
   'password_reset.sent': 'Password reset sent',
   'user.created': 'Login created',
   'user.linked': 'Login linked to employee',
+  'user.email_changed': 'Login email changed',
 };

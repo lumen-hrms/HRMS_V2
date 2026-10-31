@@ -21,8 +21,95 @@
 > spec draft that is no longer maintained — ignore them; this file and the
 > code are the source of truth.)
 >
-> **Last synced to code:** 2026-10-30. Landed since the previous sync
+> **Last synced to code:** 2026-10-31. Landed since the previous sync
 > (dated 2026-10-29):
+>
+> - **Attendance + Dashboard: "Today's attendance" is now a ring.** Time
+>   worked (large, in the middle), time on breaks, and time left to the
+>   shift's target, with the check-in time, break count and each break listed
+>   beside it. It keeps counting while you're clocked in. The dashboard
+>   payload's `todayAttendance` gains `breaks` (an open break has a null end).
+>   Clocking out before the shift's required hours now asks first ("you've
+>   only worked X of the Y required"), from both the dashboard card and the
+>   Attendance page; it is a confirmation only — clocking out early is still
+>   allowed. Attendance and Dashboard stay ✅ 100%.
+>
+> - **Dashboard: chart tiles with drill-down.** The dashboard KPI cards are now
+>   small charts, and each opens `/dashboard/:metric` — the graph on top, the
+>   detail table below (the table also serves as the chart's table view).
+>   Employee: attendance (hours worked per day vs the shift target), punctuality
+>   (check-in time per day, late days marked), overtime, and leave balances (by
+>   type); month-navigable, backed by `GET /attendance/stats`, which now also
+>   returns the month day by day (`daily`) and `targetHours` — no extra
+>   queries. Admin/HR: headcount (6-month trend + by department), present
+>   today (split + who's in, from the existing roster), on leave today and
+>   pending approvals (both by leave type). The admin payload gains
+>   `onLeaveToday.byType` and `pendingByType` (counted over *all* rows, not the
+>   truncated lists), and admin-only `GET /api/dashboard/on-leave` and
+>   `/pending-approvals` return the full lists for the tables. Charts are
+>   hand-built SVG (`components/charts`) on the validated categorical palette
+>   (first four slots, light and dark). The "New joiners" and "On notice" admin
+>   tiles stay plain numbers — there is no series behind them yet. Dashboard
+>   stays ✅ 100%.
+>
+> - **Employee Master (module 03) + Dashboard: view-only company directory
+>   and a richer employee dashboard.** `GET /api/employees` for an Employee
+>   now returns everyone still employed in a limited projection (no
+>   compensation, DOB, personal email, statutory IDs or lifecycle status;
+>   work email and phone as the org chart already shows) with a
+>   `teamRelation` per row — `BOSS` (direct manager), `TEAMMATE` (same
+>   manager), `REPORT` (direct or indirect), `SELF` — that drives the new
+>   **My team** filter (`employees/team.ts`, shared with the dashboard). Other
+>   people's profiles stay unopenable (`get()` still scopes an Employee to
+>   themselves); HR / Admin / Auditor lists are unchanged. **Line Managers
+>   get the same directory**, still opening only their own and their reports'
+>   profiles, and keeping status and employment type for those rows
+>   (including reports who have left). The employee dashboard
+>   (`EmployeeInsightsService`) adds this month's attendance, upcoming
+>   holidays, a My team card, team members on leave (names + dates only,
+>   never type or reason) and recent joiners / anniversaries. Also fixed:
+>   `get()` built `where: { id, ...scope }`, and the Employee / Line Manager
+>   scope has its own `id` key that replaced the requested one — it is now
+>   `AND: [{ id }, scope]`, so opening a profile can never return a different
+>   person. Both modules stay ✅ 100%.
+>
+> - **Identity & Access + Employee Master: one email, set by HR.** The
+>   employee's email (`personalEmail`) is now also the login's sign-in email
+>   and so where every notification goes (they already used `users.email`).
+>   Only Company Admin / HR Manager can set it — it was removed from the
+>   Employee self-edit whitelist. An HR edit moves the login automatically
+>   (Firebase + `users`, before the employee write so a clash rejects the
+>   whole edit); **Sync login email** (`POST
+>   /api/employees/:id/login/sync-email`) does it on demand for drift or a
+>   wrong email at creation. Creating a login also stores its email on the
+>   employee. Audited as `access.user_email_changed`. The detail page shows
+>   the login email to HR and flags a mismatch. Password and sessions are
+>   untouched, so the employee signs in with the new email and the same
+>   password. Both modules stay ✅ 100%.
+> - **Identity & Access: branded password-reset page.** Reset/invite emails
+>   sent through SES now link to the app's own `/auth/action` page (same
+>   shell as sign-in; Firebase's one-time code, completed with the Firebase
+>   SDK) instead of Firebase's unstyled hosted page. The fallback used when
+>   SES isn't configured still sends Firebase's own email and page. Stays
+>   ✅ 100%.
+>
+> - **Employee Master (module 03) + Identity & Access: create a login for an
+>   existing employee.** Skipping the login at Add Employee used to leave no
+>   way to add one later (only *Link login* for an already-existing login).
+>   An unlinked profile now also gets **Create login** (`POST
+>   /api/employees/:id/login`, Company Admin / HR Manager): the server
+>   generates a random 12-char alphanumeric temporary password, creates the
+>   Firebase user + `users` row + employee link, and emails the employee ID,
+>   sign-in email and temp password via SES (`AuthEmailService.
+>   sendLoginCredentials`; never stored, never returned, not written to
+>   `notification_log`). The sign-in "username" is the email — employee-ID
+>   sign-in isn't supported. If SES isn't configured the login is still
+>   created and the response says `emailSent: false` (use the reset email).
+>   A linked profile gets **Send password reset** (existing `POST
+>   /api/access/users/:id/password-reset`). Rules: RULE-2 role ceiling,
+>   not already linked, not `SEPARATED`; Firebase user rolled back if the DB
+>   write fails; audited as `access.user_created`. 14 unit tests. Both
+>   modules stay ✅ 100%.
 >
 > - **Leave (module 04): "reporting manager only" approval.** A third
 >   approval option next to "straight to HR" and "manager, then HR" —

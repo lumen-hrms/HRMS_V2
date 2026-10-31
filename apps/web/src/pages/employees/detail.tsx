@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Upload, Download, ArrowRightLeft, Eye, KeyRound, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Upload, Download, ArrowRightLeft, Eye, KeyRound, Mail, Pencil, Plus, RefreshCw, Trash2, UserPlus } from 'lucide-react';
 import { api, getAccessToken, getTenantSubdomain, isApiError } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -16,7 +16,7 @@ import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/context/auth-context';
 import { ScanStatusBadge } from '@/components/documents';
 import { UPLOAD_ACCEPT, uploadProblem, useOpenDocument, type ScanStatus } from '@/lib/documents';
-import { ROLE_LABELS } from '@/lib/roles';
+import { assignableRoles, ROLE_LABELS } from '@/lib/roles';
 import { useLinkableLogins } from '@/pages/employees/linkable-logins';
 
 const DOCUMENT_CATEGORY_LABEL: Record<string, string> = {
@@ -86,6 +86,8 @@ interface EmployeeDetail {
   noticeStartDate: string | null;
   lastWorkingDate: string | null;
   userId: string | null;
+  /** Sign-in email of the linked login — only sent to Company Admin / HR Manager. */
+  loginEmail?: string | null;
   personalEmail: string | null;
   phone: string | null;
   gender: string | null;
@@ -150,6 +152,8 @@ export function EmployeeDetailPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [statusDialogOpen, setStatusDialogOpen] = React.useState(false);
   const [linkDialogOpen, setLinkDialogOpen] = React.useState(false);
+  const [createLoginOpen, setCreateLoginOpen] = React.useState(false);
+  const [resetDialogOpen, setResetDialogOpen] = React.useState(false);
   const [profileDialogOpen, setProfileDialogOpen] = React.useState(false);
   const [sensitiveDialogOpen, setSensitiveDialogOpen] = React.useState(false);
   const [contactDialog, setContactDialog] = React.useState<EmergencyContact | 'new' | null>(null);
@@ -166,6 +170,31 @@ export function EmployeeDetailPage() {
   }, [id]);
 
   React.useEffect(load, [load]);
+
+  const [syncingEmail, setSyncingEmail] = React.useState(false);
+  async function syncLoginEmail() {
+    if (!id) return;
+    setSyncingEmail(true);
+    try {
+      const { email, changed } = await api.post<{ email: string; changed: boolean }>(
+        `/employees/${id}/login/sync-email`,
+      );
+      toast({
+        title: changed ? 'Login email updated' : 'Already in sync',
+        description: changed
+          ? `They now sign in with ${email}.`
+          : `The login already uses ${email}.`,
+      });
+      load();
+    } catch (err) {
+      toast({
+        title: 'Could not sync the login email',
+        description: isApiError(err) ? err.message : 'Try again.',
+      });
+    } finally {
+      setSyncingEmail(false);
+    }
+  }
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -284,9 +313,24 @@ export function EmployeeDetailPage() {
         {canManage && (
           <div className="flex flex-wrap gap-2">
             {!employee.userId && employee.lifecycleState !== 'SEPARATED' && (
-              <Button size="sm" variant="outline" onClick={() => setLinkDialogOpen(true)}>
-                <KeyRound className="h-3.5 w-3.5" /> Link login
-              </Button>
+              <>
+                <Button size="sm" variant="outline" onClick={() => setCreateLoginOpen(true)}>
+                  <UserPlus className="h-3.5 w-3.5" /> Create login
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setLinkDialogOpen(true)}>
+                  <KeyRound className="h-3.5 w-3.5" /> Link login
+                </Button>
+              </>
+            )}
+            {employee.userId && (
+              <>
+                <Button size="sm" variant="outline" disabled={syncingEmail} onClick={syncLoginEmail}>
+                  <RefreshCw className="h-3.5 w-3.5" /> {syncingEmail ? 'Syncing…' : 'Sync login email'}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setResetDialogOpen(true)}>
+                  <Mail className="h-3.5 w-3.5" /> Send password reset
+                </Button>
+              </>
             )}
             <Button size="sm" variant="outline" onClick={() => setStatusDialogOpen(true)}>
               <ArrowRightLeft className="h-3.5 w-3.5" /> Change status
@@ -317,7 +361,17 @@ export function EmployeeDetailPage() {
               )}
             </CardHeader>
             <CardContent className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
-              <Row label="Personal email" value={employee.personalEmail ?? '—'} />
+              <Row label="Email" value={employee.personalEmail ?? '—'} />
+              {canManage && employee.userId && (
+                <Row
+                  label="Login email"
+                  value={
+                    employee.loginEmail && employee.loginEmail !== employee.personalEmail
+                      ? `${employee.loginEmail} (differs — use Sync login email)`
+                      : (employee.loginEmail ?? '—')
+                  }
+                />
+              )}
               <Row label="Phone" value={employee.phone ?? '—'} />
               <Row label="Gender" value={employee.gender ?? '—'} />
               <Row label="Marital status" value={employee.maritalStatus ?? '—'} />
@@ -592,6 +646,37 @@ export function EmployeeDetailPage() {
         />
       )}
 
+      {createLoginOpen && (
+        <CreateLoginDialog
+          employee={employee}
+          onOpenChange={setCreateLoginOpen}
+          onCreated={({ email, emailSent }) => {
+            setCreateLoginOpen(false);
+            load();
+            toast(
+              emailSent
+                ? { title: 'Login created', description: `Sign-in details emailed to ${email}.` }
+                : {
+                    title: 'Login created, email not sent',
+                    description: `Use “Send password reset” so ${email} can set a password.`,
+                  },
+            );
+          }}
+        />
+      )}
+
+      {resetDialogOpen && employee.userId && (
+        <SendResetDialog
+          employee={employee}
+          userId={employee.userId}
+          onOpenChange={setResetDialogOpen}
+          onSent={(email) => {
+            setResetDialogOpen(false);
+            toast({ title: 'Password reset sent', description: `Reset link emailed to ${email}.` });
+          }}
+        />
+      )}
+
       {profileDialogOpen && (
         <ProfileFieldsDialog
           employee={employee}
@@ -853,7 +938,8 @@ function ProfileFieldsDialog({
     setError(null);
     try {
       await api.patch(`/employees/${employee.id}`, {
-        personalEmail: personalEmail || undefined,
+        // HR only — it is also the login's sign-in email.
+        ...(selfEditOnly ? {} : { personalEmail: personalEmail || undefined }),
         phone: phone || undefined,
         gender: gender || undefined,
         maritalStatus: maritalStatus || undefined,
@@ -895,9 +981,14 @@ function ProfileFieldsDialog({
           onClose={() => onOpenChange(false)}
         />
         <div className="grid max-h-[60vh] grid-cols-2 gap-3 overflow-y-auto pr-1">
-          <Field label="Personal email">
-            <Input type="email" value={personalEmail} onChange={(e) => setPersonalEmail(e.target.value)} />
-          </Field>
+          {!selfEditOnly && (
+            <Field
+              label="Email"
+              hint={employee.userId ? 'Also their sign-in email — changing it updates the login.' : undefined}
+            >
+              <Input type="email" value={personalEmail} onChange={(e) => setPersonalEmail(e.target.value)} />
+            </Field>
+          )}
           <Field label="Phone">
             <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
           </Field>
@@ -1348,6 +1439,133 @@ function LifecycleDialog({
             </div>
           </div>
         )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CreateLoginDialog({
+  employee,
+  onOpenChange,
+  onCreated,
+}: {
+  employee: EmployeeDetail;
+  onOpenChange: (open: boolean) => void;
+  onCreated: (result: { email: string; emailSent: boolean }) => void;
+}) {
+  const { user } = useAuth();
+  const roles = assignableRoles(user);
+  const [email, setEmail] = React.useState(employee.personalEmail ?? '');
+  const [role, setRole] = React.useState('EMPLOYEE');
+  const [submitting, setSubmitting] = React.useState(false);
+  const [formError, setFormError] = React.useState<string | null>(null);
+
+  async function submit() {
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      const result = await api.post<{ email: string; emailSent: boolean }>(
+        `/employees/${employee.id}/login`,
+        { loginEmail: email.trim(), loginRole: role },
+      );
+      onCreated(result);
+    } catch (err) {
+      setFormError(isApiError(err) ? err.message : 'Could not create the login — try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader
+          title="Create login"
+          description={`${employee.firstName} ${employee.lastName} · ${employee.employeeCode}`}
+          onClose={() => onOpenChange(false)}
+        />
+        <div className="flex flex-col gap-4">
+          <Field
+            label="Email"
+            required
+            hint={`The sign-in username. We email it with a generated temporary password and the employee ID (${employee.employeeCode}).`}
+          >
+            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          </Field>
+          <Field label="Role" required>
+            <Select value={role} onChange={(e) => setRole(e.target.value)}>
+              {roles.map((r) => (
+                <option key={r} value={r}>
+                  {ROLE_LABELS[r]}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          {formError && <p className="text-sm text-destructive">{formError}</p>}
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+              Cancel
+            </Button>
+            <Button onClick={submit} disabled={submitting || !email.trim()}>
+              {submitting ? 'Creating…' : 'Create & email login'}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function SendResetDialog({
+  employee,
+  userId,
+  onOpenChange,
+  onSent,
+}: {
+  employee: EmployeeDetail;
+  userId: string;
+  onOpenChange: (open: boolean) => void;
+  onSent: (email: string) => void;
+}) {
+  const [submitting, setSubmitting] = React.useState(false);
+  const [formError, setFormError] = React.useState<string | null>(null);
+
+  async function submit() {
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      const { email } = await api.post<{ email: string }>(`/access/users/${userId}/password-reset`);
+      onSent(email);
+    } catch (err) {
+      setFormError(isApiError(err) ? err.message : 'Could not send the reset email — try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader
+          title="Send password reset"
+          description={`${employee.firstName} ${employee.lastName} · ${employee.employeeCode}`}
+          onClose={() => onOpenChange(false)}
+        />
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-muted-foreground">
+            Emails a link to the employee’s login address so they can set a new password. Their
+            current password stops working once they do.
+          </p>
+          {formError && <p className="text-sm text-destructive">{formError}</p>}
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+              Cancel
+            </Button>
+            <Button onClick={submit} disabled={submitting}>
+              {submitting ? 'Sending…' : 'Send reset email'}
+            </Button>
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
   );
