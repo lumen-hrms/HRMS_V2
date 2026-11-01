@@ -1,193 +1,199 @@
 @import 'tailwindcss';
 
 /* ---------------------------------------------------------------------
- * HRMS Platform design system.
+ * HRMS Platform design system — Gold & Midnight.
  *
- * Palette: a single deep, desaturated navy as the primary/brand color
- * (trustworthy, precise — this is a payroll/HR system of record, not a
- * consumer app) with a muted teal for positive/approve actions, amber for
- * caution (LOP, pending), and a restrained red reserved for destructive
- * actions only. Neutral scale does the majority of the work, as it should
- * in a dense data product.
+ * ONE palette, used everywhere. Do not introduce other hues.
  *
- * Type: Inter for UI text (excellent at small sizes, ubiquitous, free —
- * the boring choice on purpose), a slightly tighter tracking on headings.
+ *   Midnight  900 #030a16 · 800 #081529 · 700 #14305a · 600 #1d4275
+ *             500 #2a5da0 · 300 #8fa6c6 · 200 #c3d0e3 · 100 #e4eaf3 · 50 #f1f4f9
+ *   Gold      700 #8a6212 · 600 #b07d17 · 500 #c9971f · 400 #e0b23e
+ *             300 #edc96b · 200 #f5deaa · 100 #faedc8 · 50 #fdf6e3
+ *   Cream     #f3eedf (page) · #fbf8ef (surface) — never pure white
+ *   Status    success #2f7d5b · danger #b4372f — the only non-brand hues,
+ *             kept because "approved"/"failed" must read at a glance.
+ *             Warning is gold; info is a midnight tint.
  *
- * Spacing/radius: Tailwind's default 4px scale; a single --radius token
- * so corners read as one system everywhere.
+ * Light: cream page, lighter-cream cards, midnight text + primary actions, gold
+ * for focus, highlights and the brand mark.
+ * Dark:  midnight page and cards, ivory text, gold primary actions.
+ *
+ * Every component reads the semantic tokens below (--primary, --accent,
+ * --lumen-*), never raw colours — retheme here, nowhere else.
+ *
+ * Type: Inter for UI text, slightly tighter tracking on headings.
+ * Spacing/radius: Tailwind's 4px scale; one --radius token.
  * ------------------------------------------------------------------- */
 
 :root {
-  --background: #f7f8fa;
-  --foreground: #101828;
-  --card: #ffffff;
-  --card-foreground: #101828;
-  --border: #e2e5ea;
-  --input: #e2e5ea;
-  --ring: #2b5a8c;
+  --background: #f3eedf;
+  --foreground: #071327;
+  --card: #fbf8ef;
+  --card-foreground: #071327;
+  --border: #e2dbc6;
+  --input: #d6cdb4;
+  --ring: #b07d17;
 
-  --primary: #16324f;
-  --primary-foreground: #f7f9fb;
-  --secondary: #eef1f5;
-  --secondary-foreground: #16324f;
-  --muted: #eef1f5;
-  --muted-foreground: #5b6472;
-  --accent: #eaf1f7;
-  --accent-foreground: #16324f;
+  --primary: #081529;
+  --primary-foreground: #fdf6e3;
+  --secondary: #ebe5d2;
+  --secondary-foreground: #081529;
+  --muted: #ebe5d2;
+  --muted-foreground: #5a6579;
+  --accent: #f6e6b8;
+  --accent-foreground: #081529;
 
-  --success: #1a7f5a;
+  --success: #2f7d5b;
   --success-foreground: #ffffff;
-  --warning: #a8681a;
+  --warning: #8a6212;
   --warning-foreground: #ffffff;
-  --destructive: #b3261e;
+  --destructive: #b4372f;
   --destructive-foreground: #ffffff;
 
   --radius: 0.625rem;
   color-scheme: light;
 
-  /* Lumen brand tokens — scoped for the Attendance module only (design
-   * handoff from Claude Design). Parallel set, not a replacement for
-   * --primary etc. above; promote to the global tokens later if the
-   * brand refresh goes app-wide. */
-  --lumen-gold: #d99220;
-  --lumen-gold-light: #f5b544;
-  --lumen-gold-dark: #c68118;
-  --lumen-gold-soft: #fff4d8;
-  --lumen-navy: #07141f;
-  --lumen-navy-2: #0d1f2d;
-  --lumen-bg: #f8fafc;
-  --lumen-surface: #ffffff;
-  --lumen-surface-2: #f1f5f8;
-  --lumen-surface-hover: #eaf0f4;
-  --lumen-text: #0b1722;
-  --lumen-text-secondary: #526170;
-  --lumen-text-muted: #82909c;
-  --lumen-border: #dce3e8;
-  --lumen-border-strong: #c5d0d8;
-  --lumen-success: #16855b;
-  --lumen-success-soft: #e7f6ef;
-  --lumen-warning: #c48716;
-  --lumen-warning-soft: #fff4d8;
-  --lumen-error: #c74646;
-  --lumen-error-soft: #fceaea;
-  --lumen-info: #2878b8;
-  --lumen-info-soft: #e8f3fa;
-  --lumen-purple: #7657b8;
-  --lumen-purple-soft: #f0ebfa;
-  --lumen-gradient: linear-gradient(135deg, #f5b544, #ffd77a);
-  --lumen-glow: rgba(245, 181, 68, 0.12);
+  /* Lumen brand tokens — same palette, named for the Attendance/auth
+   * screens that adopted them first. Kept in step with the block above. */
+  --lumen-gold: #c9971f;
+  --lumen-gold-light: #e0b23e;
+  --lumen-gold-dark: #b07d17;
+  --lumen-gold-soft: #f6e6b8;
+  --lumen-navy: #030a16;
+  --lumen-navy-2: #081529;
+  --lumen-bg: #f3eedf;
+  --lumen-surface: #fbf8ef;
+  --lumen-surface-2: #ebe5d2;
+  --lumen-surface-hover: #e4ddc7;
+  --lumen-text: #071327;
+  --lumen-text-secondary: #4a566b;
+  --lumen-text-muted: #7b8597;
+  --lumen-border: #e2dbc6;
+  --lumen-border-strong: #cbc2a6;
+  --lumen-success: #2f7d5b;
+  --lumen-success-soft: #dfecdc;
+  --lumen-warning: #8a6212;
+  --lumen-warning-soft: #f6e6b8;
+  --lumen-error: #b4372f;
+  --lumen-error-soft: #f5e0d8;
+  --lumen-info: #2a5da0;
+  --lumen-info-soft: #e2e6ea;
+  --lumen-purple: #5b6b8c;
+  --lumen-purple-soft: #e6e6e3;
+  --lumen-gradient: linear-gradient(135deg, #e0b23e, #f5deaa);
+  --lumen-glow: rgba(201, 151, 31, 0.14);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --background: #0d1117;
-    --foreground: #e6e9ee;
-    --card: #141a22;
-    --card-foreground: #e6e9ee;
-    --border: #262e3a;
-    --input: #262e3a;
-    --ring: #6ea8dd;
+    --background: #030812;
+    --foreground: #eef1f7;
+    --card: #07122a;
+    --card-foreground: #eef1f7;
+    --border: #17294a;
+    --input: #1e3159;
+    --ring: #e0b23e;
 
-    --primary: #6ea8dd;
-    --primary-foreground: #0d1117;
-    --secondary: #1b222c;
-    --secondary-foreground: #e6e9ee;
-    --muted: #1b222c;
-    --muted-foreground: #97a2b0;
-    --accent: #1b2733;
-    --accent-foreground: #bcd6ef;
+    --primary: #e0b23e;
+    --primary-foreground: #030812;
+    --secondary: #0b1a33;
+    --secondary-foreground: #eef1f7;
+    --muted: #0b1a33;
+    --muted-foreground: #98a6bf;
+    --accent: #12264a;
+    --accent-foreground: #f5deaa;
 
-    --success: #35c28d;
+    --success: #4fbf8c;
     --success-foreground: #06251a;
-    --warning: #e0a942;
+    --warning: #e0b23e;
     --warning-foreground: #2b1c02;
-    --destructive: #e5675f;
+    --destructive: #ea7168;
     --destructive-foreground: #2b0705;
     color-scheme: dark;
 
-    --lumen-gold: #f5b544;
-    --lumen-gold-light: #ffd06a;
-    --lumen-gold-dark: #d99220;
-    --lumen-gold-soft: #3a2c15;
-    --lumen-navy: #07141f;
-    --lumen-navy-2: #0d1f2d;
-    --lumen-bg: #07141f;
-    --lumen-surface: #0d1f2d;
-    --lumen-surface-2: #132a3a;
-    --lumen-surface-hover: #183346;
-    --lumen-text: #f5f7f9;
-    --lumen-text-secondary: #aab7c2;
-    --lumen-text-muted: #71818e;
-    --lumen-border: #243a49;
-    --lumen-border-strong: #365062;
-    --lumen-success: #35c98a;
-    --lumen-success-soft: #102f25;
-    --lumen-warning: #f5c451;
-    --lumen-warning-soft: #3a2c15;
-    --lumen-error: #f26b6b;
-    --lumen-error-soft: #351d20;
-    --lumen-info: #55aee8;
-    --lumen-info-soft: #102b3b;
-    --lumen-purple: #a88ae8;
-    --lumen-purple-soft: #29223a;
-    --lumen-gradient: linear-gradient(135deg, #f5b544, #ffd77a);
-    --lumen-glow: rgba(245, 181, 68, 0.18);
+    --lumen-gold: #e0b23e;
+    --lumen-gold-light: #edc96b;
+    --lumen-gold-dark: #c9971f;
+    --lumen-gold-soft: #2e2813;
+    --lumen-navy: #030812;
+    --lumen-navy-2: #07122a;
+    --lumen-bg: #030812;
+    --lumen-surface: #07122a;
+    --lumen-surface-2: #0b1a33;
+    --lumen-surface-hover: #102545;
+    --lumen-text: #f3f5fa;
+    --lumen-text-secondary: #b3bfd3;
+    --lumen-text-muted: #7586a3;
+    --lumen-border: #17294a;
+    --lumen-border-strong: #223a63;
+    --lumen-success: #4fbf8c;
+    --lumen-success-soft: #0f2c24;
+    --lumen-warning: #e0b23e;
+    --lumen-warning-soft: #2e2813;
+    --lumen-error: #ea7168;
+    --lumen-error-soft: #321c20;
+    --lumen-info: #7aa2d6;
+    --lumen-info-soft: #0d2040;
+    --lumen-purple: #a6b4d0;
+    --lumen-purple-soft: #111c36;
+    --lumen-gradient: linear-gradient(135deg, #e0b23e, #f5deaa);
+    --lumen-glow: rgba(224, 178, 62, 0.18);
   }
 }
 
 :root[data-theme='dark'] {
-  --background: #0d1117;
-  --foreground: #e6e9ee;
-  --card: #141a22;
-  --card-foreground: #e6e9ee;
-  --border: #262e3a;
-  --input: #262e3a;
-  --ring: #6ea8dd;
+  --background: #030812;
+  --foreground: #eef1f7;
+  --card: #07122a;
+  --card-foreground: #eef1f7;
+  --border: #17294a;
+  --input: #1e3159;
+  --ring: #e0b23e;
 
-  --primary: #6ea8dd;
-  --primary-foreground: #0d1117;
-  --secondary: #1b222c;
-  --secondary-foreground: #e6e9ee;
-  --muted: #1b222c;
-  --muted-foreground: #97a2b0;
-  --accent: #1b2733;
-  --accent-foreground: #bcd6ef;
+  --primary: #e0b23e;
+  --primary-foreground: #030812;
+  --secondary: #0b1a33;
+  --secondary-foreground: #eef1f7;
+  --muted: #0b1a33;
+  --muted-foreground: #98a6bf;
+  --accent: #12264a;
+  --accent-foreground: #f5deaa;
 
-  --success: #35c28d;
+  --success: #4fbf8c;
   --success-foreground: #06251a;
-  --warning: #e0a942;
+  --warning: #e0b23e;
   --warning-foreground: #2b1c02;
-  --destructive: #e5675f;
+  --destructive: #ea7168;
   --destructive-foreground: #2b0705;
   color-scheme: dark;
 
-  --lumen-gold: #f5b544;
-  --lumen-gold-light: #ffd06a;
-  --lumen-gold-dark: #d99220;
-  --lumen-gold-soft: #3a2c15;
-  --lumen-navy: #07141f;
-  --lumen-navy-2: #0d1f2d;
-  --lumen-bg: #07141f;
-  --lumen-surface: #0d1f2d;
-  --lumen-surface-2: #132a3a;
-  --lumen-surface-hover: #183346;
-  --lumen-text: #f5f7f9;
-  --lumen-text-secondary: #aab7c2;
-  --lumen-text-muted: #71818e;
-  --lumen-border: #243a49;
-  --lumen-border-strong: #365062;
-  --lumen-success: #35c98a;
-  --lumen-success-soft: #102f25;
-  --lumen-warning: #f5c451;
-  --lumen-warning-soft: #3a2c15;
-  --lumen-error: #f26b6b;
-  --lumen-error-soft: #351d20;
-  --lumen-info: #55aee8;
-  --lumen-info-soft: #102b3b;
-  --lumen-purple: #a88ae8;
-  --lumen-purple-soft: #29223a;
-  --lumen-gradient: linear-gradient(135deg, #f5b544, #ffd77a);
-  --lumen-glow: rgba(245, 181, 68, 0.18);
+  --lumen-gold: #e0b23e;
+  --lumen-gold-light: #edc96b;
+  --lumen-gold-dark: #c9971f;
+  --lumen-gold-soft: #2e2813;
+  --lumen-navy: #030812;
+  --lumen-navy-2: #07122a;
+  --lumen-bg: #030812;
+  --lumen-surface: #07122a;
+  --lumen-surface-2: #0b1a33;
+  --lumen-surface-hover: #102545;
+  --lumen-text: #f3f5fa;
+  --lumen-text-secondary: #b3bfd3;
+  --lumen-text-muted: #7586a3;
+  --lumen-border: #17294a;
+  --lumen-border-strong: #223a63;
+  --lumen-success: #4fbf8c;
+  --lumen-success-soft: #0f2c24;
+  --lumen-warning: #e0b23e;
+  --lumen-warning-soft: #2e2813;
+  --lumen-error: #ea7168;
+  --lumen-error-soft: #321c20;
+  --lumen-info: #7aa2d6;
+  --lumen-info-soft: #0d2040;
+  --lumen-purple: #a6b4d0;
+  --lumen-purple-soft: #111c36;
+  --lumen-gradient: linear-gradient(135deg, #e0b23e, #f5deaa);
+  --lumen-glow: rgba(224, 178, 62, 0.18);
 }
 
 @theme inline {
@@ -290,14 +296,14 @@
 
 .lumen-auth-input:focus-visible {
   border-color: var(--lumen-gold) !important;
-  box-shadow: 0 0 0 3px rgba(217, 146, 32, 0.16);
+  box-shadow: 0 0 0 3px rgba(201, 151, 31, 0.18);
 }
 :root[data-theme='dark'] .lumen-auth-input:focus-visible {
-  box-shadow: 0 0 0 3px rgba(245, 181, 68, 0.25);
+  box-shadow: 0 0 0 3px rgba(224, 178, 62, 0.25);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) .lumen-auth-input:focus-visible {
-    box-shadow: 0 0 0 3px rgba(245, 181, 68, 0.25);
+    box-shadow: 0 0 0 3px rgba(224, 178, 62, 0.25);
   }
 }
 
@@ -353,7 +359,7 @@
   height: 30rem;
   left: -8rem;
   top: -6rem;
-  background: radial-gradient(circle, rgba(245, 181, 68, 0.22), transparent 70%);
+  background: radial-gradient(circle, rgba(224, 178, 62, 0.22), transparent 70%);
   animation: brandDriftA 19s ease-in-out infinite;
 }
 .brand-aurora--blue {
@@ -388,7 +394,7 @@
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background-image: radial-gradient(rgba(245, 247, 249, 0.05) 1px, transparent 1px);
+  background-image: radial-gradient(rgba(243, 245, 250, 0.05) 1px, transparent 1px);
   background-size: 26px 26px;
   mask-image: radial-gradient(circle at 30% 40%, #000 0%, transparent 72%);
   animation: brandGridShift 30s linear infinite;
@@ -407,7 +413,7 @@
   inset: -55%;
   z-index: 0;
   border-radius: 9999px;
-  background: radial-gradient(circle, rgba(245, 181, 68, 0.3), transparent 62%);
+  background: radial-gradient(circle, rgba(224, 178, 62, 0.3), transparent 62%);
   filter: blur(26px);
   pointer-events: none;
   animation: brandHalo 6.5s ease-in-out infinite;
@@ -458,39 +464,39 @@
  * one token drives the avatar tint, the card's top rule and the dept chip.
  * ------------------------------------------------------------------- */
 :root {
-  --org-line: #c9d0da;
-  --org-hue-0: #2463a6;
-  --org-hue-1: #0f7a63;
-  --org-hue-2: #7347b8;
-  --org-hue-3: #b4531c;
-  --org-hue-4: #b03a6f;
-  --org-hue-5: #2f7d32;
-  --org-hue-6: #8f6a0e;
-  --org-hue-7: #4552c4;
+  --org-line: #d6d1c0;
+  --org-hue-0: #2a5da0;
+  --org-hue-1: #c9971f;
+  --org-hue-2: #14305a;
+  --org-hue-3: #5d9ad6;
+  --org-hue-4: #8a5a14;
+  --org-hue-5: #5b6b8c;
+  --org-hue-6: #e0b23e;
+  --org-hue-7: #3b4f86;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --org-line: #34404f;
-    --org-hue-0: #6ea8e8;
-    --org-hue-1: #45c7a6;
-    --org-hue-2: #b39af0;
-    --org-hue-3: #f0955c;
-    --org-hue-4: #ec80b0;
-    --org-hue-5: #78c97b;
-    --org-hue-6: #e2b54a;
-    --org-hue-7: #8f9cf2;
+    --org-line: #2c4268;
+    --org-hue-0: #7aa2d6;
+    --org-hue-1: #e0b23e;
+    --org-hue-2: #4f7bbd;
+    --org-hue-3: #a9c4e8;
+    --org-hue-4: #c9971f;
+    --org-hue-5: #a6b4d0;
+    --org-hue-6: #f5deaa;
+    --org-hue-7: #6f86c0;
   }
 }
 :root[data-theme='dark'] {
-  --org-line: #34404f;
-  --org-hue-0: #6ea8e8;
-  --org-hue-1: #45c7a6;
-  --org-hue-2: #b39af0;
-  --org-hue-3: #f0955c;
-  --org-hue-4: #ec80b0;
-  --org-hue-5: #78c97b;
-  --org-hue-6: #e2b54a;
-  --org-hue-7: #8f9cf2;
+  --org-line: #2c4268;
+  --org-hue-0: #7aa2d6;
+  --org-hue-1: #e0b23e;
+  --org-hue-2: #4f7bbd;
+  --org-hue-3: #a9c4e8;
+  --org-hue-4: #c9971f;
+  --org-hue-5: #a6b4d0;
+  --org-hue-6: #f5deaa;
+  --org-hue-7: #6f86c0;
 }
 
 /* Nested-list tree layout. The connector lines aren't CSS: they're an SVG
@@ -577,30 +583,298 @@
  * --viz-muted is the de-emphasis grey for context marks.
  */
 .viz-root {
-  --viz-1: #2a78d6;
-  --viz-2: #eb6834;
-  --viz-3: #1baf7a;
-  --viz-4: #eda100;
-  --viz-muted: #b4bac4;
+  --viz-1: #2a5da0;
+  --viz-2: #d39b1b;
+  --viz-3: #5d9ad6;
+  --viz-4: #8a5a14;
+  --viz-muted: #b9bfcc;
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme='light'])) .viz-root {
-    --viz-1: #3987e5;
-    --viz-2: #d95926;
-    --viz-3: #199e70;
-    --viz-4: #c98500;
-    --viz-muted: #4b5563;
+    --viz-1: #5a8fd6;
+    --viz-2: #b8891a;
+    --viz-3: #3f78b8;
+    --viz-4: #b9802a;
+    --viz-muted: #4b5870;
   }
 }
 :root[data-theme='dark'] .viz-root {
-  --viz-1: #3987e5;
-  --viz-2: #d95926;
-  --viz-3: #199e70;
-  --viz-4: #c98500;
-  --viz-muted: #4b5563;
+  --viz-1: #5a8fd6;
+  --viz-2: #b8891a;
+  --viz-3: #3f78b8;
+  --viz-4: #b9802a;
+  --viz-muted: #4b5870;
 }
 @media (prefers-reduced-motion: reduce) {
   .viz-root * {
     transition: none !important;
   }
 }
+
+/* Native controls that stay native (date/time pickers, checkboxes, radios)
+   take the palette: gold in dark mode, midnight in light. */
+@layer base {
+  input,
+  textarea,
+  select {
+    accent-color: var(--primary);
+  }
+  ::selection {
+    background: var(--lumen-gold);
+    color: #030812;
+  }
+}
+
+/* ── Glass / liquid glass ──────────────────────────────────────────────
+   Surfaces are translucent, blur what is behind them, and carry a bright
+   top edge + soft inner sheen so they read as a curved piece of glass.
+   The page gets an ambient gold/blue glow (below) so there is something to
+   refract. Tokens first (light), then dark under both dark selectors.     */
+:root {
+  --glass-bg: rgba(251, 248, 239, 0.58);
+  --glass-bg-strong: rgba(251, 248, 239, 0.84);
+  --glass-border: rgba(255, 255, 255, 0.7);
+  --glass-edge: rgba(255, 255, 255, 0.9);
+  --glass-sheen: rgba(255, 255, 255, 0.5);
+  --glass-shadow: 0 8px 32px -8px rgba(8, 21, 41, 0.18), 0 1px 2px rgba(8, 21, 41, 0.06);
+  --ambient:
+    radial-gradient(900px 600px at 92% -8%, rgba(224, 178, 62, 0.3), transparent 60%),
+    radial-gradient(800px 700px at -6% 105%, rgba(42, 93, 160, 0.16), transparent 62%),
+    radial-gradient(600px 500px at 55% 45%, rgba(237, 201, 107, 0.14), transparent 65%);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --glass-bg: rgba(14, 32, 66, 0.42);
+    --glass-bg-strong: rgba(7, 18, 42, 0.82);
+    --glass-border: rgba(150, 180, 230, 0.16);
+    --glass-edge: rgba(190, 210, 245, 0.32);
+    --glass-sheen: rgba(190, 210, 245, 0.1);
+    --glass-shadow: 0 10px 36px -10px rgba(0, 0, 0, 0.7), 0 1px 2px rgba(0, 0, 0, 0.4);
+    --ambient:
+      radial-gradient(900px 600px at 92% -8%, rgba(224, 178, 62, 0.16), transparent 60%),
+      radial-gradient(900px 750px at -6% 105%, rgba(42, 93, 160, 0.34), transparent 62%),
+      radial-gradient(600px 500px at 55% 40%, rgba(29, 66, 117, 0.22), transparent 65%);
+  }
+}
+:root[data-theme='dark'] {
+  --glass-bg: rgba(14, 32, 66, 0.42);
+  --glass-bg-strong: rgba(7, 18, 42, 0.82);
+  --glass-border: rgba(150, 180, 230, 0.16);
+  --glass-edge: rgba(190, 210, 245, 0.32);
+  --glass-sheen: rgba(190, 210, 245, 0.1);
+  --glass-shadow: 0 10px 36px -10px rgba(0, 0, 0, 0.7), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --ambient:
+    radial-gradient(900px 600px at 92% -8%, rgba(224, 178, 62, 0.16), transparent 60%),
+    radial-gradient(900px 750px at -6% 105%, rgba(42, 93, 160, 0.34), transparent 62%),
+    radial-gradient(600px 500px at 55% 40%, rgba(29, 66, 117, 0.22), transparent 65%);
+}
+
+body {
+  background-color: var(--background);
+  background-image: var(--ambient);
+  background-attachment: fixed;
+}
+
+@layer components {
+  .glass,
+  .glass-strong {
+    position: relative;
+    background-image: linear-gradient(135deg, var(--glass-sheen), transparent 45%);
+    border: 1px solid var(--glass-border);
+    box-shadow:
+      var(--glass-shadow),
+      inset 0 1px 0 var(--glass-edge),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.04);
+    -webkit-backdrop-filter: blur(18px) saturate(1.5);
+    backdrop-filter: blur(18px) saturate(1.5);
+  }
+  .glass {
+    background-color: var(--glass-bg);
+  }
+  .glass-strong {
+    background-color: var(--glass-bg-strong);
+    -webkit-backdrop-filter: blur(28px) saturate(1.6);
+    backdrop-filter: blur(28px) saturate(1.6);
+  }
+  /* Browsers without backdrop-filter get an opaque surface, not see-through text. */
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .glass,
+    .glass-strong {
+      background-color: var(--card);
+    }
+  }
+}
+
+/* Form controls: frosted fill instead of a flat card colour. */
+@layer base {
+  input:not([type='checkbox']):not([type='radio']):not([type='hidden']),
+  textarea {
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .glass,
+  .glass-strong {
+    background-color: var(--card);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* ── Golden hover glow ────────────────────────────────────────────────
+   Hover first FADES the halo in and out on a symmetric ease-in-out curve (a
+   strong ease-out reaches full glow almost at once and reads as a pop),
+   from a same-shaped, fully transparent shadow; then a slow breathing pulse takes over after
+   the fade, starting from exactly the level the fade ended on — so nothing
+   snaps. Un-hover fades back out. Rules are unlayered on purpose: they must
+   beat Tailwind's `transition-colors` / shadow utilities.
+   .hover-glow-glass keeps the glass shadow + edge in every shadow list,
+   because box-shadow lists only interpolate when they have equal length.   */
+@keyframes goldGlow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 14px 1px rgba(224, 178, 62, 0.3),
+      0 0 30px 4px rgba(224, 178, 62, 0.14);
+  }
+  50% {
+    box-shadow:
+      0 0 18px 2px rgba(224, 178, 62, 0.42),
+      0 0 40px 7px rgba(224, 178, 62, 0.2);
+  }
+}
+@keyframes goldGlowGlass {
+  0%,
+  100% {
+    box-shadow:
+      var(--glass-shadow),
+      inset 0 1px 0 var(--glass-edge),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.04),
+      0 0 16px 1px rgba(224, 178, 62, 0.26),
+      0 0 34px 4px rgba(224, 178, 62, 0.12);
+  }
+  50% {
+    box-shadow:
+      var(--glass-shadow),
+      inset 0 1px 0 var(--glass-edge),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.04),
+      0 0 20px 2px rgba(224, 178, 62, 0.38),
+      0 0 46px 7px rgba(224, 178, 62, 0.18);
+  }
+}
+
+.hover-glow {
+  box-shadow:
+    0 0 14px 1px rgba(224, 178, 62, 0),
+    0 0 30px 4px rgba(224, 178, 62, 0);
+  transition:
+    background-color 0.15s,
+    color 0.15s,
+    border-color 0.15s,
+    opacity 0.15s,
+    box-shadow 0.8s cubic-bezier(0.45, 0, 0.55, 1);
+}
+.hover-glow:hover:not(:disabled):not([aria-disabled='true']) {
+  box-shadow:
+    0 0 14px 1px rgba(224, 178, 62, 0.3),
+    0 0 30px 4px rgba(224, 178, 62, 0.14);
+  animation: goldGlow 3.2s ease-in-out 0.8s infinite;
+}
+
+.hover-glow-glass {
+  box-shadow:
+    var(--glass-shadow),
+    inset 0 1px 0 var(--glass-edge),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.04),
+    0 0 16px 1px rgba(224, 178, 62, 0),
+    0 0 34px 4px rgba(224, 178, 62, 0);
+  transition: box-shadow 0.56s cubic-bezier(0.45, 0, 0.55, 1);
+}
+.hover-glow-glass:hover {
+  box-shadow:
+    var(--glass-shadow),
+    inset 0 1px 0 var(--glass-edge),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.04),
+    0 0 16px 1px rgba(224, 178, 62, 0.26),
+    0 0 34px 4px rgba(224, 178, 62, 0.12);
+  animation: goldGlowGlass 2s ease-in-out 0.56s infinite;
+}
+
+/* Reduced motion: drop only the looping pulse. The slow fade in/out stays —
+   it's a gentle opacity-like change, and removing it makes the glow pop. */
+@media (prefers-reduced-motion: reduce) {
+  .hover-glow:hover:not(:disabled),
+  .hover-glow-glass:hover {
+    animation: none;
+  }
+}
+
+/* ── Sidebar: sliding glass lens ──────────────────────────────────────
+   One glass rectangle sits behind the sidebar and glides (translateY) to
+   whichever item is active. The active label glows gold and is scaled up a
+   couple of px, as if magnified by the lens. Position/height come from
+   app-layout.tsx; the slide is only enabled after first paint. */
+:root {
+  --nav-gold: #a8720f;
+  --nav-glow: rgba(201, 151, 31, 0.5);
+  --nav-text-glow: rgba(201, 151, 31, 0.25);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --nav-gold: #f0c250;
+    --nav-glow: rgba(224, 178, 62, 0.65);
+    --nav-text-glow: rgba(224, 178, 62, 0.325);
+  }
+}
+:root[data-theme='dark'] {
+  --nav-gold: #f0c250;
+  --nav-glow: rgba(224, 178, 62, 0.65);
+  --nav-text-glow: rgba(224, 178, 62, 0.325);
+}
+
+.nav-lens {
+  position: absolute;
+  top: 0;
+  left: 0.75rem;
+  right: 0.75rem;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: 0.6rem;
+  background-image: linear-gradient(135deg, var(--glass-sheen), transparent 55%);
+  background-color: rgba(224, 178, 62, 0.13);
+  border: 1px solid rgba(224, 178, 62, 0.42);
+  box-shadow:
+    inset 0 1px 0 var(--glass-edge),
+    0 6px 20px -6px rgba(224, 178, 62, 0.4);
+  /* No backdrop-filter here: re-blurring a moving element every frame (inside a
+     blurred sidebar) is what made the slide stutter. The sidebar is already frosted. */
+  will-change: transform;
+}
+.nav-lens-animated {
+  transition:
+    transform 0.5s cubic-bezier(0.22, 1, 0.36, 1),
+    height 0.5s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.3s ease;
+}
+
+.nav-item-inner {
+  transform-origin: left center;
+  transition:
+    transform 0.5s cubic-bezier(0.22, 1, 0.36, 1),
+    text-shadow 0.4s ease;
+}
+.nav-item-active {
+  color: var(--nav-gold);
+  font-weight: 600;
+}
+.nav-item-active .nav-item-inner {
+  transform: scale(1.14);
+  text-shadow:
+    0 0 8px var(--nav-text-glow),
+    0 0 20px var(--nav-text-glow);
+}
+.nav-item-active svg {
+  filter: drop-shadow(0 0 4px var(--nav-glow));
+}
+

@@ -16,7 +16,7 @@ import { MOCK_CURRENT_YEAR } from '@/lib/leave/fixtures';
 import { ACCRUAL_LABELS, type AccrualFrequency, type LeaveType } from '@/lib/leave/types';
 import { EVENT_PRESETS, describeEventType } from '@/lib/leave/event-presets';
 
-const ACCRUAL_PALETTE = ['#2b5a8c', '#1a7f5a', '#a8681a', '#7c4fb0', '#0f766e', '#b3261e'];
+const ACCRUAL_PALETTE = ['#2a5da0', '#c9971f', '#14305a', '#5d9ad6', '#8a5a14', '#b4372f'];
 
 function deriveCode(name: string): string {
   const initials = name

@@ -587,23 +587,25 @@ function TrendChart({ points }: { points: { month: string; count: number }[] }) 
           </span>
         ))}
       </div>
-      <table className="sr-only">
-        <caption>Headcount at the end of each month</caption>
-        <thead>
-          <tr>
-            <th>Month</th>
-            <th>Headcount</th>
-          </tr>
-        </thead>
-        <tbody>
-          {points.map((p) => (
-            <tr key={p.month}>
-              <td>{p.month}</td>
-              <td>{p.count}</td>
+      <div className="sr-only">
+        <table>
+          <caption>Headcount at the end of each month</caption>
+          <thead>
+            <tr>
+              <th>Month</th>
+              <th>Headcount</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {points.map((p) => (
+              <tr key={p.month}>
+                <td>{p.month}</td>
+                <td>{p.count}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </figure>
   );
 }

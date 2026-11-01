@@ -37,7 +37,7 @@ export function Sheet({
   return (
     <div className="fixed inset-0 z-50">
       <div
-        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+        className="absolute inset-0 bg-[#030812]/50 backdrop-blur-sm"
         onClick={() => onOpenChange(false)}
         aria-hidden="true"
       />
@@ -45,7 +45,7 @@ export function Sheet({
         role="dialog"
         aria-modal="true"
         className={cn(
-          'absolute right-0 top-0 flex h-full w-full max-w-md flex-col border-l border-border bg-card shadow-xl',
+          'glass-strong absolute right-0 top-0 flex h-full w-full max-w-md flex-col',
           className,
         )}
       >

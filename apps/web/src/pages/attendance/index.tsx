@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Select } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useToast } from '@/components/ui/toast';
@@ -680,8 +681,7 @@ function RegularizationDialog({
           </div>
           <div className="flex flex-col gap-1.5">
             <Label>Reason Type</Label>
-            <select
-              className="h-9 rounded-md border border-input bg-card px-2 text-sm"
+            <Select
               value={form.reasonType}
               onChange={(e) => setForm((f) => ({ ...f, reasonType: e.target.value }))}
             >
@@ -690,7 +690,7 @@ function RegularizationDialog({
                   {label}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">

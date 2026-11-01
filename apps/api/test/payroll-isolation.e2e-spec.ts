@@ -218,11 +218,16 @@ describe('Payroll isolation & authorization (e2e)', () => {
     it('config reads return only A’s own values, never B’s', async () => {
       const settings = await asA('hr', 'get', '/config/settings');
       expect(settings.status).toBe(200);
-      expect(JSON.stringify(settings.body)).not.toContain('99999');
+      // Compare fields, not a substring of the JSON: ids are random UUIDs, and
+      // a hex run like "777" or "99999" can appear in one by chance.
+      expect(Number(settings.body.epfCeiling)).not.toBe(99999);
 
       const pt = await asA('hr', 'get', '/config/pt-slabs');
       expect(pt.status).toBe(200);
-      expect(JSON.stringify(pt.body)).not.toContain('777');
+      const slabs = pt.body as { tenantId: string; monthlyAmount: string }[];
+      expect(slabs.length).toBeGreaterThan(0);
+      expect(slabs.every((s) => s.tenantId === a.tenantId)).toBe(true);
+      expect(slabs.some((s) => Number(s.monthlyAmount) === 777)).toBe(false);
     });
   });
 
