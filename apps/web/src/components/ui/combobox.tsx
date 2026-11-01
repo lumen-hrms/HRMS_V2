@@ -161,7 +161,7 @@ export function Combobox({
           }
         }}
         className={cn(
-          'flex h-9 w-full items-center gap-2 rounded-md border border-input bg-card px-3 py-1 text-left text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
+          'flex h-9 w-full items-center gap-2 rounded-md border border-input bg-card/60 px-3 py-1 text-left text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
           open && 'ring-2 ring-ring',
           className,
         )}
@@ -184,7 +184,7 @@ export function Combobox({
           <div
             ref={panelRef}
             style={{ position: 'fixed', ...pos, maxHeight: PANEL_MAX_H }}
-            className="z-[60] flex flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-lg"
+            className="z-[60] flex flex-col overflow-hidden glass-strong rounded-lg text-card-foreground"
           >
             <div className="relative border-b border-border">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

@@ -125,7 +125,7 @@ function Hero() {
         <Eclipse />
 
         <div
-          className="brand-in mt-2 inline-flex items-center gap-2 rounded-full border border-[rgba(245,181,68,0.25)] bg-[rgba(245,181,68,0.06)] px-3.5 py-1.5 text-xs text-[var(--gold-hi)]"
+          className="brand-in mt-2 inline-flex items-center gap-2 rounded-full border border-[rgba(224,178,62,0.25)] bg-[rgba(224,178,62,0.06)] px-3.5 py-1.5 text-xs text-[var(--gold-hi)]"
           style={{ animationDelay: '600ms' }}
         >
           <Sparkles className="h-3.5 w-3.5" />
@@ -192,24 +192,24 @@ function Eclipse() {
       <svg viewBox="0 0 200 200" className="h-full w-full overflow-visible">
         <defs>
           <linearGradient id="ring" x1="0" y1="1" x2="1" y2="0">
-            <stop offset="0%" stopColor="#c68118" stopOpacity="0" />
-            <stop offset="35%" stopColor="#c68118" stopOpacity="0.75" />
-            <stop offset="100%" stopColor="#ffd77a" />
+            <stop offset="0%" stopColor="#b07d17" stopOpacity="0" />
+            <stop offset="35%" stopColor="#b07d17" stopOpacity="0.75" />
+            <stop offset="100%" stopColor="#f5deaa" />
           </linearGradient>
           <linearGradient id="horizon" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor="#f5b544" stopOpacity="0" />
-            <stop offset="70%" stopColor="#f5b544" stopOpacity="0.9" />
-            <stop offset="85%" stopColor="#ffe6a8" />
-            <stop offset="100%" stopColor="#f5b544" stopOpacity="0" />
+            <stop offset="0%" stopColor="#e0b23e" stopOpacity="0" />
+            <stop offset="70%" stopColor="#e0b23e" stopOpacity="0.9" />
+            <stop offset="85%" stopColor="#fbeccb" />
+            <stop offset="100%" stopColor="#e0b23e" stopOpacity="0" />
           </linearGradient>
           <radialGradient id="flare">
-            <stop offset="0%" stopColor="#fff6dc" />
-            <stop offset="25%" stopColor="#ffc861" stopOpacity="0.9" />
-            <stop offset="100%" stopColor="#f5b544" stopOpacity="0" />
+            <stop offset="0%" stopColor="#fdf6e3" />
+            <stop offset="25%" stopColor="#e9bf55" stopOpacity="0.9" />
+            <stop offset="100%" stopColor="#e0b23e" stopOpacity="0" />
           </radialGradient>
           <radialGradient id="glow" cx="0.72" cy="0.62">
-            <stop offset="0%" stopColor="#f5b544" stopOpacity="0.35" />
-            <stop offset="100%" stopColor="#f5b544" stopOpacity="0" />
+            <stop offset="0%" stopColor="#e0b23e" stopOpacity="0.35" />
+            <stop offset="100%" stopColor="#e0b23e" stopOpacity="0" />
           </radialGradient>
         </defs>
         <circle className="eclipse-glow" cx="100" cy="100" r="98" fill="url(#glow)" />
@@ -237,18 +237,18 @@ function LumenMark({ className }: { className?: string }) {
     <svg viewBox="0 0 200 200" className={className} aria-hidden="true">
       <defs>
         <linearGradient id="markRing" x1="0" y1="1" x2="1" y2="0">
-          <stop offset="0%" stopColor="#c68118" stopOpacity="0.15" />
-          <stop offset="45%" stopColor="#d99220" />
-          <stop offset="100%" stopColor="#ffd77a" />
+          <stop offset="0%" stopColor="#b07d17" stopOpacity="0.15" />
+          <stop offset="45%" stopColor="#c9971f" />
+          <stop offset="100%" stopColor="#f5deaa" />
         </linearGradient>
         <radialGradient id="markFlare">
-          <stop offset="0%" stopColor="#fff6dc" />
-          <stop offset="35%" stopColor="#ffc861" stopOpacity="0.85" />
-          <stop offset="100%" stopColor="#f5b544" stopOpacity="0" />
+          <stop offset="0%" stopColor="#fdf6e3" />
+          <stop offset="35%" stopColor="#e9bf55" stopOpacity="0.85" />
+          <stop offset="100%" stopColor="#e0b23e" stopOpacity="0" />
         </radialGradient>
       </defs>
       <circle cx="100" cy="100" r="74" fill="none" stroke="url(#markRing)" strokeWidth="11" />
-      <rect x="6" y="126" width="188" height="5" rx="2.5" fill="#f5b544" opacity="0.85" />
+      <rect x="6" y="126" width="188" height="5" rx="2.5" fill="#e0b23e" opacity="0.85" />
       <circle cx="170" cy="128" r="22" fill="url(#markFlare)" />
     </svg>
   );
@@ -266,9 +266,9 @@ function ProductPreview() {
       <div className="preview-frame overflow-hidden rounded-2xl text-left">
         {/* window chrome */}
         <div className="flex items-center gap-2 border-b border-[var(--line)] px-4 py-3">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]/70" />
-          <span className="h-2.5 w-2.5 rounded-full bg-[#febc2e]/70" />
-          <span className="h-2.5 w-2.5 rounded-full bg-[#28c840]/70" />
+          <span className="h-2.5 w-2.5 rounded-full bg-[#7586a3]/70" />
+          <span className="h-2.5 w-2.5 rounded-full bg-[#e0b23e]/70" />
+          <span className="h-2.5 w-2.5 rounded-full bg-[#7aa2d6]/70" />
           <span className="ml-4 hidden rounded-md bg-white/5 px-3 py-1 text-[11px] text-[var(--text-3)] sm:inline">
             www.lumenhrms.work
           </span>
@@ -290,7 +290,7 @@ function ProductPreview() {
                 <div
                   key={label as string}
                   className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] ${
-                    active ? 'bg-[rgba(245,181,68,0.12)] text-[var(--gold-hi)]' : 'text-[var(--text-3)]'
+                    active ? 'bg-[rgba(224,178,62,0.12)] text-[var(--gold-hi)]' : 'text-[var(--text-3)]'
                   }`}
                 >
                   <I className="h-4 w-4" /> {label as string}
@@ -306,8 +306,8 @@ function ProductPreview() {
                 <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--text-3)]">Good morning</p>
                 <p className="mt-1 text-lg font-semibold">Asha Rao</p>
               </div>
-              <span className="flex items-center gap-2 rounded-full bg-emerald-400/10 px-3 py-1 text-[11px] text-emerald-300">
-                <span className="live-dot h-1.5 w-1.5 rounded-full bg-emerald-400" /> Clocked in 09:12
+              <span className="flex items-center gap-2 rounded-full bg-[#4fbf8c]/10 px-3 py-1 text-[11px] text-[#4fbf8c]">
+                <span className="live-dot h-1.5 w-1.5 rounded-full bg-[#4fbf8c]" /> Clocked in 09:12
               </span>
             </div>
 
@@ -316,9 +316,9 @@ function ProductPreview() {
               <div className="float-slow rounded-xl border border-[var(--line)] bg-white/[0.03] p-4">
                 <p className="text-[12px] text-[var(--text-3)]">Leave balance</p>
                 {[
-                  ['Casual', '8 / 12', '66%', '1.2s', '#f5b544'],
-                  ['Sick', '6 / 8', '75%', '1.35s', '#60a5fa'],
-                  ['Earned', '14 / 18', '78%', '1.5s', '#34d399'],
+                  ['Casual', '8 / 12', '66%', '1.2s', '#e0b23e'],
+                  ['Sick', '6 / 8', '75%', '1.35s', '#7aa2d6'],
+                  ['Earned', '14 / 18', '78%', '1.5s', '#4fbf8c'],
                 ].map(([name, val, pct, d, color]) => (
                   <div key={name} className="mt-3">
                     <div className="flex justify-between text-[12px]">
@@ -347,7 +347,7 @@ function ProductPreview() {
                       cy="35"
                       r="28"
                       fill="none"
-                      stroke="#f5b544"
+                      stroke="#e0b23e"
                       strokeWidth="5"
                       strokeLinecap="round"
                     />
@@ -371,7 +371,7 @@ function ProductPreview() {
                       <p className="truncate text-[13px] font-medium">{who}</p>
                       <p className="truncate text-[11px] text-[var(--text-3)]">{what}</p>
                     </div>
-                    <span className="shrink-0 rounded-md bg-[rgba(245,181,68,0.14)] px-2 py-1 text-[11px] font-medium text-[var(--gold-hi)]">
+                    <span className="shrink-0 rounded-md bg-[rgba(224,178,62,0.14)] px-2 py-1 text-[11px] font-medium text-[var(--gold-hi)]">
                       Approve
                     </span>
                   </div>
@@ -383,8 +383,8 @@ function ProductPreview() {
       </div>
 
       {/* floating toast */}
-      <div className="toast-pop absolute -bottom-12 right-4 hidden items-center sm:flex gap-3 rounded-xl border border-emerald-400/20 bg-[#0b2a2a]/95 px-4 py-3 text-left shadow-2xl sm:right-10">
-        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-400/15 text-emerald-300">
+      <div className="toast-pop absolute -bottom-12 right-4 hidden items-center sm:flex gap-3 rounded-xl border border-[#4fbf8c]/20 bg-[#07122a]/95 px-4 py-3 text-left shadow-2xl sm:right-10">
+        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#4fbf8c]/15 text-[#4fbf8c]">
           <Check className="h-4 w-4" />
         </span>
         <div>
@@ -526,7 +526,7 @@ function LeaveFlow() {
                 className="flow-step relative flex flex-col items-center text-center"
                 style={{ '--delay': `${i * 160}ms` } as React.CSSProperties}
               >
-                <span className="flow-node relative z-10 flex h-14 w-14 items-center justify-center rounded-full border border-[rgba(245,181,68,0.35)] bg-[var(--ink-2)] text-[var(--gold-hi)]">
+                <span className="flow-node relative z-10 flex h-14 w-14 items-center justify-center rounded-full border border-[rgba(224,178,62,0.35)] bg-[var(--ink-2)] text-[var(--gold-hi)]">
                   <Icon className="h-6 w-6" />
                 </span>
                 <span className="mt-4 text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--text-3)]">
@@ -695,7 +695,7 @@ function Roadmap() {
             <div
               key={title}
               data-reveal
-              className="rounded-2xl border border-dashed border-[rgba(245,247,249,0.14)] p-6"
+              className="rounded-2xl border border-dashed border-[rgba(243,245,250,0.14)] p-6"
               style={{ '--delay': `${i * 100}ms` } as React.CSSProperties}
             >
               <div className="flex items-center justify-between">
@@ -848,7 +848,7 @@ function Contact() {
               </label>
 
               {status === 'error' && error && (
-                <p className="sm:col-span-2 text-sm text-[#ff9b9b]">{error}</p>
+                <p className="sm:col-span-2 text-sm text-[#ea7168]">{error}</p>
               )}
 
               <div className="sm:col-span-2">

@@ -1,5 +1,6 @@
 import { WorkspaceBanner } from '@/components/workspace-banner';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   Users,
@@ -86,6 +87,17 @@ export function AppLayout() {
   const { user, logout } = useAuth();
   const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const navRef = useRef<HTMLElement>(null);
+  // The glass "lens" that slides behind the active sidebar item.
+  const [lens, setLens] = useState<{ top: number; height: number } | null>(null);
+  const [lensAnimates, setLensAnimates] = useState(false);
+  // Set the instant a link is clicked so the lens (and highlight) move at once,
+  // instead of waiting for the next page to finish rendering.
+  // Tagged with the pathname it was set on, so it lapses on its own once the
+  // route actually changes (no reset effect needed).
+  const [pending, setPending] = useState<{ to: string; at: string } | null>(null);
+  const pendingTo = pending && pending.at === pathname ? pending.to : null;
 
   async function handleLogout() {
     await logout();
@@ -93,10 +105,34 @@ export function AppLayout() {
   }
 
   const nav = NAV.filter((item) => !item.roles || (user && item.roles.includes(user.role)));
+  const navKey = nav.map((n) => n.to).join('|');
+
+  // Park the lens on the active link; re-measure when the route, the item list
+  // or the sidebar's size changes. Slide animation is switched on only after the
+  // first placement so it doesn't fly in from the top on page load.
+  useLayoutEffect(() => {
+    const el = navRef.current;
+    if (!el) return;
+    const place = () => {
+      const active = el.querySelector<HTMLElement>('a[aria-current="page"]');
+      setLens(active ? { top: active.offsetTop, height: active.offsetHeight } : null);
+    };
+    place();
+    const ro = new ResizeObserver(place);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [pathname, navKey]);
+
+  useEffect(() => {
+    if (lens && !lensAnimates) {
+      const id = requestAnimationFrame(() => setLensAnimates(true));
+      return () => cancelAnimationFrame(id);
+    }
+  }, [lens, lensAnimates]);
 
   return (
-    <div className="flex min-h-screen bg-background text-foreground">
-      <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-card">
+    <div className="flex min-h-screen text-foreground">
+      <aside className="glass flex w-60 shrink-0 flex-col rounded-none border-y-0 border-l-0">
         <div className="flex items-center gap-2 px-5 py-5">
           <img src={lumenMarkDark} alt="" className="brand-mark-light h-7 w-7 shrink-0 object-contain" />
           <img src={lumenMarkWhite} alt="" className="brand-mark-dark h-7 w-7 shrink-0 object-contain" />
@@ -104,23 +140,38 @@ export function AppLayout() {
             Lumen <span className="text-muted-foreground">HRMS</span>
           </span>
         </div>
-        <nav className="flex flex-1 flex-col gap-1 px-3">
+        <nav ref={navRef} className="relative flex flex-1 flex-col gap-1 px-3">
+          <span
+            aria-hidden
+            className={cn('nav-lens', lensAnimates && 'nav-lens-animated')}
+            style={{
+              opacity: lens ? 1 : 0,
+              height: lens?.height ?? 0,
+              transform: `translateY(${lens?.top ?? 0}px)`,
+            }}
+          />
           {nav.map(({ to, label, icon: Icon, end }) => (
             <NavLink
               key={to}
               to={to}
               end={end}
+              onClick={(e) => {
+                setPending({ to, at: pathname });
+                setLens({ top: e.currentTarget.offsetTop, height: e.currentTarget.offsetHeight });
+              }}
               className={({ isActive }) =>
                 cn(
-                  'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                  isActive
-                    ? 'bg-secondary text-secondary-foreground'
-                    : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                  'nav-item relative z-10 flex items-center rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                  (pendingTo ? pendingTo === to : isActive)
+                    ? 'nav-item-active'
+                    : 'text-muted-foreground hover:text-foreground',
                 )
               }
             >
-              <Icon className="h-4 w-4" />
-              {label}
+              <span className="nav-item-inner flex items-center gap-2.5">
+                <Icon className="h-4 w-4" />
+                {label}
+              </span>
             </NavLink>
           ))}
         </nav>

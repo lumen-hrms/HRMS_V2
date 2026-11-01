@@ -751,7 +751,7 @@ export function HolidaysStep({
 const blankType = (): DraftLeaveType => ({
   name: '',
   code: '',
-  colorToken: '#2b5a8c',
+  colorToken: '#2a5da0',
   annualQuota: 12,
   carryForwardCap: 0,
   minNoticeDays: 0,

@@ -47,7 +47,7 @@ export function DropdownMenu({
           role="menu"
           onClick={() => setOpen(false)}
           className={cn(
-            'absolute z-50 mt-1 min-w-40 rounded-md border border-border bg-card p-1 shadow-lg',
+            'absolute z-50 mt-1 min-w-40 glass-strong rounded-lg p-1',
             align === 'end' ? 'right-0' : 'left-0',
             className,
           )}

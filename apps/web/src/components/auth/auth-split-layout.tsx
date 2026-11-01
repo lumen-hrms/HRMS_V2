@@ -24,7 +24,7 @@ export function AuthSplitLayout({
       <div
         data-brand-panel
         className="relative isolate flex w-[45%] max-md:w-full flex-col justify-center overflow-hidden px-12 py-14 max-md:px-6 max-md:py-9"
-        style={{ background: '#020E19' }}
+        style={{ background: '#030810' }}
       >
         {/* Ambient motion — slow-drifting aurora blobs + a fine dot grid. */}
         <span aria-hidden="true" className="brand-aurora brand-aurora--gold" />
@@ -33,15 +33,15 @@ export function AuthSplitLayout({
 
         <div
           className="brand-hairline pointer-events-none absolute inset-x-0 top-[18%] h-px"
-          style={{ background: '#F5B544' }}
+          style={{ background: '#e0b23e' }}
         />
         <div
           className="brand-hairline pointer-events-none absolute inset-x-0 top-[52%] h-px"
-          style={{ background: '#F5B544', animationDelay: '-4s' }}
+          style={{ background: '#e0b23e', animationDelay: '-4s' }}
         />
         <div
           className="brand-hairline pointer-events-none absolute inset-x-0 top-[82%] h-px"
-          style={{ background: '#F5B544', animationDelay: '-8s' }}
+          style={{ background: '#e0b23e', animationDelay: '-8s' }}
         />
 
         <div className="brand-in relative z-[2] mb-12 flex flex-col items-start gap-5">
@@ -56,13 +56,13 @@ export function AuthSplitLayout({
           <div className="flex flex-col">
             <span
               className="text-[34px] font-bold leading-none tracking-tight max-md:text-[28px]"
-              style={{ color: '#F5F7F9' }}
+              style={{ color: '#f3f5fa' }}
             >
               Lumen
             </span>
             <span
               className="mt-2.5 text-[11px] font-semibold uppercase"
-              style={{ color: '#8FA0AD', letterSpacing: '0.36em' }}
+              style={{ color: '#8fa0bb', letterSpacing: '0.36em' }}
             >
               Enterprise Suite
             </span>
@@ -71,7 +71,7 @@ export function AuthSplitLayout({
 
         <h2
           className="brand-in relative z-[2] mb-5 max-w-[360px] text-[26px] font-bold leading-[1.3]"
-          style={{ color: '#F5F7F9', animationDelay: '80ms' }}
+          style={{ color: '#f3f5fa', animationDelay: '80ms' }}
         >
           Empower People. Build Tomorrow.
         </h2>
@@ -79,7 +79,7 @@ export function AuthSplitLayout({
           <p
             key={line}
             className="brand-in relative z-[2] mb-2.5 max-w-[360px] text-[15px] leading-relaxed"
-            style={{ color: '#AAB7C2', animationDelay: `${140 + i * 60}ms` }}
+            style={{ color: '#b3bfd3', animationDelay: `${140 + i * 60}ms` }}
           >
             {line}
           </p>
@@ -88,7 +88,7 @@ export function AuthSplitLayout({
         {operatorBadge && (
           <div
             className="brand-in relative z-[2] mt-6 w-fit rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide"
-            style={{ background: 'rgba(245,181,68,0.12)', color: '#F5B544', animationDelay: '260ms' }}
+            style={{ background: 'rgba(224,178,62,0.12)', color: '#e0b23e', animationDelay: '260ms' }}
           >
             Operator access
           </div>
@@ -219,7 +219,7 @@ export function AuthSubmitButton({ loading, children }: { loading: boolean; chil
       className="mt-1.5 flex h-[46px] w-full items-center justify-center rounded-[9px] text-[15px] font-bold transition-[background,transform] duration-150 active:scale-[0.98] disabled:cursor-not-allowed"
       style={{
         background: loading ? 'var(--lumen-gold-light)' : 'var(--lumen-gold)',
-        color: '#07141F',
+        color: '#030812',
       }}
       onMouseEnter={(e) => {
         if (!loading) e.currentTarget.style.background = 'var(--lumen-gold-light)';
@@ -232,8 +232,8 @@ export function AuthSubmitButton({ loading, children }: { loading: boolean; chil
         <span
           className="h-[18px] w-[18px] rounded-full"
           style={{
-            border: '2.5px solid rgba(7,20,31,0.25)',
-            borderTopColor: '#07141F',
+            border: '2.5px solid rgba(3,8,18,0.25)',
+            borderTopColor: '#030812',
             animation: 'lumenSpin 700ms linear infinite',
           }}
         />

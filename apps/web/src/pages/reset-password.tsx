@@ -176,7 +176,7 @@ function BackToSignIn({ label, primary }: { label: string; primary?: boolean }) 
     <Link
       to="/login"
       className="mt-1.5 flex h-[46px] w-full items-center justify-center rounded-[9px] text-[15px] font-bold"
-      style={{ background: 'var(--lumen-gold)', color: '#07141F' }}
+      style={{ background: 'var(--lumen-gold)', color: '#030812' }}
     >
       {label}
     </Link>

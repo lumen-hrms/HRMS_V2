@@ -3,16 +3,16 @@
    decorative and switched off under prefers-reduced-motion (bottom). */
 
 .landing {
-  --ink: #020e19;
-  --ink-2: #071a2a;
-  --ink-3: #0c2436;
-  --gold: #f5b544;
-  --gold-hi: #ffd77a;
-  --gold-lo: #c68118;
-  --text: #f5f7f9;
-  --text-2: #a9b6c1;
-  --text-3: #6f8190;
-  --line: rgba(245, 247, 249, 0.08);
+  --ink: #030810;
+  --ink-2: #06112a;
+  --ink-3: #0a1a36;
+  --gold: #e0b23e;
+  --gold-hi: #f5deaa;
+  --gold-lo: #b07d17;
+  --text: #f3f5fa;
+  --text-2: #b3bfd3;
+  --text-3: #7586a3;
+  --line: rgba(243, 245, 250, 0.08);
   background: var(--ink);
   color: var(--text);
   overflow-x: clip;
@@ -36,7 +36,7 @@
 .landing-nav {
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-  background: rgba(2, 14, 25, 0.62);
+  background: rgba(3, 8, 16, 0.62);
   border-bottom: 1px solid var(--line);
 }
 
@@ -48,7 +48,7 @@
   color: #1b1204;
   box-shadow:
     0 0 0 1px rgba(255, 215, 122, 0.35) inset,
-    0 10px 30px -10px rgba(245, 181, 68, 0.55);
+    0 10px 30px -10px rgba(224, 178, 62, 0.55);
   transition:
     transform 200ms ease,
     box-shadow 200ms ease;
@@ -57,7 +57,7 @@
   transform: translateY(-1px);
   box-shadow:
     0 0 0 1px rgba(255, 215, 122, 0.5) inset,
-    0 14px 38px -10px rgba(245, 181, 68, 0.7);
+    0 14px 38px -10px rgba(224, 178, 62, 0.7);
 }
 .btn-gold::after {
   content: '';
@@ -78,15 +78,15 @@
   }
 }
 .btn-ghost {
-  border: 1px solid rgba(245, 247, 249, 0.16);
+  border: 1px solid rgba(243, 245, 250, 0.16);
   color: var(--text);
   transition:
     background 200ms ease,
     border-color 200ms ease;
 }
 .btn-ghost:hover {
-  background: rgba(245, 247, 249, 0.06);
-  border-color: rgba(245, 247, 249, 0.28);
+  background: rgba(243, 245, 250, 0.06);
+  border-color: rgba(243, 245, 250, 0.28);
 }
 
 /* ---- Hero eclipse ------------------------------------------------------ */
@@ -189,11 +189,11 @@
 /* ---- Product preview --------------------------------------------------- */
 .preview-frame {
   background: linear-gradient(180deg, rgba(12, 36, 54, 0.92), rgba(7, 26, 42, 0.96));
-  border: 1px solid rgba(245, 247, 249, 0.1);
+  border: 1px solid rgba(243, 245, 250, 0.1);
   box-shadow:
     0 40px 120px -30px rgba(0, 0, 0, 0.8),
-    0 0 0 1px rgba(245, 181, 68, 0.06),
-    0 0 90px -20px rgba(245, 181, 68, 0.18);
+    0 0 0 1px rgba(224, 178, 62, 0.06),
+    0 0 90px -20px rgba(224, 178, 62, 0.18);
   transform: perspective(1400px) rotateX(8deg);
   transform-origin: 50% 0%;
   transition: transform 900ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -301,7 +301,7 @@
   inset: -1px;
   border-radius: inherit;
   padding: 1px;
-  background: radial-gradient(260px circle at var(--mx, 50%) var(--my, 50%), rgba(245, 181, 68, 0.55), transparent 60%);
+  background: radial-gradient(260px circle at var(--mx, 50%) var(--my, 50%), rgba(224, 178, 62, 0.55), transparent 60%);
   -webkit-mask:
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
@@ -316,7 +316,7 @@
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: radial-gradient(380px circle at var(--mx, 50%) var(--my, 50%), rgba(245, 181, 68, 0.07), transparent 55%);
+  background: radial-gradient(380px circle at var(--mx, 50%) var(--my, 50%), rgba(224, 178, 62, 0.07), transparent 55%);
   opacity: 0;
   transition: opacity 300ms ease;
   pointer-events: none;
@@ -329,14 +329,14 @@
   opacity: 1;
 }
 .icon-chip {
-  background: linear-gradient(135deg, rgba(245, 181, 68, 0.18), rgba(245, 181, 68, 0.04));
-  border: 1px solid rgba(245, 181, 68, 0.25);
+  background: linear-gradient(135deg, rgba(224, 178, 62, 0.18), rgba(224, 178, 62, 0.04));
+  border: 1px solid rgba(224, 178, 62, 0.25);
   color: var(--gold-hi);
 }
 
 /* ---- Flow (leave request journey) -------------------------------------- */
 .flow-line {
-  background: linear-gradient(90deg, transparent, rgba(245, 181, 68, 0.5), transparent);
+  background: linear-gradient(90deg, transparent, rgba(224, 178, 62, 0.5), transparent);
   background-size: 200% 100%;
   animation: flowRun 3.2s linear infinite;
 }
@@ -354,10 +354,10 @@
 }
 @keyframes nodeLight {
   from {
-    box-shadow: 0 0 0 0 rgba(245, 181, 68, 0.5);
+    box-shadow: 0 0 0 0 rgba(224, 178, 62, 0.5);
   }
   to {
-    box-shadow: 0 0 0 14px rgba(245, 181, 68, 0);
+    box-shadow: 0 0 0 14px rgba(224, 178, 62, 0);
   }
 }
 
@@ -371,14 +371,14 @@
 }
 .cta-panel {
   background:
-    radial-gradient(600px circle at 50% 0%, rgba(245, 181, 68, 0.16), transparent 60%),
-    linear-gradient(180deg, rgba(12, 36, 54, 0.8), rgba(2, 14, 25, 0.9));
-  border: 1px solid rgba(245, 181, 68, 0.18);
+    radial-gradient(600px circle at 50% 0%, rgba(224, 178, 62, 0.16), transparent 60%),
+    linear-gradient(180deg, rgba(12, 36, 54, 0.8), rgba(3, 8, 16, 0.9));
+  border: 1px solid rgba(224, 178, 62, 0.18);
 }
 
 /* ---- Contact form -------------------------------------------------- */
 .form-field {
-  background: rgba(245, 247, 249, 0.04);
+  background: rgba(243, 245, 250, 0.04);
   border: 1px solid var(--line);
   color: var(--text);
   transition:
@@ -390,8 +390,8 @@
 }
 .form-field:focus {
   outline: none;
-  border-color: rgba(245, 181, 68, 0.5);
-  background: rgba(245, 247, 249, 0.06);
+  border-color: rgba(224, 178, 62, 0.5);
+  background: rgba(243, 245, 250, 0.06);
 }
 .form-field:disabled {
   opacity: 0.6;

@@ -29,7 +29,7 @@ export function Dialog({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
-        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+        className="absolute inset-0 bg-[#030812]/50 backdrop-blur-sm"
         onClick={() => onOpenChange(false)}
         aria-hidden="true"
       />
@@ -44,7 +44,7 @@ export function DialogContent({ className, ...props }: React.HTMLAttributes<HTML
       role="dialog"
       aria-modal="true"
       className={cn(
-        'relative z-10 w-full max-w-md rounded-lg border border-border bg-card p-6 text-card-foreground shadow-xl',
+        'glass-strong relative z-10 w-full max-w-md rounded-xl p-6 text-card-foreground',
         className,
       )}
       {...props}

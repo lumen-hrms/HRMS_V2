@@ -7,6 +7,7 @@ import { ROLE_LABELS } from '@/lib/roles';
 import { useLinkableLogins } from '@/pages/employees/linkable-logins';
 import { Button } from '@/components/ui/button';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
+import { Select } from '@/components/ui/select';
 import { Input, Label } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
@@ -150,8 +151,7 @@ export function EmployeeCreatePage() {
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label>Department</Label>
-                <select
-                  className="h-9 rounded-md border border-input bg-card px-2 text-sm"
+                <Select
                   value={form.departmentId}
                   onChange={(e) => set('departmentId', e.target.value)}
                 >
@@ -161,7 +161,7 @@ export function EmployeeCreatePage() {
                       {d.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label>Reporting manager</Label>
@@ -179,15 +179,14 @@ export function EmployeeCreatePage() {
             <hr className="my-1 border-border" />
             <div className="flex flex-col gap-1.5">
               <Label>Login</Label>
-              <select
-                className="h-9 rounded-md border border-input bg-card px-2 text-sm"
+              <Select
                 value={loginMode}
                 onChange={(e) => setLoginMode(e.target.value as LoginMode)}
               >
                 <option value="none">No login for now</option>
                 <option value="new">Create a new login</option>
                 <option value="link">Link an existing login</option>
-              </select>
+              </Select>
             </div>
 
             {loginMode === 'new' && (
@@ -204,8 +203,7 @@ export function EmployeeCreatePage() {
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <Label>Role</Label>
-                  <select
-                    className="h-9 rounded-md border border-input bg-card px-2 text-sm"
+                  <Select
                     value={form.loginRole}
                     onChange={(e) => set('loginRole', e.target.value)}
                   >
@@ -214,7 +212,7 @@ export function EmployeeCreatePage() {
                         {r.replace('_', ' ')}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               </>
             )}
@@ -229,8 +227,7 @@ export function EmployeeCreatePage() {
               ) : (
                 <div className="flex flex-col gap-1.5">
                   <Label>Existing login</Label>
-                  <select
-                    className="h-9 rounded-md border border-input bg-card px-2 text-sm"
+                  <Select
                     value={form.existingUserId}
                     onChange={(e) => set('existingUserId', e.target.value)}
                     disabled={linkableLogins === null}
@@ -243,7 +240,7 @@ export function EmployeeCreatePage() {
                         {u.id === user?.sub ? ' (you)' : ''}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                   <p className="text-xs text-muted-foreground">
                     Logins without an employee record. The login keeps its current role.
                   </p>
