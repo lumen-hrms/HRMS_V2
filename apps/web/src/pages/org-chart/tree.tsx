@@ -104,7 +104,7 @@ function Team({ node, h }: { node: OrgNode; h: TreeHandlers }) {
       <li>
         <div
           data-org-group={node.id}
-          className="flex items-start gap-3 rounded-2xl border border-dashed border-border bg-muted/30 p-2.5"
+          className="flex items-start gap-3 rounded-xl border border-dashed border-border bg-muted/30 p-2.5"
         >
           {columns.map((column, i) => (
             <div key={i} className="flex shrink-0 flex-col gap-3">

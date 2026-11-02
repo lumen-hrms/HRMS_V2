@@ -184,7 +184,7 @@ export function PersonHoverCard({
         {node.workEmail && (
           <a
             href={`mailto:${node.workEmail}`}
-            className="inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:opacity-90"
+            className="inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary px-3 text-xs font-medium text-primary-foreground hover:opacity-90"
           >
             <Mail className="h-3.5 w-3.5" /> Email
           </a>
@@ -192,7 +192,7 @@ export function PersonHoverCard({
         {node.phone && (
           <a
             href={`tel:${node.phone.replace(/\s+/g, '')}`}
-            className="inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md border border-border bg-card px-3 text-xs font-medium hover:bg-accent"
+            className="inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 text-xs font-medium hover:bg-accent"
           >
             <Phone className="h-3.5 w-3.5" /> Call
           </a>

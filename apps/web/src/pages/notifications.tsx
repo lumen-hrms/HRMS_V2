@@ -100,7 +100,7 @@ export function NotificationsPage() {
             type="button"
             onClick={() => setFilter(f)}
             className={cn(
-              'rounded-md border px-3 py-1.5 text-xs font-medium',
+              'rounded-xl border px-3 py-1.5 text-xs font-medium',
               filter === f ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-accent',
             )}
           >

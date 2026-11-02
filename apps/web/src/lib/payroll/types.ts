@@ -61,6 +61,7 @@ export interface ReviseStructureResult {
 }
 
 export interface PayrollSettings {
+  updatedAt?: string;
   minBasicPercent: string;
   epfCeiling: string;
   allowEpfAboveCeiling: boolean;
@@ -134,6 +135,7 @@ export interface RunException {
 export interface RunApproval {
   id?: string;
   approverId: string;
+  approverName?: string | null;
   approvedAt: string;
 }
 
@@ -146,6 +148,7 @@ export interface AdHocAdjustment {
 export interface PayrollLineItem {
   id: string;
   employeeId: string;
+  employee?: { name: string; employeeCode: string; designation: string | null; department: string | null } | null;
   calculationSnapshot: Record<string, unknown>;
   workingDays: number;
   payableDays: number;
@@ -160,6 +163,146 @@ export interface PayrollLineItem {
   adHocAdjustments: AdHocAdjustment[];
   netPay: string;
   payslipFileKey: string | null;
+}
+
+export interface PayrollRunSummary {
+  id: string;
+  period: string;
+  status: PayrollRunStatus;
+  isReprocess: boolean;
+  createdAt: string;
+  preparedByName: string | null;
+  approvalCount: number;
+  lineItemCount: number;
+  exceptionCount: number;
+  netTotal: string;
+  grossTotal: string;
+  employerCost: string;
+}
+
+export interface RunSummary {
+  run: {
+    id: string;
+    period: string;
+    status: PayrollRunStatus;
+    isReprocess: boolean;
+    reprocessReason: string | null;
+    preparedBy: string;
+    preparedByName: string | null;
+    exceptions: RunException[];
+    createdAt: string;
+    processedAt: string | null;
+    disbursedAt: string | null;
+  };
+  approvals: Array<{ approverId: string; approverName: string | null; approvedAt: string }>;
+  totals: {
+    headcount: number;
+    gross: string;
+    net: string;
+    deductions: string;
+    employerCost: string;
+    epfEmployee: string;
+    esiEmployee: string;
+    professionalTax: string;
+    tds: string;
+    employerContributions: string;
+    adjustedCount: number;
+  };
+  previous: { period: string; headcount: number; gross: string; net: string; employerCost: string } | null;
+  departments: Array<{ name: string; headcount: number; net: string }>;
+}
+
+export interface LineItemRow {
+  id: string;
+  employeeId: string;
+  employee: { name: string; employeeCode: string; designation: string | null; department: string | null } | null;
+  workingDays: number;
+  payableDays: number;
+  lopDays: number;
+  grossEarnings: string;
+  epfEmployee: string;
+  esiEmployee: string;
+  professionalTax: string;
+  tdsDeducted: string;
+  netPay: string;
+  hasAdjustments: boolean;
+  exceptionTypes: string[];
+  previousNet: string | null;
+  changePct: number | null;
+  payslipReady: boolean;
+}
+
+export interface LineItemPage {
+  total: number;
+  page: number;
+  pageSize: number;
+  filteredNet: string;
+  departments: string[];
+  items: LineItemRow[];
+}
+
+export interface LineItemQuery {
+  search?: string;
+  department?: string;
+  hasException?: boolean;
+  adjustedOnly?: boolean;
+  changedOver?: number;
+  sort?: 'name' | 'net' | 'gross' | 'change';
+  dir?: 'asc' | 'desc';
+  page?: number;
+  pageSize?: number;
+}
+
+export interface SnapshotEarning {
+  type: string;
+  code: string;
+  fullMonthlyAmount: number;
+  proratedAmount: number;
+}
+
+export interface LineItemDetail extends PayrollLineItem {
+  previousNet: string | null;
+  exceptions: RunException[];
+  calculationSnapshot: {
+    earnings?: SnapshotEarning[];
+    grossEarnings?: number;
+    lopDeduction?: number;
+    overtimePay?: number;
+    totalDeductions?: number;
+    payableFactor?: number;
+  } & Record<string, unknown>;
+}
+
+export interface ReadinessGroup {
+  type: string;
+  label: string;
+  help: string;
+  count: number;
+  employees: Array<{ id: string; name: string; employeeCode: string }>;
+}
+
+export interface Readiness {
+  period: string;
+  eligibleCount: number;
+  blockers: ReadinessGroup[];
+  warnings: ReadinessGroup[];
+  pendingRegularizations: number;
+  existingRun: { id: string; status: PayrollRunStatus } | null;
+}
+
+export interface PayrollPerson {
+  id: string;
+  name: string;
+  employeeCode: string;
+  designation: string | null;
+  department: string | null;
+  lifecycleState: string;
+  workState: string | null;
+  ctcAnnual: string | null;
+  structureEffectiveFrom: string | null;
+  hasStructure: boolean;
+  hasBank: boolean;
+  hasDob: boolean;
 }
 
 export interface PayrollRun {

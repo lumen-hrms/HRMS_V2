@@ -59,7 +59,7 @@ export function HolidaysTab({ canManage }: { canManage: boolean }) {
           <div className="flex gap-2">
             <Link
               to="/leave/holidays/import"
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-3 text-sm font-medium hover:bg-accent"
+              className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-border px-3 text-sm font-medium hover:bg-accent"
             >
               <Upload className="h-4 w-4" /> Import
             </Link>

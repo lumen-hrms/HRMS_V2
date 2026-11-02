@@ -67,7 +67,7 @@ const TONE_CLASS = {
 function ToastCard({ item, onClose }: { item: ToastItem; onClose: () => void }) {
   const Icon = TONE_ICON[item.tone];
   return (
-    <div className="pointer-events-auto flex items-start gap-3 glass-strong rounded-lg p-3">
+    <div className="pointer-events-auto flex items-start gap-3 glass-strong rounded-xl p-3">
       <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', TONE_CLASS[item.tone])} />
       <div className="flex-1">
         <p className="text-sm font-medium">{item.title}</p>
@@ -77,7 +77,7 @@ function ToastCard({ item, onClose }: { item: ToastItem; onClose: () => void }) 
       </div>
       <button
         onClick={onClose}
-        className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+        className="rounded-xl p-0.5 text-muted-foreground hover:text-foreground"
         aria-label="Dismiss"
       >
         <X className="h-3.5 w-3.5" />

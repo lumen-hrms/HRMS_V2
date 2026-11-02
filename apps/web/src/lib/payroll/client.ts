@@ -11,6 +11,13 @@ import type {
   BankFileResult,
   FullAndFinalSettlement,
   PayrollRun,
+  PayrollRunSummary,
+  PayrollPerson,
+  Readiness,
+  RunSummary,
+  LineItemPage,
+  LineItemQuery,
+  LineItemDetail,
   PayrollSettings,
   PayslipUrl,
   PtSlab,
@@ -125,6 +132,31 @@ export function setTdsRegime(employeeId: string, financialYear: string, regime: 
 export function createRun(input: { period: string; isReprocess?: boolean; reprocessReason?: string }) {
   return api.post<PayrollRun>('/payroll/runs', input);
 }
+export function listRuns() {
+  return api.get<PayrollRunSummary[]>('/payroll/runs');
+}
+export function getReadiness(period: string) {
+  return api.get<Readiness>(`/payroll/readiness?period=${period}`);
+}
+export function getRunSummary(id: string) {
+  return api.get<RunSummary>(`/payroll/runs/${id}/summary`);
+}
+export function listLineItems(id: string, q: LineItemQuery) {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(q)) {
+    if (v !== undefined && v !== '' && v !== false) params.set(k, String(v));
+  }
+  return api.get<LineItemPage>(`/payroll/runs/${id}/line-items?${params}`);
+}
+export function getLineItemDetail(id: string, employeeId: string) {
+  return api.get<LineItemDetail>(`/payroll/runs/${id}/line-items/${employeeId}`);
+}
+export function listPeople() {
+  return api.get<PayrollPerson[]>('/payroll/people');
+}
+export function bulkSetWorkState(employeeIds: string[], workState: string) {
+  return api.post<{ updated: number }>('/payroll/people/work-state', { employeeIds, workState });
+}
 export function getRun(id: string) {
   return api.get<PayrollRun>(`/payroll/runs/${id}`);
 }
@@ -176,25 +208,4 @@ export function approveFnf(employeeId: string) {
 }
 export function markFnfPaid(employeeId: string) {
   return api.post<FullAndFinalSettlement>(`/payroll/fnf/${employeeId}/mark-paid`);
-}
-
-/** Recently created/opened run ids this browser knows about — there is no
- *  `GET /payroll/runs` list endpoint yet (module 07 §9, still a `TODO(api)`
- *  gap even after Phase 8), so the Run tab keeps a small local memory of
- *  ids instead of inventing a server list. Purely a client-side convenience;
- *  never treated as a source of truth. */
-const RECENT_RUNS_KEY = 'hrms.payroll.recentRuns';
-
-export function rememberRun(id: string, period: string) {
-  const list = recentRuns().filter((r) => r.id !== id);
-  list.unshift({ id, period });
-  localStorage.setItem(RECENT_RUNS_KEY, JSON.stringify(list.slice(0, 12)));
-}
-
-export function recentRuns(): Array<{ id: string; period: string }> {
-  try {
-    return JSON.parse(localStorage.getItem(RECENT_RUNS_KEY) ?? '[]');
-  } catch {
-    return [];
-  }
 }

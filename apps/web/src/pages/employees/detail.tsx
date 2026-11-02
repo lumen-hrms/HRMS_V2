@@ -1,12 +1,13 @@
 import * as React from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Upload, Download, ArrowRightLeft, Eye, KeyRound, Mail, Pencil, Plus, RefreshCw, Trash2, UserPlus } from 'lucide-react';
+import { ArrowLeft, CalendarDays, Phone, Upload, Download, ArrowRightLeft, Eye, KeyRound, Mail, Pencil, Plus, RefreshCw, Trash2, UserPlus } from 'lucide-react';
 import { api, getAccessToken, getTenantSubdomain, isApiError } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader } from '@/components/ui/dialog';
 import { Field } from '@/components/ui/field';
+import { PhoneInput } from '@/components/ui/phone-input';
 import { Select } from '@/components/ui/select';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { Input } from '@/components/ui/input';
@@ -260,7 +261,7 @@ export function EmployeeDetailPage() {
   const initials = `${employee.firstName[0] ?? ''}${employee.lastName[0] ?? ''}`.toUpperCase();
 
   return (
-    <div className="flex max-w-4xl flex-col gap-5">
+    <div className="flex w-full flex-col gap-5">
       <Link
         to="/employees"
         className="-mb-2 inline-flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
@@ -308,6 +309,23 @@ export function EmployeeDetailPage() {
               {employee.employeeCode} · {employee.designation ?? 'No designation set'}
               {employee.department?.name ? ` · ${employee.department.name}` : ''}
             </p>
+            <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
+              {employee.personalEmail && (
+                <span className="inline-flex items-center gap-1.5">
+                  <Mail className="h-3.5 w-3.5" /> {employee.personalEmail}
+                </span>
+              )}
+              {employee.phone && (
+                <span className="inline-flex items-center gap-1.5">
+                  <Phone className="h-3.5 w-3.5" /> {employee.phone}
+                </span>
+              )}
+              {employee.dateOfJoining && (
+                <span className="inline-flex items-center gap-1.5">
+                  <CalendarDays className="h-3.5 w-3.5" /> Joined {fmtDate(employee.dateOfJoining)}
+                </span>
+              )}
+            </div>
           </div>
         </div>
         {canManage && (
@@ -360,7 +378,7 @@ export function EmployeeDetailPage() {
                 </Button>
               )}
             </CardHeader>
-            <CardContent className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+            <CardContent className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
               <Row label="Email" value={employee.personalEmail ?? '—'} />
               {canManage && employee.userId && (
                 <Row
@@ -382,7 +400,8 @@ export function EmployeeDetailPage() {
         </TabsContent>
 
         <TabsContent value="employment">
-          <Card>
+          <div className="grid gap-4 xl:grid-cols-3 xl:items-start">
+          <Card className="xl:col-span-2">
             <CardHeader className="flex-row items-center justify-between">
               <CardTitle>Employment</CardTitle>
               {canManage && (
@@ -391,7 +410,7 @@ export function EmployeeDetailPage() {
                 </Button>
               )}
             </CardHeader>
-            <CardContent className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+            <CardContent className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
               <Row label="Department" value={employee.department?.name ?? '—'} />
               <Row
                 label="Reporting manager"
@@ -409,6 +428,7 @@ export function EmployeeDetailPage() {
             </CardContent>
           </Card>
           <LifecycleTimeline employee={employee} />
+          </div>
         </TabsContent>
 
         <TabsContent value="statutory">
@@ -421,7 +441,7 @@ export function EmployeeDetailPage() {
                 </Button>
               )}
             </CardHeader>
-            <CardContent className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+            <CardContent className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
               <MaskedRow
                 employeeId={employee.id}
                 label="PAN"
@@ -448,7 +468,7 @@ export function EmployeeDetailPage() {
                 </Button>
               )}
             </CardHeader>
-            <CardContent className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+            <CardContent className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
               <Row label="Account holder" value={employee.bankAccountHolderName ?? '—'} />
               <MaskedRow
                 employeeId={employee.id}
@@ -474,16 +494,16 @@ export function EmployeeDetailPage() {
                 </Button>
               )}
             </CardHeader>
-            <CardContent className="flex flex-col gap-2">
+            <CardContent className="grid grid-cols-1 gap-3 lg:grid-cols-2">
               {contacts.length === 0 && (
-                <p className="text-sm text-muted-foreground">No emergency contacts on file.</p>
+                <p className="text-sm text-muted-foreground lg:col-span-2">No emergency contacts on file.</p>
               )}
               {contacts.map((c) => (
                 <div
                   key={c.id}
-                  className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm"
+                  className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-secondary/40 px-4 py-3 text-sm"
                 >
-                  <div className="flex flex-col">
+                  <div className="flex min-w-0 flex-col">
                     <span className="font-medium">
                       {c.name} {c.isPrimary && <Badge variant="success">Primary</Badge>}
                     </span>
@@ -526,7 +546,7 @@ export function EmployeeDetailPage() {
                   onChange={handleUpload}
                   disabled={uploading}
                 />
-                <span className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-accent">
+                <span className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-border px-3 py-1.5 text-xs font-medium hover:bg-accent">
                   <Upload className="h-3.5 w-3.5" /> {uploading ? 'Uploading…' : 'Upload'}
                 </span>
               </label>
@@ -537,7 +557,7 @@ export function EmployeeDetailPage() {
               {docs.map((d) => (
                 <div
                   key={d.id}
-                  className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-sm"
+                  className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2 text-sm"
                 >
                   <div className="flex flex-1 items-center gap-2 min-w-0">
                     <span className="truncate">{d.label}</span>
@@ -580,7 +600,7 @@ export function EmployeeDetailPage() {
         </TabsContent>
 
         <TabsContent value="reporting">
-          <div className="flex flex-col gap-4">
+          <div className="grid gap-4 md:grid-cols-2 md:items-start">
             <Card>
               <CardHeader>
                 <CardTitle>Reporting manager</CardTitle>
@@ -720,9 +740,9 @@ export function EmployeeDetailPage() {
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-medium">{value}</span>
+    <div className="flex min-w-0 flex-col gap-1 rounded-xl border border-border/60 bg-secondary/40 px-4 py-3">
+      <span className="text-xs uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className="break-words font-medium">{value}</span>
     </div>
   );
 }
@@ -755,7 +775,7 @@ function LifecycleTimeline({ employee }: { employee: EmployeeDetail }) {
   if (milestones.length === 0) return null;
 
   return (
-    <Card className="mt-4">
+    <Card>
       <CardHeader>
         <CardTitle>Lifecycle history</CardTitle>
       </CardHeader>
@@ -818,9 +838,9 @@ function MaskedRow({
   }
 
   return (
-    <div className="flex items-center justify-between">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="flex items-center gap-1.5 font-medium">
+    <div className="flex min-w-0 flex-col gap-1 rounded-xl border border-border/60 bg-secondary/40 px-4 py-3">
+      <span className="text-xs uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className="flex items-center gap-1.5 break-all font-medium">
         {revealed ?? masked ?? '—'}
         {canReveal && masked && !revealed && (
           <button
@@ -975,12 +995,12 @@ function ProfileFieldsDialog({
 
   return (
     <Dialog open onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-2xl">
         <DialogHeader
           title={selfEditOnly ? 'Edit my contact details' : 'Edit personal & employment details'}
           onClose={() => onOpenChange(false)}
         />
-        <div className="grid max-h-[60vh] grid-cols-2 gap-3 overflow-y-auto pr-1">
+        <div className="grid max-h-[65vh] grid-cols-1 gap-x-5 gap-y-4 overflow-y-auto pr-1 sm:grid-cols-2">
           {!selfEditOnly && (
             <Field
               label="Email"
@@ -990,7 +1010,7 @@ function ProfileFieldsDialog({
             </Field>
           )}
           <Field label="Phone">
-            <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <PhoneInput value={phone} onChange={setPhone} />
           </Field>
           <Field label="Gender">
             <Select value={gender} onChange={(e) => setGender(e.target.value)}>
@@ -1027,14 +1047,14 @@ function ProfileFieldsDialog({
                   ))}
                 </Select>
               </Field>
-              <Field label="Designation" className="col-span-2">
+              <Field label="Designation" className="sm:col-span-2">
                 <Input
                   value={designation}
                   onChange={(e) => setDesignation(e.target.value)}
                   placeholder="e.g. Fan Engagement Executive"
                 />
               </Field>
-              <Field label="Department" className="col-span-2">
+              <Field label="Department" className="sm:col-span-2">
                 <Select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
                   {!departmentId && <option value="">—</option>}
                   {/* Keep the current department selectable even before the list loads. */}
@@ -1050,7 +1070,7 @@ function ProfileFieldsDialog({
                   ))}
                 </Select>
               </Field>
-              <Field label="Reporting manager" className="col-span-2">
+              <Field label="Reporting manager" className="sm:col-span-2">
                 <Combobox
                   value={managerId}
                   onChange={setManagerId}
@@ -1060,7 +1080,7 @@ function ProfileFieldsDialog({
                   searchPlaceholder="Search by name, title or department…"
                 />
               </Field>
-              <Field label="Work location" className="col-span-2">
+              <Field label="Work location" className="sm:col-span-2">
                 <Input value={workLocation} onChange={(e) => setWorkLocation(e.target.value)} />
               </Field>
               <Field label="Annual CTC (₹)">
@@ -1074,7 +1094,7 @@ function ProfileFieldsDialog({
               <Field label="Pay grade">
                 <Input value={payGrade} onChange={(e) => setPayGrade(e.target.value)} />
               </Field>
-              <Field label="Cost center" className="col-span-2">
+              <Field label="Cost center" className="sm:col-span-2">
                 <Input value={costCenter} onChange={(e) => setCostCenter(e.target.value)} />
               </Field>
             </>
@@ -1285,10 +1305,10 @@ function ContactDialog({
             <Input value={relationship} onChange={(e) => setRelationship(e.target.value)} />
           </Field>
           <Field label="Phone" required>
-            <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <PhoneInput value={phone} onChange={setPhone} />
           </Field>
           <Field label="Alternate phone">
-            <Input value={altPhone} onChange={(e) => setAltPhone(e.target.value)} />
+            <PhoneInput value={altPhone} onChange={setAltPhone} />
           </Field>
           <Field label="Address">
             <Textarea value={address} onChange={(e) => setAddress(e.target.value)} rows={2} />
@@ -1408,7 +1428,7 @@ function LifecycleDialog({
               </Field>
             )}
             {employee.userId && targetState === 'SEPARATED' && (
-              <p className="rounded-md bg-warning/10 px-3 py-2 text-xs text-warning">
+              <p className="rounded-xl bg-warning/10 px-3 py-2 text-xs text-warning">
                 This will disable the employee's login.
               </p>
             )}

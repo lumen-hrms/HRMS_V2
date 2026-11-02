@@ -79,9 +79,10 @@ function activeEmployee(id: string, over: Record<string, unknown> = {}) {
 
 function buildService(overrides: Record<string, any> = {}) {
   const client = {
-    user: { count: jest.fn().mockResolvedValue(2) },
+    user: { count: jest.fn().mockResolvedValue(2), findMany: jest.fn().mockResolvedValue([]) },
     payrollRun: {
       findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
       findUnique: jest.fn(),
       create: jest.fn((args: any) => ({ id: args.data.id, ...args.data })),
       update: jest.fn((args: any) => ({ id: args.where.id, ...args.data })),
@@ -93,6 +94,7 @@ function buildService(overrides: Record<string, any> = {}) {
     payrollLineItem: {
       createMany: jest.fn().mockResolvedValue({ count: 0 }),
       findMany: jest.fn().mockResolvedValue([]),
+      groupBy: jest.fn().mockResolvedValue([]),
       findUnique: jest.fn(),
       update: jest.fn((args: any) => ({ id: args.where.id, ...args.data })),
     },
@@ -765,6 +767,35 @@ describe('PayrollRunService.getRun', () => {
     expect(result.lineItems[0].netPay).toBeDefined();
   });
 
+  it('resolves employee name/designation/department and approver names', async () => {
+    const { service, client } = buildService();
+    client.payrollRun.findUnique.mockResolvedValue({
+      ...runRow,
+      lineItems: [{ id: 'li-1', employeeId: 'emp-1', netPay: new Prisma.Decimal(40000) }],
+    });
+    client.employee.findMany.mockResolvedValue([
+      {
+        id: 'emp-1',
+        employeeCode: 'E-001',
+        firstName: 'Asha',
+        lastName: 'Rao',
+        designation: 'Nurse',
+        department: { name: 'Clinical' },
+      },
+    ]);
+    client.user.findMany.mockResolvedValue([
+      { id: 'admin-1', email: 'a@x.com', employee: { firstName: 'Ani', lastName: 'G' } },
+    ]);
+    const result: any = await service.getRun('run-1', admin);
+    expect(result.lineItems[0].employee).toEqual({
+      name: 'Asha Rao',
+      employeeCode: 'E-001',
+      designation: 'Nurse',
+      department: 'Clinical',
+    });
+    expect(result.approvals[0].approverName).toBe('Ani G');
+  });
+
   it('gives the Auditor a reduced view with no per-employee amounts (decision 9)', async () => {
     const { service, client } = buildService();
     client.payrollRun.findUnique.mockResolvedValue(runRow);
@@ -785,6 +816,50 @@ describe('PayrollRunService.getRun', () => {
     const { service, client } = buildService();
     client.payrollRun.findUnique.mockResolvedValue(null);
     await expect(service.getRun('nope', admin)).rejects.toThrow(NotFoundException);
+  });
+});
+
+describe('PayrollRunService.listRuns', () => {
+  it("lists every run in the tenant (not just the caller's) with approval counts", async () => {
+    const { service, client } = buildService();
+    client.payrollRun.findMany.mockResolvedValue([
+      {
+        id: 'r1',
+        period: '2026-09',
+        status: 'REVIEW',
+        isReprocess: false,
+        createdAt: new Date(),
+        preparedBy: 'u1',
+        exceptions: [{ type: 'NO_WORK_STATE' }],
+        _count: { approvals: 1, lineItems: 4 },
+      },
+    ]);
+    client.payrollLineItem.groupBy.mockResolvedValue([
+      {
+        runId: 'r1',
+        _sum: {
+          grossEarnings: new Prisma.Decimal(1000),
+          netPay: new Prisma.Decimal(800),
+          epfEmployer: new Prisma.Decimal(100),
+          esiEmployer: new Prisma.Decimal(50),
+        },
+      },
+    ]);
+    client.user.findMany.mockResolvedValue([
+      { id: 'u1', email: 'a@x.com', employee: { firstName: 'Ani', lastName: 'G' } },
+    ]);
+    const result = await service.listRuns();
+    expect(client.payrollRun.findMany.mock.calls[0][0].where).toBeUndefined();
+    expect(result[0]).toMatchObject({
+      id: 'r1',
+      approvalCount: 1,
+      lineItemCount: 4,
+      exceptionCount: 1,
+      preparedByName: 'Ani G',
+      netTotal: '800.00',
+      grossTotal: '1000.00',
+      employerCost: '1150.00',
+    });
   });
 });
 

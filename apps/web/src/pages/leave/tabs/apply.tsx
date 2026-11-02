@@ -271,7 +271,7 @@ export function ApplyTab({ onApplied }: { onApplied: () => void }) {
           </Field>
 
           {preview && (
-            <div className="rounded-md border border-border bg-muted/50 p-3 text-sm">
+            <div className="rounded-xl border border-border bg-muted/50 p-3 text-sm">
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">Duration</span>
                 <span className="font-medium">{dayLabel(preview.days)}</span>
@@ -294,7 +294,7 @@ export function ApplyTab({ onApplied }: { onApplied: () => void }) {
                 <span className="font-medium">{preview.firstApprover ?? '—'}</span>
               </div>
               {preview.isLop && (
-                <p className="mt-2 flex items-start gap-1.5 rounded bg-warning/10 p-2 text-xs text-warning">
+                <p className="mt-2 flex items-start gap-1.5 rounded-xl bg-warning/10 p-2 text-xs text-warning">
                   <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                   {dayLabel(preview.lopDays)} will be Loss of Pay — you can still submit, but those
                   days won’t be paid.
@@ -304,7 +304,7 @@ export function ApplyTab({ onApplied }: { onApplied: () => void }) {
           )}
 
           {isEvent && eventAllowance && (
-            <div className="rounded-md border border-border bg-muted/50 p-3 text-sm">
+            <div className="rounded-xl border border-border bg-muted/50 p-3 text-sm">
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">Allowance for a new event</span>
                 <span className="font-medium">
@@ -320,12 +320,12 @@ export function ApplyTab({ onApplied }: { onApplied: () => void }) {
                 </span>
               </div>
               {eventAllowance.genderMissing && (
-                <p className="mt-2 rounded bg-warning/10 p-2 text-xs text-warning">
+                <p className="mt-2 rounded-xl bg-warning/10 p-2 text-xs text-warning">
                   Your profile has no gender set, so this request will be refused — ask HR to update it.
                 </p>
               )}
               {eventAllowance.esiCovered && (
-                <p className="mt-2 rounded bg-muted p-2 text-xs text-muted-foreground">
+                <p className="mt-2 rounded-xl bg-muted p-2 text-xs text-muted-foreground">
                   You’re covered by ESI, so the maternity benefit for this leave is usually paid by ESIC rather
                   than through payroll.
                 </p>

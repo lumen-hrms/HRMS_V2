@@ -98,7 +98,7 @@ export function SuspendDialog({
         ) : (
           <>
             {suspending ? (
-              <div className="mb-4 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+              <div className="mb-4 rounded-xl bg-destructive/10 p-3 text-sm text-destructive">
                 <strong className="font-semibold">High-impact.</strong> All{' '}
                 <strong className="font-semibold">{tenant.employeeCount}</strong> user
                 {tenant.employeeCount === 1 ? '' : 's'} of {tenant.name} lose access immediately, on

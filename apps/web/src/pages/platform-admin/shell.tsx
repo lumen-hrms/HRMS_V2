@@ -53,7 +53,7 @@ export function PlatformShell() {
               end={item.end}
               className={({ isActive }) =>
                 cn(
-                  'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                  'flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium transition-colors',
                   isActive
                     ? 'bg-secondary text-foreground'
                     : 'text-muted-foreground hover:bg-accent hover:text-foreground',
@@ -73,7 +73,7 @@ export function PlatformShell() {
                 key={t}
                 onClick={() => setTheme(t)}
                 className={cn(
-                  'flex flex-1 items-center justify-center rounded-md py-1.5 text-xs capitalize transition-colors',
+                  'flex flex-1 items-center justify-center rounded-xl py-1.5 text-xs capitalize transition-colors',
                   theme === t ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:bg-accent',
                 )}
               >
@@ -86,7 +86,7 @@ export function PlatformShell() {
           </div>
           <button
             onClick={logout}
-            className="flex items-center gap-2 rounded-md px-1 py-1.5 text-xs text-muted-foreground hover:text-destructive"
+            className="flex items-center gap-2 rounded-xl px-1 py-1.5 text-xs text-muted-foreground hover:text-destructive"
           >
             <LogOut className="h-3.5 w-3.5" /> Log out
           </button>
@@ -103,7 +103,7 @@ export function PlatformShell() {
           </div>
           <DropdownMenu
             trigger={
-              <span className="inline-flex items-center gap-2 rounded-md px-2 py-1 text-sm hover:bg-accent">
+              <span className="inline-flex items-center gap-2 rounded-xl px-2 py-1 text-sm hover:bg-accent">
                 <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
                   {admin.email[0]?.toUpperCase()}
                 </span>

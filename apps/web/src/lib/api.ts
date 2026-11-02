@@ -36,7 +36,16 @@ export class ApiError extends Error {
   status: number;
   body: any;
   constructor(status: number, body: any) {
-    super(body?.message ?? `Request failed with status ${status}`);
+    // Nest validation errors arrive as an array of messages; show the first one
+    // rather than dumping them all as one huge comma-joined string.
+    const m = body?.message;
+    super(
+      Array.isArray(m)
+        ? m.length > 1
+          ? `${m[0]} (+${m.length - 1} more)`
+          : String(m[0] ?? `Request failed with status ${status}`)
+        : (m ?? `Request failed with status ${status}`),
+    );
     this.status = status;
     this.body = body;
   }

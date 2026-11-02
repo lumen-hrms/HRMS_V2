@@ -1008,6 +1008,119 @@ export class PayrollRunService {
     if (!MANAGE_ROLES.includes(user.role)) {
       throw new ForbiddenException('Not authorized to view payroll runs');
     }
-    return run;
+
+    // Resolve employee ids to something a human can read, and approver ids to names.
+    const lineItems = run.lineItems ?? [];
+    const approvals = run.approvals ?? [];
+    const [employees, approvers] = await Promise.all([
+      this.tenantPrisma.client.employee.findMany({
+        where: { id: { in: lineItems.map((li) => li.employeeId) } },
+        select: {
+          id: true,
+          employeeCode: true,
+          firstName: true,
+          lastName: true,
+          designation: true,
+          department: { select: { name: true } },
+        },
+      }),
+      this.tenantPrisma.client.user.findMany({
+        where: { id: { in: approvals.map((a) => a.approverId) } },
+        select: {
+          id: true,
+          email: true,
+          employee: { select: { firstName: true, lastName: true } },
+        },
+      }),
+    ]);
+    const empById = new Map(employees.map((e) => [e.id, e]));
+    const approverById = new Map(approvers.map((u) => [u.id, u]));
+    return {
+      ...run,
+      approvals: approvals.map((a) => {
+        const u = approverById.get(a.approverId);
+        return {
+          ...a,
+          approverName: u
+            ? u.employee
+              ? `${u.employee.firstName} ${u.employee.lastName}`
+              : u.email
+            : null,
+        };
+      }),
+      lineItems: lineItems.map((li) => {
+        const e = empById.get(li.employeeId);
+        return {
+          ...li,
+          employee: e
+            ? {
+                name: `${e.firstName} ${e.lastName}`,
+                employeeCode: e.employeeCode,
+                designation: e.designation,
+                department: e.department?.name ?? null,
+              }
+            : null,
+        };
+      }),
+    };
+  }
+
+  /** Newest first. Shared by every admin, so a run one admin creates is visible to the second approver. */
+  async listRuns() {
+    const runs = await this.tenantPrisma.client.payrollRun.findMany({
+      orderBy: [{ period: 'desc' }, { createdAt: 'desc' }],
+      take: 100,
+      select: {
+        id: true,
+        period: true,
+        status: true,
+        isReprocess: true,
+        createdAt: true,
+        preparedBy: true,
+        exceptions: true,
+        _count: { select: { approvals: true, lineItems: true } },
+      },
+    });
+    const ids = runs.map((r) => r.id);
+    const [totals, preparers] = await Promise.all([
+      this.tenantPrisma.client.payrollLineItem.groupBy({
+        by: ['runId'],
+        where: { runId: { in: ids } },
+        _sum: { grossEarnings: true, netPay: true, epfEmployer: true, esiEmployer: true },
+      }),
+      this.tenantPrisma.client.user.findMany({
+        where: { id: { in: [...new Set(runs.map((r) => r.preparedBy))] } },
+        select: {
+          id: true,
+          email: true,
+          employee: { select: { firstName: true, lastName: true } },
+        },
+      }),
+    ]);
+    const totalsByRun = new Map(totals.map((t) => [t.runId, t._sum]));
+    const preparerName = new Map(
+      preparers.map((u) => [
+        u.id,
+        u.employee ? `${u.employee.firstName} ${u.employee.lastName}` : u.email,
+      ]),
+    );
+    const zero = new Prisma.Decimal(0);
+    return runs.map(({ _count, exceptions, ...r }) => {
+      const t = totalsByRun.get(r.id);
+      const gross = t?.grossEarnings ?? zero;
+      return {
+        ...r,
+        preparedByName: preparerName.get(r.preparedBy) ?? null,
+        approvalCount: _count.approvals,
+        lineItemCount: _count.lineItems,
+        exceptionCount: Array.isArray(exceptions) ? exceptions.length : 0,
+        netTotal: (t?.netPay ?? zero).toFixed(2),
+        grossTotal: gross.toFixed(2),
+        employerCost: gross
+          .plus(t?.epfEmployer ?? zero)
+          .plus(t?.esiEmployer ?? zero)
+          .toFixed(2),
+      };
+    });
   }
 }

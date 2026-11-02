@@ -25,7 +25,7 @@ export function TooltipBox({
   return (
     <div
       role="tooltip"
-      className="pointer-events-none absolute z-10 min-w-[8rem] max-w-[16rem] rounded-md border border-border bg-card px-2.5 py-1.5 text-xs shadow-md"
+      className="pointer-events-none absolute z-10 min-w-[8rem] max-w-[16rem] rounded-xl border border-border bg-card px-2.5 py-1.5 text-xs shadow-md"
       style={{ left: clamp(x, half, Math.max(half, containerWidth - half)), top: y, transform: 'translate(-50%, calc(-100% - 10px))' }}
     >
       <p className="mb-1 text-muted-foreground">{content.title}</p>

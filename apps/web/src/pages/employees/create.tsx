@@ -219,7 +219,7 @@ export function EmployeeCreatePage() {
 
             {loginMode === 'link' &&
               (linkableLogins?.length === 0 ? (
-                <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+                <p className="rounded-xl bg-muted px-3 py-2 text-sm text-muted-foreground">
                   Every login in this workspace is already linked to an employee — including yours, if company
                   setup created your profile. To give this person a login, choose <strong>Create a new login</strong>{' '}
                   instead.

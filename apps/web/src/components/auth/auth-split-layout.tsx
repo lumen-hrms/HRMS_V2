@@ -184,7 +184,7 @@ export function AuthField({
           aria-describedby={error ? errId : undefined}
           onChange={(e) => onChange(e.target.value)}
           onBlur={onBlur}
-          className="lumen-auth-input w-full rounded-lg px-3.5 py-2.5 text-[15px] outline-none transition-[border-color,box-shadow] duration-150"
+          className="lumen-auth-input w-full rounded-xl px-3.5 py-2.5 text-[15px] outline-none transition-[border-color,box-shadow] duration-150"
           style={{
             background: 'var(--lumen-surface)',
             color: 'var(--lumen-text)',
@@ -216,7 +216,7 @@ export function AuthSubmitButton({ loading, children }: { loading: boolean; chil
     <button
       type="submit"
       disabled={loading}
-      className="mt-1.5 flex h-[46px] w-full items-center justify-center rounded-[9px] text-[15px] font-bold transition-[background,transform] duration-150 active:scale-[0.98] disabled:cursor-not-allowed"
+      className="mt-1.5 flex h-[46px] w-full items-center justify-center rounded-xl text-[15px] font-bold transition-[background,transform] duration-150 active:scale-[0.98] disabled:cursor-not-allowed"
       style={{
         background: loading ? 'var(--lumen-gold-light)' : 'var(--lumen-gold)',
         color: '#030812',

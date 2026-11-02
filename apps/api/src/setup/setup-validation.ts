@@ -1,4 +1,5 @@
 import { IndianState } from '@prisma/client';
+import { phoneError } from '../common/phone';
 import { companyProfileErrors } from '../tenant-config/company-profile';
 import { holidayKey, validateHolidays } from '../leave/holiday-import';
 import { leaveYearWindow, utcDay, daysBetween } from '../leave/leave-entitlement';
@@ -52,11 +53,20 @@ type Adder = (
   level?: SetupIssue['level'],
 ) => (message: string, field?: string) => void;
 
+const EMPLOYEE_CODE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,19}$/;
+const PERSON_NAME = /^\p{L}[\p{L} .'’-]{0,49}$/u;
+const NAME_MESSAGE = (which: string) =>
+  `${which} name must be up to 50 letters (spaces, . ’ - allowed)`;
+const DEPARTMENT_CODE = /^[A-Za-z0-9_-]{1,10}$/;
+
 function validateCompany(draft: SetupDraft, ctx: ConfigValidationContext, add: Adder) {
   const err = add('company');
+  const gstinMissing = !String(draft.company?.gstin ?? '').trim();
   for (const [field, message] of Object.entries(companyProfileErrors(draft.company ?? {}))) {
+    if (field === 'gstin' && gstinMissing) continue; // reported below as "required"
     err(message, field);
   }
+  if (gstinMissing) err('GSTIN is required', 'gstin');
   const goLive = draft.goLiveDate ? parseImportDate(draft.goLiveDate) : null;
   if (!goLive) {
     err('Go-live date is required', 'goLiveDate');
@@ -64,6 +74,9 @@ function validateCompany(draft: SetupDraft, ctx: ConfigValidationContext, add: A
   }
   const today = utcDay(ctx.today);
   const goLiveDay = new Date(goLive);
+  if (goLiveDay < new Date('2000-01-01T00:00:00Z')) {
+    err('Go-live date looks wrong — check the year', 'goLiveDate');
+  }
   if (daysBetween(today, goLiveDay) > MAX_GO_LIVE_AHEAD_DAYS) {
     err(`Go-live can be at most ${MAX_GO_LIVE_AHEAD_DAYS} days from today`, 'goLiveDate');
   }
@@ -101,6 +114,8 @@ function validateProfile(draft: SetupDraft, ctx: ConfigValidationContext, add: A
     );
     return;
   }
+  const phoneProblem = p.phone?.trim() ? phoneError(p.phone) : undefined;
+  if (phoneProblem) err(phoneProblem, 'phone');
   if (!p.employeeCode?.trim()) err('Employee code is required', 'employeeCode');
   else if (ctx.otherEmployeeCodes.has(p.employeeCode.trim())) {
     err(
@@ -108,12 +123,28 @@ function validateProfile(draft: SetupDraft, ctx: ConfigValidationContext, add: A
       'employeeCode',
     );
   }
+  if (p.employeeCode?.trim() && !EMPLOYEE_CODE.test(p.employeeCode.trim())) {
+    err(
+      'Employee code can use letters, digits and . _ / - only (up to 20 characters)',
+      'employeeCode',
+    );
+  }
   if (!p.firstName?.trim()) err('First name is required', 'firstName');
+  else if (!PERSON_NAME.test(p.firstName.trim())) err(NAME_MESSAGE('First'), 'firstName');
   if (!p.lastName?.trim()) err('Last name is required', 'lastName');
+  else if (!PERSON_NAME.test(p.lastName.trim())) err(NAME_MESSAGE('Last'), 'lastName');
+  if ((p.designation ?? '').trim().length > 100) {
+    err('Designation can be at most 100 characters', 'designation');
+  }
+  if (p.gender && !['Male', 'Female', 'Other'].includes(p.gender)) {
+    err('Pick a gender from the list', 'gender');
+  }
   if (!p.dateOfJoining || !parseImportDate(p.dateOfJoining)) {
     err('Date of joining is required', 'dateOfJoining');
   } else if (new Date(parseImportDate(p.dateOfJoining)!) > utcDay(ctx.today)) {
     err('Date of joining can’t be in the future for your own profile', 'dateOfJoining');
+  } else if (new Date(parseImportDate(p.dateOfJoining)!) < new Date('1950-01-01T00:00:00Z')) {
+    err('Date of joining looks wrong — check the year', 'dateOfJoining');
   }
   const departments = new Set((draft.departments ?? []).map((d) => d.name.trim().toLowerCase()));
   if (!p.departmentName?.trim()) err('Department is required', 'departmentName');
@@ -128,15 +159,30 @@ function validateDepartments(draft: SetupDraft, add: Adder) {
   const list = draft.departments ?? [];
   if (list.length === 0) err('Add at least one department');
   const seen = new Set<string>();
+  const seenCodes = new Set<string>();
   list.forEach((d, i) => {
     const name = d.name?.trim();
     if (!name) {
       err('Department name is required', `departments[${i}].name`);
       return;
     }
+    if (name.length > 100)
+      err('Department name can be at most 100 characters', `departments[${i}].name`);
     const k = name.toLowerCase();
     if (seen.has(k)) err(`"${name}" is listed twice`, `departments[${i}].name`);
     seen.add(k);
+    const code = d.code?.trim();
+    if (code) {
+      if (!DEPARTMENT_CODE.test(code)) {
+        err(
+          'Department code can use letters, digits, _ and - only (up to 10)',
+          `departments[${i}].code`,
+        );
+      } else if (seenCodes.has(code.toUpperCase())) {
+        err(`Code ${code} is used twice`, `departments[${i}].code`);
+      }
+      seenCodes.add(code.toUpperCase());
+    }
   });
 }
 
@@ -167,6 +213,7 @@ function validateWorkWeek(draft: SetupDraft, add: Adder) {
     const f = (k: string) => `shifts[${i}].${k}`;
     const label = s.name?.trim() || `Shift ${i + 1}`;
     if (!s.name?.trim()) err('Shift name is required', f('name'));
+    else if (s.name.trim().length > 60) err('Shift name can be at most 60 characters', f('name'));
     else if (names.has(s.name.trim().toLowerCase())) err(`"${label}" is listed twice`, f('name'));
     names.add(s.name?.trim().toLowerCase());
     if (!['FIXED', 'FLEXI', 'ROTATIONAL'].includes(s.type))
@@ -196,8 +243,13 @@ function validateWorkWeek(draft: SetupDraft, add: Adder) {
       }
     }
     if (s.type === 'FLEXI') {
-      if (!HHMM.test(s.coreStartTime ?? '') || !HHMM.test(s.coreEndTime ?? '')) {
-        err(`${label}: a flexi shift needs core hours (HH:MM)`, f('coreStartTime'));
+      const startOk = HHMM.test(s.coreStartTime ?? '');
+      const endOk = HHMM.test(s.coreEndTime ?? '');
+      if (!startOk)
+        err(`${label}: a flexi shift needs core start time (HH:MM)`, f('coreStartTime'));
+      if (!endOk) err(`${label}: a flexi shift needs core end time (HH:MM)`, f('coreEndTime'));
+      if (startOk && endOk && s.coreStartTime! >= s.coreEndTime!) {
+        err(`${label}: core hours must start before they end`, f('coreEndTime'));
       }
     }
   });
@@ -277,6 +329,16 @@ function validateHolidayStep(
       ...(i.date ? { field: i.date } : {}),
     });
   }
+  for (const h of holidays) {
+    if (h.name.trim().length > 100) {
+      issues.push({
+        step: 'holidays',
+        level: 'error',
+        message: `Holiday name "${h.name.trim().slice(0, 20)}…" is longer than 100 characters`,
+        field: h.date,
+      });
+    }
+  }
   if (holidays.length === 0) {
     issues.push({
       step: 'holidays',
@@ -324,6 +386,8 @@ function validateLeavePolicy(draft: SetupDraft, ctx: ConfigValidationContext, ad
     const f = (k: string) => `types[${i}].${k}`;
     const label = t.name?.trim() || `Leave type ${i + 1}`;
     if (!t.name?.trim()) err('Leave type name is required', f('name'));
+    else if (t.name.trim().length > 60)
+      err('Leave type name can be at most 60 characters', f('name'));
     else if (names.has(t.name.trim().toLowerCase())) err(`"${label}" is listed twice`, f('name'));
     names.add(t.name?.trim().toLowerCase());
     const code = t.code?.trim().toUpperCase();

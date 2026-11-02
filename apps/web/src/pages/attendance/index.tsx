@@ -393,7 +393,7 @@ function StatCard({
       <CardContent className="pt-5">
         <div className="mb-3 flex items-center justify-between">
           <span className="text-sm text-muted-foreground">{label}</span>
-          <span className={cn('flex h-7 w-7 items-center justify-center rounded-md', toneClasses)}>
+          <span className={cn('flex h-7 w-7 items-center justify-center rounded-xl', toneClasses)}>
             <CalendarDays className="h-3.5 w-3.5" />
           </span>
         </div>
@@ -448,14 +448,14 @@ function CalendarCard({
         <div className="flex items-center gap-3">
           <button
             onClick={() => setMonth(new Date(year, monthIdx - 1, 1))}
-            className="rounded p-1 hover:bg-accent"
+            className="rounded-xl p-1 hover:bg-accent"
             aria-label="Previous month"
           >
             ‹
           </button>
           <button
             onClick={() => setMonth(new Date(year, monthIdx + 1, 1))}
-            className="rounded p-1 hover:bg-accent"
+            className="rounded-xl p-1 hover:bg-accent"
             aria-label="Next month"
           >
             ›
@@ -491,7 +491,7 @@ function CalendarCard({
               disabled={!rec}
               onClick={() => rec && onSelect(rec)}
               className={cn(
-                'flex aspect-square flex-col items-center justify-center gap-0.5 rounded-md text-sm transition-colors',
+                'flex aspect-square flex-col items-center justify-center gap-0.5 rounded-xl text-sm transition-colors',
                 isSelected
                   ? 'bg-lumen-navy text-white'
                   : isToday
@@ -557,7 +557,7 @@ function DetailsPanel({ record }: { record: AttendanceRecordRow | null }) {
           value={record.checkOutAt ? fmtTime(record.checkOutAt) : 'In Progress'}
           sub={record.checkOutAt ? undefined : 'Est. —'}
         />
-        <div className="flex items-center justify-between rounded-md bg-lumen-surface-2 px-3 py-2.5 text-sm">
+        <div className="flex items-center justify-between rounded-xl bg-lumen-surface-2 px-3 py-2.5 text-sm">
           <span className="flex items-center gap-2 text-muted-foreground">
             <Coffee className="h-4 w-4" /> Effective Duration
           </span>
@@ -587,7 +587,7 @@ function DetailRow({
   sub?: string;
 }) {
   return (
-    <div className="flex items-center justify-between rounded-md bg-lumen-surface-2 px-3 py-2.5 text-sm">
+    <div className="flex items-center justify-between rounded-xl bg-lumen-surface-2 px-3 py-2.5 text-sm">
       <span className="flex items-center gap-2 text-muted-foreground">
         {icon} {label}
       </span>
@@ -713,7 +713,7 @@ function RegularizationDialog({
           <div className="flex flex-col gap-1.5">
             <Label>Note / Justification</Label>
             <textarea
-              className="min-h-20 rounded-md border border-input bg-card px-2 py-1.5 text-sm"
+              className="min-h-20 rounded-xl border border-input bg-card px-2 py-1.5 text-sm"
               value={form.note}
               onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
             />

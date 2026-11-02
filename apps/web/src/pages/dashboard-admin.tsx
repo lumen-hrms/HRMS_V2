@@ -493,7 +493,7 @@ function AttentionLink({ to, text }: { to: string; text: string }) {
   return (
     <Link
       to={to}
-      className="flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+      className="flex items-center justify-between rounded-xl px-2 py-1.5 text-sm hover:bg-accent"
     >
       <span>{text}</span>
       <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground" />
@@ -544,7 +544,7 @@ function Upcoming({
 function UpcomingRow({ when, text, sub }: { when: string; text: string; sub?: string }) {
   return (
     <div className="flex items-center gap-3 text-sm">
-      <span className="w-14 shrink-0 rounded-md bg-muted px-1.5 py-1 text-center text-xs font-medium tabular-nums">{when}</span>
+      <span className="w-14 shrink-0 rounded-xl bg-muted px-1.5 py-1 text-center text-xs font-medium tabular-nums">{when}</span>
       <div className="min-w-0 flex-1">
         <p className="truncate">{text}</p>
         {sub && <p className="truncate text-xs text-muted-foreground">{sub}</p>}

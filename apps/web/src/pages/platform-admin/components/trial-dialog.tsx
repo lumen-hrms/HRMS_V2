@@ -130,7 +130,7 @@ export function TrialDialog({
                     type="button"
                     onClick={() => setPlan(k)}
                     className={cn(
-                      'rounded-lg border p-2 text-xs font-medium transition-colors',
+                      'rounded-xl border p-2 text-xs font-medium transition-colors',
                       k === plan
                         ? 'border-primary bg-accent ring-1 ring-primary'
                         : 'border-border hover:bg-accent',
@@ -141,7 +141,7 @@ export function TrialDialog({
                 ))}
               </div>
             </div>
-            <div className="mb-4 rounded-lg bg-muted/40 p-3 text-xs text-muted-foreground">
+            <div className="mb-4 rounded-xl bg-muted/40 p-3 text-xs text-muted-foreground">
               Confirm payment was received outside the app first. This ends the trial, makes the
               tenant Active and starts a one-year term. A different plan from the current one is
               applied the same way as <strong>Change plan</strong>.

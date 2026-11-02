@@ -100,7 +100,7 @@ export function ChangePlanDialog({
                       type="button"
                       onClick={() => setNext(p.key)}
                       className={cn(
-                        'rounded-lg border p-2 text-xs font-medium transition-colors',
+                        'rounded-xl border p-2 text-xs font-medium transition-colors',
                         p.key === next
                           ? 'border-primary bg-accent ring-1 ring-primary'
                           : 'border-border hover:bg-accent',
@@ -113,7 +113,7 @@ export function ChangePlanDialog({
             </div>
 
             {changed && from && to && (
-              <div className="mb-4 rounded-lg border border-border bg-muted/40 p-3 text-xs">
+              <div className="mb-4 rounded-xl border border-border bg-muted/40 p-3 text-xs">
                 <div className="flex items-center gap-2 font-medium text-foreground">
                   {from.name} <ArrowRight className="h-3 w-3" /> {to.name}
                 </div>
@@ -134,7 +134,7 @@ export function ChangePlanDialog({
             )}
 
             {changed && to && (
-              <div className="mb-4 rounded-lg bg-muted/40 p-3 text-xs text-muted-foreground">
+              <div className="mb-4 rounded-xl bg-muted/40 p-3 text-xs text-muted-foreground">
                 Resets the per-seat rate to {to.name}’s list price (
                 {inr(to.listPricePerSeat, to.currency)}). Any negotiated rate is dropped — re-set it
                 afterwards with <strong>Adjust pricing</strong>.
@@ -142,13 +142,13 @@ export function ChangePlanDialog({
             )}
 
             {overSeat && changed && (
-              <div className="mb-4 rounded-lg bg-warning/10 p-3 text-xs text-warning">
+              <div className="mb-4 rounded-xl bg-warning/10 p-3 text-xs text-warning">
                 {tenant.employeeCount} employees exceed the new {to?.seatsIncluded}-seat limit —
                 existing data is kept, new logins may be blocked.
               </div>
             )}
             {removed.length > 0 && changed && (
-              <div className="mb-4 rounded-lg bg-warning/10 p-3 text-xs text-warning">
+              <div className="mb-4 rounded-xl bg-warning/10 p-3 text-xs text-warning">
                 Removes in-use module{removed.length > 1 ? 's' : ''}:{' '}
                 {removed.map(moduleLabel).join(', ')}. Those modules stop resolving for the tenant.
               </div>

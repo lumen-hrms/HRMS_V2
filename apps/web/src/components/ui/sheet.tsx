@@ -45,7 +45,7 @@ export function Sheet({
         role="dialog"
         aria-modal="true"
         className={cn(
-          'glass-strong absolute right-0 top-0 flex h-full w-full max-w-md flex-col',
+          'glass-strong absolute right-0 top-0 flex h-full w-full max-w-md flex-col rounded-l-xl',
           className,
         )}
       >

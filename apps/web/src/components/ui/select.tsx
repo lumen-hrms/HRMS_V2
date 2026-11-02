@@ -232,7 +232,7 @@ export const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
           onClick={() => (open ? close() : show())}
           onKeyDown={onKeyDown}
           className={cn(
-            'flex h-9 w-full items-center gap-2 rounded-md border border-input bg-card/60 px-3 py-1 text-left text-sm text-foreground shadow-sm transition-colors hover:border-primary/40 focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50',
+            'flex h-9 w-full items-center gap-2 rounded-xl border border-input bg-card/60 px-3 py-1 text-left text-sm text-foreground shadow-sm transition-colors hover:border-primary/40 focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50',
             open && 'border-ring ring-2 ring-ring/40',
             className,
           )}
@@ -267,7 +267,7 @@ export const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
               tabIndex={-1}
               onKeyDown={onKeyDown}
               style={{ position: 'fixed', ...pos, maxHeight: PANEL_MAX_H }}
-              className="z-[60] glass-strong overflow-y-auto rounded-lg p-1 text-card-foreground outline-none"
+              className="z-[60] glass-strong overflow-y-auto rounded-xl p-1 text-card-foreground outline-none"
             >
               {options.map((o, i) => {
                 const isSelected = i === selectedIndex;
@@ -281,7 +281,7 @@ export const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
                     onMouseMove={() => !o.disabled && setActive(i)}
                     onClick={() => pick(o)}
                     className={cn(
-                      'flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-sm',
+                      'flex cursor-pointer items-center gap-2 rounded-xl px-2.5 py-1.5 text-sm',
                       i === active && 'bg-accent text-accent-foreground',
                       isSelected && 'font-medium',
                       o.disabled && 'cursor-not-allowed opacity-50',

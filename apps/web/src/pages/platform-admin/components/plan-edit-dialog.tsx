@@ -189,7 +189,7 @@ export function PlanEditDialog({
             </div>
           </div>
 
-          <p className="rounded-lg bg-muted/50 p-2.5 text-xs text-muted-foreground">
+          <p className="rounded-xl bg-muted/50 p-2.5 text-xs text-muted-foreground">
             Saving updates the catalog only. Tenants already on {plan.name} keep their current
             terms until their next <strong>renewal</strong> (or an explicit plan change).
           </p>

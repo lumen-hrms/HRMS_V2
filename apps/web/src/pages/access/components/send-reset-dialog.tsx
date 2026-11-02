@@ -59,7 +59,7 @@ export function SendResetDialog({
           onClose={() => onOpenChange(false)}
         />
         <div className="flex flex-col gap-4">
-          <div className="flex items-start gap-2 rounded-md bg-accent px-3 py-2 text-xs text-muted-foreground">
+          <div className="flex items-start gap-2 rounded-xl bg-accent px-3 py-2 text-xs text-muted-foreground">
             <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>
               Sends Firebase’s hosted reset email to <span className="font-medium text-foreground">{user.email}</span>.

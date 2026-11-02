@@ -21,8 +21,25 @@
 > spec draft that is no longer maintained — ignore them; this file and the
 > code are the source of truth.)
 >
-> **Last synced to code:** 2026-10-31. Landed since the previous sync
+> **Last synced to code:** 2026-11-02. Landed since the previous sync
 > (dated 2026-10-29):
+>
+> - **Payroll: screens redesigned (module 07 stays ✅ 100%).** The Payroll page
+>   is now Overview · Runs · People & Pay · Settings (+ My Pay), with the tab
+>   and open run in the URL (`?tab=runs&run=<id>`) so a run can be shared with
+>   the second approver. A run is a stepper (Draft → Review → Approved →
+>   Processed → Disbursed) with a "next step" panel, named approvers, a
+>   pre-run **readiness check** (who'd be left out: no work state/structure;
+>   warnings: no DOB/bank, pending regularizations), totals + month-on-month
+>   change, and a paginated/searchable/filterable per-employee table with a
+>   breakdown drawer. People & Pay merges salary structures, import and Full
+>   & Final with bulk "set work state". Settings is regrouped (statutory,
+>   overtime, F&F, PT, TDS), each group saved on its own with inline range
+>   errors. New API: `GET /payroll/runs` (now with totals), `GET
+>   /payroll/readiness`, `GET /payroll/runs/:id/summary`, `GET
+>   /payroll/runs/:id/line-items[/:employeeId]`, `GET /payroll/people`, `POST
+>   /payroll/people/work-state` (`PayrollInsightsService`). Auditors see run
+>   totals and approvals only, and no People & Pay tab (no per-employee pay).
 >
 > - **Attendance + Dashboard: "Today's attendance" is now a ring.** Time
 >   worked (large, in the middle), time on breaks, and time left to the

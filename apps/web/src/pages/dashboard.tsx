@@ -94,12 +94,22 @@ export function DashboardPage() {
     load();
   }, [load]);
 
+  // After an action (clock in/out, approve…) refresh the numbers in place — no skeleton, so the page doesn't flash.
+  const refresh = React.useCallback(
+    () =>
+      api
+        .get<DashboardData>('/dashboard')
+        .then(setData)
+        .catch(() => undefined),
+    [],
+  );
+
   const runAction = React.useCallback(
     async (key: string, fn: () => Promise<unknown>) => {
       setBusy(key);
       try {
         await fn();
-        await load();
+        await refresh();
       } catch (err) {
         toast({
           title: isApiError(err) ? err.message : 'Action failed',
@@ -109,7 +119,7 @@ export function DashboardPage() {
         setBusy(null);
       }
     },
-    [load, toast],
+    [refresh, toast],
   );
 
   const decide = (id: string, action: 'approve' | 'reject') =>
