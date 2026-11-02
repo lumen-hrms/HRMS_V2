@@ -536,7 +536,7 @@ describe('EmployeeImportService — logins', () => {
     expect(report.results.map((r) => r.error)).toEqual([
       'This employee already has a login',
       'loginEmail taken@acme.test is already used by another login in this workspace',
-      'loginEmail elsewhere@acme.test is already registered with Firebase',
+      'A login for elsewhere@acme.test already exists',
     ]);
   });
 

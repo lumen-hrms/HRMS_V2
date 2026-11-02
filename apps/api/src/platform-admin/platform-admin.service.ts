@@ -311,6 +311,9 @@ export class PlatformAdminService {
       // Firebase login goes too, or a retry with the same email is refused.
       if (adminFirebaseUid) await this.discardFirebaseUser(adminFirebaseUid, dto.adminEmail);
       await this.platformPrisma.tenant.delete({ where: { id: tenant.id } });
+      this.logger.warn(
+        `Tenant onboarding for "${subdomain}" failed and was rolled back: ${err instanceof Error ? err.message.split('\n').filter(Boolean).pop() : String(err)}`,
+      );
       throw err;
     }
 
@@ -721,18 +724,24 @@ export class PlatformAdminService {
       firebaseUid = created.uid;
     } catch (err: any) {
       if (err?.code === 'auth/email-already-exists') {
-        throw new BadRequestException('That admin email is already registered with Firebase');
+        const owner = await this.workspaceOwningLogin(email);
+        this.logger.warn(
+          `Tenant onboarding refused: a login for ${email} already exists${owner ? ` (${owner})` : ''}`,
+        );
+        throw new BadRequestException(
+          `A login for ${email} already exists${owner ? ` — it belongs to ${owner}` : ''}. Use a different email, or remove the old login first.`,
+        );
       }
       // Anything else here is almost always the Admin SDK itself failing to
       // authenticate to Google (revoked/rotated service-account key, clock
       // skew) rather than a bad request — surface that distinctly instead of
       // letting a raw Firebase error reach the client as an opaque 500.
       this.logger.error(
-        `Firebase Admin could not create the tenant admin user for ${email} — check FIREBASE_SERVICE_ACCOUNT_JSON`,
+        `Tenant onboarding failed: could not create the admin login for ${email} (sign-in service error ${err?.code ?? 'unknown'} — check the service-account credentials)`,
         err instanceof Error ? err.stack : String(err),
       );
       throw new ServiceUnavailableException(
-        'Could not create the tenant admin — the identity provider is unreachable. Check the Firebase Admin service-account credentials.',
+        'Could not create the admin login right now — the sign-in service did not respond. No tenant was created; try again in a few minutes.',
       );
     }
 
@@ -743,13 +752,13 @@ export class PlatformAdminService {
       });
     } catch (err) {
       this.logger.error(
-        `Firebase Admin could not set custom claims for ${email} — check FIREBASE_SERVICE_ACCOUNT_JSON`,
+        `Tenant onboarding failed: could not assign the Company Admin role to ${email} (check the service-account credentials)`,
         err instanceof Error ? err.stack : String(err),
       );
       // Don't strand a Firebase login with no tenant behind it.
       await this.discardFirebaseUser(firebaseUid, email);
       throw new ServiceUnavailableException(
-        'Could not finish setting up the tenant admin — the identity provider is unreachable. Check the Firebase Admin service-account credentials.',
+        'Could not finish setting up the admin login — the sign-in service did not respond. No tenant was created; try again in a few minutes.',
       );
     }
 
@@ -775,6 +784,28 @@ export class PlatformAdminService {
     }
   }
 
+  /** "the Company Admin of Med United (medunited)" — which workspace an existing
+   *  login is tied to, for an actionable onboarding error. Best-effort: null
+   *  when the login has no tenant or the lookup fails. */
+  private async workspaceOwningLogin(email: string): Promise<string | null> {
+    try {
+      const existing = await this.firebaseAuth.getUserByEmail(email);
+      const claims = existing.customClaims as
+        { tenantId?: string; role?: string; type?: string } | undefined;
+      if (claims?.type === 'platform_admin') return 'a platform admin';
+      if (!claims?.tenantId) return null;
+      const tenant = await this.platformPrisma.tenant.findUnique({
+        where: { id: claims.tenantId },
+        select: { name: true, subdomain: true },
+      });
+      if (!tenant) return null;
+      const role = claims.role ? `the ${humanRole(claims.role)} of ` : '';
+      return `${role}${tenant.name} (${tenant.subdomain})`;
+    } catch {
+      return null;
+    }
+  }
+
   /** Best-effort compensation for a failed provisioning step — logs rather
    * than masking the original error if Firebase refuses the delete too. */
   private async discardFirebaseUser(firebaseUid: string, email: string) {
@@ -782,7 +813,7 @@ export class PlatformAdminService {
       await this.firebaseAuth.deleteUser(firebaseUid);
     } catch (err) {
       this.logger.error(
-        `Could not delete the Firebase user for ${email} (${firebaseUid}) after a failed tenant setup — remove it manually`,
+        `Onboarding rollback incomplete: the half-created login for ${email} could not be removed — run \`npm run user:remove -- ${email} --yes\` before retrying with this email`,
         err instanceof Error ? err.stack : String(err),
       );
     }
@@ -1099,4 +1130,13 @@ export class PlatformAdminService {
       message: r.message,
     }));
   }
+}
+
+/** COMPANY_ADMIN -> "Company Admin". */
+function humanRole(role: string): string {
+  return role
+    .toLowerCase()
+    .split('_')
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join(' ');
 }

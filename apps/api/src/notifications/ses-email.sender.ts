@@ -2,12 +2,15 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SendEmailCommand, SESv2Client } from '@aws-sdk/client-sesv2';
 import type { AppConfig } from '../config/configuration';
+import { EmailSuppressionService, SuppressedRecipientError } from './email-suppression.service';
 import type { RenderedEmail } from './templates';
 
 export interface OutgoingEmail extends RenderedEmail {
   to: string;
   /** Display name, e.g. "Acme Hospital via Lumen HRMS". */
   fromName: string;
+  /** SES message tags, echoed back on bounce/complaint events (§4.4). */
+  tags?: Record<string, string>;
 }
 
 /**
@@ -40,7 +43,9 @@ export function formatFrom(name: string, address: string): string {
 /**
  * Module 10's only provider binding — AWS SES v2 (docs/modules/10_NOTIFICATIONS.md
  * §4.2). Credentials come from the AWS SDK default chain. Throws (so the
- * send job records FAILED and retries) when SES isn't configured.
+ * send job records FAILED and retries) when SES isn't configured, and throws
+ * `SuppressedRecipientError` without calling SES for an address on the
+ * bounce/complaint suppression list (§4.4).
  */
 @Injectable()
 export class SesEmailSender {
@@ -48,7 +53,10 @@ export class SesEmailSender {
   private readonly fromAddress?: string;
   private readonly configurationSet?: string;
 
-  constructor(config: ConfigService<AppConfig, true>) {
+  constructor(
+    config: ConfigService<AppConfig, true>,
+    private readonly suppressions: EmailSuppressionService,
+  ) {
     const ses = config.get('ses', { infer: true });
     this.client = new SESv2Client({ region: ses.region });
     this.fromAddress = bareAddress(ses.fromAddress);
@@ -65,11 +73,16 @@ export class SesEmailSender {
     if (!this.fromAddress) {
       throw new Error('Email sending is not configured (SES_FROM_ADDRESS is unset)');
     }
+    const suppressed = await this.suppressions.find(email.to);
+    if (suppressed) throw new SuppressedRecipientError(email.to, suppressed);
     const res = await this.client.send(
       new SendEmailCommand({
         FromEmailAddress: formatFrom(email.fromName, this.fromAddress),
         Destination: { ToAddresses: [email.to] },
         ConfigurationSetName: this.configurationSet,
+        EmailTags: email.tags
+          ? Object.entries(email.tags).map(([Name, Value]) => ({ Name, Value }))
+          : undefined,
         Content: {
           Simple: {
             Subject: { Data: email.subject, Charset: 'UTF-8' },

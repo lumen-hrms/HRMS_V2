@@ -200,6 +200,31 @@ model ContactSubmission {
   @@schema("platform")
 }
 
+enum EmailSuppressionReason {
+  BOUNCE
+  COMPLAINT
+
+  @@schema("platform")
+}
+
+// Addresses we refuse to email (module 10 §4.4): a permanent bounce or a
+// spam complaint reported by SES via SNS. Keyed by the lower-cased address
+// with no tenant column — like SES's own account-level suppression list,
+// a dead mailbox is dead for every tenant that sends from our domain.
+// `SesEmailSender` checks it before every send; an operator can lift an
+// entry from Platform Admin › Settings (DELETE, audited).
+model EmailSuppression {
+  email       String                 @id
+  reason      EmailSuppressionReason
+  detail      String?
+  eventCount  Int                    @default(1) @map("event_count")
+  createdAt   DateTime               @default(now()) @map("created_at")
+  lastEventAt DateTime               @map("last_event_at")
+
+  @@map("email_suppressions")
+  @@schema("platform")
+}
+
 // Singleton row (id is always the literal string "singleton") for
 // operator-editable, non-tenant platform configuration. Today this is just
 // who gets emailed on a new ContactSubmission; more platform-wide settings

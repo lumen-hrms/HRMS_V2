@@ -194,6 +194,17 @@ export interface PlatformSettings {
   contactNotifyEmails: string[];
 }
 
+/** `GET /api/platform-admin/email-suppressions` — addresses SES reported as a
+ *  hard bounce or spam complaint; nothing is emailed to them until lifted. */
+export interface EmailSuppression {
+  email: string;
+  reason: 'BOUNCE' | 'COMPLAINT';
+  detail: string | null;
+  eventCount: number;
+  createdAt: string;
+  lastEventAt: string;
+}
+
 /** The sold plan the tenant is on. Trial and read-only are statuses, shown separately. */
 export function effectivePlan(t: Pick<TenantRow, 'status' | 'subscription'>): PlanKey {
   return t.subscription?.plan ?? 'STARTER';

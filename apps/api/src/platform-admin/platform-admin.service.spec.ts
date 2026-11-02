@@ -203,6 +203,7 @@ function buildCreateTenantHarness() {
     createUser: jest.fn().mockResolvedValue({ uid: 'fb-uid-1' }),
     setCustomUserClaims: jest.fn().mockResolvedValue(undefined),
     deleteUser: jest.fn().mockResolvedValue(undefined),
+    getUserByEmail: jest.fn().mockRejectedValue({ code: 'auth/user-not-found' }),
   };
   const authEmails = { sendPasswordReset: jest.fn().mockResolvedValue('ses') };
   const service = new PlatformAdminService(
@@ -281,7 +282,38 @@ describe('PlatformAdminService.createTenant — Firebase Admin failure handling'
     const { service, firebaseAuth } = buildCreateTenantHarness();
     firebaseAuth.createUser.mockRejectedValue({ code: 'auth/email-already-exists' });
 
-    await expect(service.createTenant(dto)).rejects.toMatchObject({ status: 400 });
+    const err = await service.createTenant(dto).catch((e) => e);
+    expect(err).toMatchObject({ status: 400 });
+    // Says what to do, and never names the vendor behind the sign-in service.
+    expect(err.message).toBe(
+      `A login for ${dto.adminEmail} already exists. Use a different email, or remove the old login first.`,
+    );
+    expect(err.message).not.toMatch(/firebase/i);
+  });
+
+  it('names the workspace that already owns the email', async () => {
+    const { service, platformPrisma, firebaseAuth } = buildCreateTenantHarness();
+    firebaseAuth.createUser.mockRejectedValue({ code: 'auth/email-already-exists' });
+    firebaseAuth.getUserByEmail.mockResolvedValue({
+      customClaims: { tenantId: 'other-tenant', role: 'COMPANY_ADMIN' },
+    });
+    platformPrisma.tenant.findUnique.mockImplementation(async (args: any) =>
+      args.where.id === 'other-tenant' ? { name: 'Med United', subdomain: 'medunited' } : null,
+    );
+
+    const err = await service.createTenant(dto).catch((e) => e);
+    expect(err.message).toBe(
+      `A login for ${dto.adminEmail} already exists — it belongs to the Company Admin of Med United (medunited). Use a different email, or remove the old login first.`,
+    );
+  });
+
+  it('names no vendor when the sign-in service is unreachable', async () => {
+    const { service, firebaseAuth } = buildCreateTenantHarness();
+    firebaseAuth.createUser.mockRejectedValue(new Error('invalid_grant'));
+
+    const err = await service.createTenant(dto).catch((e) => e);
+    expect(err).toMatchObject({ status: 503 });
+    expect(err.message).not.toMatch(/firebase/i);
   });
 
   it('writes the admin row and every tenant default inside one RLS-scoped transaction', async () => {

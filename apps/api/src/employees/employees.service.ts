@@ -407,7 +407,7 @@ export class EmployeesService {
         firebaseUid = created.uid;
       } catch (err: any) {
         if (err?.code === 'auth/email-already-exists') {
-          throw new BadRequestException('That login email is already registered with Firebase');
+          throw new BadRequestException('A login for this email already exists');
         }
         throw err;
       }
@@ -1187,7 +1187,7 @@ export class EmployeesService {
       await this.firebaseAuth.revokeRefreshTokens(user.firebaseUid);
     } catch (err) {
       this.logger.error(
-        `Separation cascade: could not disable Firebase user for ${user.email}`,
+        `Separation: could not disable the login for ${user.email}`,
         err instanceof Error ? err.stack : String(err),
       );
       throw new BadRequestException(
