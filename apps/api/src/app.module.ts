@@ -58,7 +58,8 @@ export class AppModule implements NestModule {
     // request BEFORE auth runs (login needs it too). Platform-admin routes
     // have no tenant concept at all; the health probe answers before auth
     // and has no tenant either; the public contact form is pre-tenant too
-    // (a prospect, not a signed-in user of any tenant) — all three excluded.
+    // (a prospect, not a signed-in user of any tenant); the Razorpay and SES
+    // (SNS) webhooks are signed server-to-server calls — all excluded.
     consumer
       .apply(TenantResolutionMiddleware)
       .exclude(
@@ -66,6 +67,7 @@ export class AppModule implements NestModule {
         { path: 'health', method: RequestMethod.ALL },
         { path: 'contact', method: RequestMethod.ALL },
         { path: 'billing/webhooks/(.*)', method: RequestMethod.ALL },
+        { path: 'notifications/ses-events', method: RequestMethod.ALL },
       )
       .forRoutes('*');
   }

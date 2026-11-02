@@ -819,7 +819,7 @@ export class SetupService {
       if (uid) await this.firebaseAuth.deleteUser(uid).catch(() => undefined);
       const error =
         err?.code === 'auth/email-already-exists'
-          ? 'This email is already registered with the identity provider'
+          ? 'A login for this email already exists'
           : (err?.message ?? 'Unknown error');
       this.logger.error(`Company setup: login for ${email} failed`, String(err));
       return { employeeCode, email, role, error };

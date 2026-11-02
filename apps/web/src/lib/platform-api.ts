@@ -13,6 +13,7 @@ import type {
   ContactLead,
   CreatedTenant,
   CreateTenantInput,
+  EmailSuppression,
   Plan,
   PlatformAuditEntry,
   PlatformSettings,
@@ -57,6 +58,7 @@ const raw = {
     request<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined }),
   patch: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'PATCH', body: body ? JSON.stringify(body) : undefined }),
+  delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
 };
 
 export const platformApi = {
@@ -202,5 +204,17 @@ export const platformApi = {
   /** `PATCH /settings` — replaces the recipient list wholesale, audited. */
   updateSettings(contactNotifyEmails: string[]) {
     return raw.patch<PlatformSettings>('/settings', { contactNotifyEmails });
+  },
+
+  /** `GET /email-suppressions` — hard-bounced / complained addresses, newest event first. */
+  listEmailSuppressions() {
+    return raw.get<EmailSuppression[]>('/email-suppressions');
+  },
+
+  /** `DELETE /email-suppressions/:email` — also clears SES's own list (best effort); audited. */
+  liftEmailSuppression(email: string) {
+    return raw.delete<{ email: string; sesListCleared: boolean }>(
+      `/email-suppressions/${encodeURIComponent(email)}`,
+    );
   },
 };

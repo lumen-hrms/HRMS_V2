@@ -214,8 +214,9 @@ this doc works around the bug, it doesn't fix it.)
      or a single address for testing). While the account is in the SES
      *sandbox*, mail only reaches verified recipient addresses too — request
      production access before real users rely on it.
-  2. IAM: a user with only `ses:SendEmail` (and `ses:SendRawEmail`); create
-     an access key.
+  2. IAM: a user with only `ses:SendEmail` (and `ses:SendRawEmail`), plus
+     `ses:DeleteSuppressedDestination` (the operator's "Lift suppression"
+     also clears SES's own list); create an access key.
   3. GitHub repo secrets: `SES_FROM_ADDRESS`, `SES_REGION` (optional,
      default `ap-south-1`), `SES_AWS_ACCESS_KEY_ID`,
      `SES_AWS_SECRET_ACCESS_KEY`, and `APP_BASE_URL` (the Vercel URL, used
@@ -227,6 +228,27 @@ this doc works around the bug, it doesn't fix it.)
      invite emails (also sent via SES) use it as the "back to sign-in" link
      after a password is set; without it they still work, just without the
      redirect.
+  6. **Bounce / complaint handling** (module 10 §4.4 — needed before
+     production access, and to protect the sender reputation):
+     - SES → Configuration → **Suppression list**: enable account-level
+       suppression for *Bounces and complaints*.
+     - SNS (same region): create a Standard topic, e.g. `ses-events`.
+     arn:aws:sns:ap-south-1:282477853730:ses-events, mail-bounce
+     - SES → **Configuration sets** → create one (e.g. `lumen-hrms`) → Event
+       destinations → add an **SNS** destination for event types *Hard
+       bounces* and *Complaints* (soft bounces optional — those fail the row
+       in the Email log but don't suppress) → the topic above.
+     - GitHub secrets `SES_CONFIGURATION_SET` (the set's name) and
+       `SES_EVENTS_TOPIC_ARN` (the topic's ARN); redeploy.
+     - SNS → the topic → **Create subscription**: protocol HTTPS, endpoint
+       `https://<web host>/api/notifications/ses-events` (the Vercel URL,
+       which proxies `/api/*` to the box over HTTPS on the public leg). The
+       API confirms the subscription itself — it should show *Confirmed*
+       within seconds; if not, check the API log for a 403 (topic ARN
+       mismatch / secret not deployed yet) and use *Request confirmation*.
+     - Test: send to `bounce@simulator.amazonses.com` (e.g. set it as a test
+       user's email and trigger a password reset) — it should appear under
+       Platform Admin › Settings › *Suppressed email addresses*.
 - **Billing (module 14 — Razorpay).** Without keys the Billing card's
   "Create payment link" refuses and the webhook rejects every call; nothing
   else breaks. To turn it on:

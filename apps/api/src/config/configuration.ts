@@ -51,6 +51,12 @@ export interface AppConfig {
     region: string;
     fromAddress?: string;
     configurationSet?: string;
+    /**
+     * ARN of the SNS topic the configuration set publishes bounce/complaint
+     * events to. The public `POST /notifications/ses-events` webhook accepts
+     * only messages from this topic; unset → it rejects everything.
+     */
+    eventsTopicArn?: string;
   };
   /** Razorpay (module 14). All unset → billing endpoints refuse; webhook rejects. */
   razorpay: {
@@ -107,6 +113,7 @@ export default (): AppConfig => ({
     region: process.env.SES_REGION ?? 'ap-south-1',
     fromAddress: process.env.SES_FROM_ADDRESS || undefined,
     configurationSet: process.env.SES_CONFIGURATION_SET || undefined,
+    eventsTopicArn: process.env.SES_EVENTS_TOPIC_ARN || undefined,
   },
   razorpay: {
     keyId: process.env.RAZORPAY_KEY_ID || undefined,

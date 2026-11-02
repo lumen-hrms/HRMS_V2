@@ -5,13 +5,16 @@
 >
 > **Status:** 🟡 95% — the full pipeline (dispatch → `notification_log` →
 > BullMQ → SES v2 → SENT/FAILED, sweep, Email log + retry) is built and
-> wired into every §3.2 trigger. The last 5% is a first real delivery
+> wired into every §3.2 trigger, plus SES bounce/complaint handling
+> (§3.4 / §4.4: SNS webhook → suppression list → sends refused, Email log
+> row flipped to FAILED). The last 5% is a first real delivery
 > through SES, which needs the owner's SES setup (§8); until then every
 > send lands `FAILED` with "SES_FROM_ADDRESS is unset".
 > **Code:** `apps/api/src/notifications` (`NotificationDispatcher`,
 > `NotificationSendProcessor`, `SesEmailSender`, `templates.ts`,
-> `NotificationsController`/`NotificationsService`), migration
-> `20260923120000_notifications`; web `apps/web/src/pages/notifications.tsx`
+> `NotificationsController`/`NotificationsService`, `EmailSuppressionService`,
+> `SnsMessageVerifier`), migrations `20260923120000_notifications` +
+> `20261205090000_email_suppressions`; web `apps/web/src/pages/notifications.tsx`
 > (Email log). Trigger call sites: `LeaveService`,
 > `LeaveEscalationProcessor`, `AttendanceService`,
 > `AttendanceFinalizationProcessor`, `DocumentScanProcessor`.
@@ -20,7 +23,7 @@
 > `05_ATTENDANCE.md` (regularization submit / decide / auto-resolve) ·
 > module `09_DOCUMENTS.md` (infected upload) · module `07` Payroll
 > ("payslip ready" — future producer).
-> **Last synced to code:** 2026-09-23 (built same day as this spec).
+> **Last synced to code:** 2026-11-02 (bounce/complaint handling added).
 
 ---
 
@@ -37,7 +40,8 @@ the preview box, the task role on ECS in production).
 
 **In scope (V1):** the triggers in §3.2, a `notification_log` table, retry
 with backoff + a self-healing sweep, an admin **Email log** screen with
-manual retry.
+manual retry, and SES **bounce/complaint handling** with a suppression list
+(§3.4).
 
 **Out of scope for V1:**
 - **Per-user preferences / unsubscribe** — "always send" for the short,
@@ -132,6 +136,28 @@ Firebase's reset email — they aren't tenant users.
 - `POST /api/notifications/log/:id/retry` — `FAILED` rows only; Company
   Admin, HR Manager; re-queues and is audited.
 
+### 3.4 Bounces & complaints (added 2026-11-02)
+- SES configuration set → SNS topic → public `POST
+  /api/notifications/ses-events`. Accepted only from the topic in
+  `SES_EVENTS_TOPIC_ARN` and with a valid SNS signature (cert fetched only
+  from `https://sns.<region>.amazonaws.com/*.pem`); the subscription is
+  confirmed automatically.
+- **Permanent bounce** → address added to `platform.email_suppressions`.
+  **Complaint** → same. **Transient bounce** → not suppressed.
+- Every workflow email carries SES tags `tenant_id` + `notification_id`; a
+  bounce (either kind) flips that `notification_log` row `SENT → FAILED`
+  with the reason (matched on the SES message id too). A complaint leaves
+  the row `SENT` — it was delivered.
+- `SesEmailSender` refuses a suppressed address before calling SES
+  (`SuppressedRecipientError`) — workflow, auth (invite/reset) and contact
+  emails alike. A suppressed workflow row goes `FAILED` immediately, no
+  backoff retries; HR's manual retry fails the same way until the address
+  changes or the suppression is lifted.
+- Platform Admin › Settings lists suppressions; **Lift** deletes ours,
+  best-effort deletes SES's account-level entry
+  (`DeleteSuppressedDestination`), and writes `email_suppression.lifted` to
+  `platform_audit_log` in the same transaction.
+
 ---
 
 ## 4. Technical design
@@ -157,6 +183,20 @@ NotificationLog  (public.notification_log, RLS on tenant_id)
 `hrms_app`: `SELECT/INSERT/UPDATE` only — no `DELETE` (the log is a
 record of what was sent; status updates are its only mutation).
 
+```
+EmailSuppression  (platform.email_suppressions — no tenant column)
+  email        text PK      lower-cased
+  reason       EmailSuppressionReason  BOUNCE | COMPLAINT
+  detail       text NULL    bounce sub-type + SMTP diagnostic / feedback type
+  eventCount   int          bumped on each repeat event
+  createdAt, lastEventAt
+```
+
+`hrms_platform`: `SELECT/INSERT/UPDATE/DELETE`. Platform schema, not
+per-tenant, because — like SES's own account-level list — a dead mailbox
+is dead for every tenant sending from our domain. It holds bare addresses
+only (no name, no tenant, no join into tenant tables).
+
 ### 4.2 Components
 - **`NotificationDispatcher`** — singleton (not request-scoped) so both
   request handlers and BullMQ processors can call it with an explicit
@@ -166,7 +206,11 @@ record of what was sent; status updates are its only mutation).
 - **`SesEmailSender`** — `@aws-sdk/client-sesv2` `SendEmailCommand`,
   From: `"<Tenant name> via Lumen HRMS" <SES_FROM_ADDRESS>`.
 - **`NotificationSendProcessor`** — `send` + repeatable `sweep`; reads the
-  tenant's display name via the platform connection (name only).
+  tenant's display name via the platform connection (name only); tags each
+  email `tenant_id`/`notification_id`.
+- **`EmailSuppressionService`** — SNS webhook handling, SES event →
+  suppression / log-row update, suppression lookup, operator list + lift.
+- **`SnsMessageVerifier`** — SNS signature check (SignatureVersion 1 and 2).
 
 ### 4.3 Config
 
@@ -174,7 +218,8 @@ record of what was sent; status updates are its only mutation).
 |---|---|
 | `SES_REGION` | default `ap-south-1` |
 | `SES_FROM_ADDRESS` | a verified SES identity, e.g. `no-reply@<domain>` — required to send |
-| `SES_CONFIGURATION_SET` | optional (bounce/complaint tracking) |
+| `SES_CONFIGURATION_SET` | configuration set whose Bounce/Complaint events publish to SNS (§3.4) |
+| `SES_EVENTS_TOPIC_ARN` | the SNS topic ARN the webhook accepts; unset → webhook answers 403 to everything |
 | `APP_BASE_URL` | link target in emails (e.g. the Vercel URL) |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | SDK default chain; not needed where an IAM role exists |
 
@@ -191,6 +236,9 @@ record of what was sent; status updates are its only mutation).
 - **RULE-5** A row is `SENT` only after SES accepted it (message id stored).
 - **RULE-6** Template output escapes all user-provided text.
 - **RULE-7** The app role cannot delete log rows.
+- **RULE-8** Nothing is sent to a suppressed address; only a verified SNS
+  message from the configured topic can add one, only an audited operator
+  action can remove one.
 
 ---
 
@@ -201,6 +249,7 @@ record of what was sent; status updates are its only mutation).
 | Receive workflow emails | ✅ | ✅ | ✅ | ✅ | — | — |
 | View Email log | — | — | ✅ | ✅ | ✅ | — |
 | Retry a failed email | — | — | ✅ | ✅ | — | — |
+| View / lift email suppressions | — | — | — | — | — | ✅ |
 
 ---
 
@@ -223,8 +272,20 @@ record of what was sent; status updates are its only mutation).
 - [x] E2E (real Postgres + Redis + in-process worker): a real leave
       application writes exactly one `QUEUED` row for the manager and the
       worker attempts it (recorded as a failure with no SES configured).
+- [x] Unit: SNS signature verification (v1 + v2, tampered body, non-SNS
+      cert host, cert cache); webhook rejects unset/foreign topic, bad
+      signature, non-SNS SubscribeURL; confirms subscriptions.
+- [x] Unit: permanent bounce suppresses + fails the tagged row; transient
+      bounce fails the row only; complaint suppresses, row stays SENT;
+      untagged / malformed tags touch no row; lift is transactional +
+      audited and tolerates SES errors.
+- [x] Unit: sender refuses a suppressed address without calling SES and
+      sends tags; processor fails a suppressed row at once, no rethrow.
 - [x] FE: `npm run build` + `npm run lint` clean.
 - [ ] **A real email delivered through SES** — blocked on §8.
+- [ ] A real bounce through SES → SNS → webhook (simulator
+      `bounce@simulator.amazonses.com`) — needs §8 + the SNS setup in
+      `docs/DEPLOY.md`.
 - [ ] Not browser-verified.
 
 ---
@@ -234,6 +295,8 @@ record of what was sent; status updates are its only mutation).
 - **SES setup (needs AWS console):** verify the sending domain (or a single
   sender address for testing) in SES `ap-south-1`, and request production
   access — in the SES sandbox, mail only reaches *verified* recipients.
+- **Bounce/complaint wiring:** configuration set + SNS topic + HTTPS
+  subscription — step-by-step in `docs/DEPLOY.md` (Email, step 6).
 - **Credentials on the preview box:** an IAM user with `ses:SendEmail`
-  only; keys as GitHub secrets forwarded by the deploy workflow (same
+  (+ `ses:DeleteSuppressedDestination`) only; keys as GitHub secrets forwarded by the deploy workflow (same
   pattern as `S3_*`).

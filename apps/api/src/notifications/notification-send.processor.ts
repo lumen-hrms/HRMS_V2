@@ -13,6 +13,11 @@ import {
   SendJobData,
   sendJobId,
 } from './notification-dispatcher.service';
+import {
+  SuppressedRecipientError,
+  TAG_NOTIFICATION_ID,
+  TAG_TENANT_ID,
+} from './email-suppression.service';
 import { SesEmailSender } from './ses-email.sender';
 import { render } from './templates';
 
@@ -23,7 +28,9 @@ const STALE_QUEUED_MS = 10 * 60 * 1000;
  * Module 10 §3.1 steps 4–5. `send`: render the row's template and hand it
  * to SES; SENT only once SES returns a MessageId (RULE-5). An error bumps
  * `attempts`, records `lastError` and rethrows so BullMQ retries; the final
- * attempt marks FAILED. `sweep` (every 10 min) re-enqueues stale QUEUED
+ * attempt marks FAILED — a suppressed recipient (§4.4) is FAILED at once,
+ * no retries. Each email carries `tenant_id`/`notification_id` SES tags so a
+ * later bounce finds its row. `sweep` (every 10 min) re-enqueues stale QUEUED
  * rows in every tenant — e.g. Redis was down when `notify()` ran.
  *
  * Runs outside a request: tenant rows via `withTenantContext` on
@@ -87,6 +94,7 @@ export class NotificationSendProcessor extends WorkerHost implements OnApplicati
         ...email,
         to: row.recipientEmail,
         fromName: `${tenantName} via Lumen HRMS`,
+        tags: { [TAG_TENANT_ID]: tenantId, [TAG_NOTIFICATION_ID]: logId },
       });
       await client.notificationLog.update({
         where: { id: logId },
@@ -100,16 +108,18 @@ export class NotificationSendProcessor extends WorkerHost implements OnApplicati
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      const suppressed = err instanceof SuppressedRecipientError;
       this.logger.warn(`Email ${logId} (tenant ${tenantId}) failed: ${message}`);
       await client.notificationLog.update({
         where: { id: logId },
         data: {
           attempts: { increment: 1 },
           lastError: message.slice(0, 1000),
-          ...(isFinalAttempt && { status: 'FAILED' as const }),
+          ...((isFinalAttempt || suppressed) && { status: 'FAILED' as const }),
         },
       });
-      throw err;
+      // Retrying can't help until the address changes or the suppression is lifted.
+      if (!suppressed) throw err;
     }
   }
 

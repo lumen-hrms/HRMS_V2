@@ -8,6 +8,12 @@ import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
 import { SesEmailSender } from './ses-email.sender';
 import { AuthEmailService } from './auth-email.service';
+import {
+  EmailSuppressionOperatorController,
+  SesEventsWebhookController,
+} from './email-suppression.controller';
+import { EmailSuppressionService } from './email-suppression.service';
+import { SnsMessageVerifier } from './sns-message-verifier';
 
 /**
  * Module 10. Feature modules import this for `NotificationDispatcher`;
@@ -23,13 +29,19 @@ import { AuthEmailService } from './auth-email.service';
     }),
     BullModule.registerQueue({ name: NOTIFICATIONS_QUEUE }),
   ],
-  controllers: [NotificationsController],
+  controllers: [
+    NotificationsController,
+    SesEventsWebhookController,
+    EmailSuppressionOperatorController,
+  ],
   providers: [
     NotificationDispatcher,
     NotificationSendProcessor,
     NotificationsService,
     SesEmailSender,
     AuthEmailService,
+    EmailSuppressionService,
+    SnsMessageVerifier,
   ],
   exports: [NotificationDispatcher, AuthEmailService, SesEmailSender],
 })

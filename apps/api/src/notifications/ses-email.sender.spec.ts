@@ -1,9 +1,11 @@
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
+import { SuppressedRecipientError } from './email-suppression.service';
 import { bareAddress, formatFrom, SesEmailSender } from './ses-email.sender';
 
-function senderWith(ses: Record<string, unknown>) {
+function senderWith(ses: Record<string, unknown>, suppressed: unknown = null) {
   const config = { get: () => ({ region: 'ap-south-1', ...ses }) };
-  return new SesEmailSender(config as any);
+  const suppressions = { find: jest.fn().mockResolvedValue(suppressed) };
+  return new SesEmailSender(config as any, suppressions as any);
 }
 
 const EMAIL = {
@@ -46,6 +48,34 @@ describe('SesEmailSender', () => {
   it('refuses to send when SES_FROM_ADDRESS is unset — surfaces as FAILED, never silently skipped', async () => {
     const send = jest.spyOn(SESv2Client.prototype, 'send');
     await expect(senderWith({}).send(EMAIL)).rejects.toThrow(/SES_FROM_ADDRESS is unset/);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('passes SES message tags through as EmailTags (§4.4)', async () => {
+    const send = jest
+      .spyOn(SESv2Client.prototype, 'send')
+      .mockResolvedValue({ MessageId: 'm' } as never);
+    await senderWith({ fromAddress: 'a@b.test' }).send({
+      ...EMAIL,
+      tags: { tenant_id: 't-1', notification_id: 'n-1' },
+    });
+    expect((send.mock.calls[0][0] as SendEmailCommand).input.EmailTags).toEqual([
+      { Name: 'tenant_id', Value: 't-1' },
+      { Name: 'notification_id', Value: 'n-1' },
+    ]);
+  });
+
+  it('refuses a suppressed recipient without calling SES', async () => {
+    const send = jest.spyOn(SESv2Client.prototype, 'send');
+    const sender = senderWith(
+      { fromAddress: 'a@b.test' },
+      { reason: 'BOUNCE', lastEventAt: new Date('2026-11-01T08:00:00Z') },
+    );
+    const err = await sender.send(EMAIL).catch((e) => e);
+    expect(err).toBeInstanceOf(SuppressedRecipientError);
+    expect(err.message).toMatch(
+      /asha@acme\.test is on the suppression list \(hard bounce on 2026-11-01\)/,
+    );
     expect(send).not.toHaveBeenCalled();
   });
 

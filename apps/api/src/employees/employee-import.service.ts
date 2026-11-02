@@ -478,10 +478,12 @@ export class EmployeeImportService {
     await mapWithConcurrency(toCheck, IMPORT_CONCURRENCY, async (p) => {
       try {
         await this.firebaseAuth.getUserByEmail(p.login!.email);
-        p.errors.push(`loginEmail ${p.login!.email} is already registered with Firebase`);
+        p.errors.push(`A login for ${p.login!.email} already exists`);
       } catch (e: any) {
         if (e?.code !== 'auth/user-not-found') {
-          p.errors.push(`Could not check loginEmail ${p.login!.email} with the identity provider`);
+          p.errors.push(
+            `Could not check whether ${p.login!.email} already has a login — try again`,
+          );
         }
       }
     });
@@ -783,7 +785,7 @@ export class EmployeeImportService {
           .deleteUser(firebaseUid)
           .catch((err) =>
             this.logger.error(
-              `Could not delete the Firebase user for ${p.login!.email} after a failed import row — remove it manually`,
+              `Import rollback incomplete: the half-created login for ${p.login!.email} could not be removed — run \`npm run user:remove -- ${p.login!.email} --yes\``,
               String(err),
             ),
           );
@@ -832,8 +834,7 @@ export class EmployeeImportService {
   }
 
   private describeWriteError(e: any): string {
-    if (e?.code === 'auth/email-already-exists')
-      return 'loginEmail is already registered with Firebase';
+    if (e?.code === 'auth/email-already-exists') return 'A login for this email already exists';
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
       return 'An employee or login with these details already exists';
     }

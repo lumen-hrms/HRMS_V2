@@ -1,3 +1,4 @@
+import { SuppressedRecipientError } from './email-suppression.service';
 import { NotificationSendProcessor } from './notification-send.processor';
 
 jest.mock('../prisma/with-tenant-context', () => ({
@@ -61,6 +62,7 @@ describe('NotificationSendProcessor.send', () => {
         to: 'asha@acme.test',
         fromName: 'Acme Hospital via Lumen HRMS',
         subject: 'A file you uploaded was blocked: id.pdf',
+        tags: { tenant_id: 'tenant-1', notification_id: 'log-1' },
       }),
     );
     expect(client.notificationLog.update).toHaveBeenCalledWith({
@@ -96,6 +98,20 @@ describe('NotificationSendProcessor.send', () => {
         lastError: 'Email sending is not configured',
         status: 'FAILED',
       },
+    });
+  });
+
+  it('marks a suppressed recipient FAILED at once and does not rethrow (no retries)', async () => {
+    const { processor, client, sender } = build();
+    const err = new SuppressedRecipientError('asha@acme.test', {
+      reason: 'COMPLAINT',
+      lastEventAt: new Date('2026-11-01T00:00:00Z'),
+    });
+    sender.send.mockRejectedValue(err);
+    await expect(processor.send(JOB, false)).resolves.toBeUndefined();
+    expect(client.notificationLog.update).toHaveBeenCalledWith({
+      where: { id: 'log-1' },
+      data: { attempts: { increment: 1 }, lastError: err.message, status: 'FAILED' },
     });
   });
 

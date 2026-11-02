@@ -277,7 +277,12 @@ stuck rows. Wired into Leave, Attendance regularization and Documents; an
 Email log screen lets HR retry failures. Auth emails (tenant invite, admin
 reset, self-service "Forgot password?" via public `POST /auth/password-reset`)
 also go out through SES via `AuthEmailService` — Firebase still generates the
-reset link and hosts the reset page; only the sender changed. The last 5% is a first real SES
+reset link and hosts the reset page; only the sender changed. SES bounces/complaints
+come back via SNS to a signature-verified public webhook (`POST
+/api/notifications/ses-events`): hard bounces + complaints land in
+`platform.email_suppressions`, `SesEmailSender` refuses those addresses, the
+bounced `notification_log` row goes FAILED, and Platform Admin › Settings
+can lift one (audited). The last 5% is a first real SES
 delivery (owner's SES setup). See `docs/modules/10_NOTIFICATIONS.md`.
 
 **Attendance — done, 100%.** Self-service clock-in/out/breaks/calendar/

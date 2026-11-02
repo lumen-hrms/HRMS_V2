@@ -34,6 +34,8 @@ async function bootstrap() {
       transform: true,
     }),
   );
+  // SNS posts SES bounce/complaint events as `text/plain` JSON (module 10 §4.4).
+  app.useBodyParser('text', { type: 'text/plain' });
   app.setGlobalPrefix('api');
   app.use(requestLogging);
   app.useGlobalInterceptors(new HandlerNameInterceptor());

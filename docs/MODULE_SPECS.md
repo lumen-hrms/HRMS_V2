@@ -646,7 +646,7 @@
 | 7. Payroll Engine | ✅ | `████████████████████` 100% — code-complete: Phases 1–8 backend, full frontend, RLS/grant audit, cross-tenant e2e suite (its first run caught and fixed a real cross-tenant bug in `TdsService.setEmployeeRegime`/`getEmployeeRegime`), performance guards, concurrent payslip generation, `SalaryStructureService.update()` auto-upgrading to a revision when it would affect an already-processed period, and a best-effort public-source statutory review (decision 29 — EPF wage ceiling 15,000→25,000, NEW tax regime defaults + marginal relief updated to Budget 2025 figures, ₹20L gratuity cap + >6-month rounding). Live/human items (an independent *human* domain review of statutory rates — decision 11, not satisfied by the public-source pass above — e2e run with working Firebase, real-stack scale run, browser pass) in `docs/PAYROLL_SIGNOFF.md` |
 | 8. Statutory Compliance | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
 | 9. Documents | ✅ | `████████████████████` 100% — shared `documents` module owns every user upload (employee profile docs, leave attachments, regularization evidence): type/magic-byte/size validation, ClamAV scan before download (fail-closed, self-healing sweep), 5-min attachment-disposition presigned URLs, subject-employee visibility, audited soft delete (no `DELETE` grant). Retention purge deliberately out of V1 scope. Deep spec: `docs/modules/09_DOCUMENTS.md` |
-| 10. Notifications | 🟡 | `███████████████████░` 95% — queued, deduped, audited-retry email pipeline on AWS SES v2 (`notification_log`, BullMQ `notifications` queue, 10-min self-healing sweep, Email log screen) wired into every Leave / Attendance-regularization / Documents workflow event. Remaining: first live SES delivery, blocked on the owner's SES setup (verified sender + IAM credentials). Deep spec: `docs/modules/10_NOTIFICATIONS.md` |
+| 10. Notifications | 🟡 | `███████████████████░` 95% — queued, deduped, audited-retry email pipeline on AWS SES v2 (`notification_log`, BullMQ `notifications` queue, 10-min self-healing sweep, Email log screen) wired into every Leave / Attendance-regularization / Documents workflow event, plus SES bounce/complaint handling (SNS webhook → suppression list, failed rows in the Email log, operator lift). Remaining: first live SES delivery, blocked on the owner's SES setup (verified sender + IAM credentials). Deep spec: `docs/modules/10_NOTIFICATIONS.md` |
 | 11. Reports & Analytics | ✅ | `████████████████████` 100% — headcount, joiners/leavers, attrition, payroll cost and Salary/PF/ESI/Gratuity registers (from processed payroll runs only), CSV/XLSX export. Custom report builder and PDF export stay `[SHOULD]`/later. Deep spec: `docs/modules/11_REPORTS_AND_ANALYTICS.md` |
 | 12. Audit Log | ✅ | `████████████████████` 100% — three append-only trails live: `login_audit_entries` (sign-in outcomes, with a daily retention-purge job), `public.audit_log` (Identity & Access, Employee Master and Attendance events, all now written through the shared `AuditService`), `platform.platform_audit_log` (tenant create/status/plan/renewal/price-adjust/plan-edit/breakglass). All three tables have no `UPDATE`/`DELETE` grant (true append-only). Employee field/compensation edits are now audited with before/after values; `GET /api/audit` + `/audit/modules` give the cross-module aggregation/query view (web: Access › Audit's "All activity" sub-tab). Deep spec: `docs/modules/12_AUDIT_LOG.md` |
 | 13. Tenant Configuration | ✅ | `████████████████████` 100% — schema, onboarding defaults, `EntitlementGuard` (+ `@RequiresModule`/`@RequiresFeature`, wired onto Leave + Attendance), `attendance.service.ts` reading tenant `Shift`/`tenant_settings` instead of hardcoded constants, Settings screens (shift CRUD + attendance/general settings), a **mandatory full-screen company setup** (`apps/api/src/setup`, `apps/web/src/pages/setup` — encrypted draft, strict one-transaction submit, `SETUP_INCOMPLETE` gate, opening balances + holiday import, mid-year go-live handling) and an editable company profile are all live. See `docs/TENANT_CONFIGURATION.md` |
@@ -1577,6 +1577,7 @@ queue — never inline in the request path — with every send logged.
 | Regularization submitted → manager (or HR); decided / auto-resolved → applicant | ✅ |
 | Uploaded file blocked as malware → uploader | ✅ |
 | `notification_log` + dedupe + retry/backoff + sweep + Email log UI (retry FAILED) | ✅ |
+| Bounce/complaint handling — SNS webhook, `platform.email_suppressions`, sends refused, bounced row → FAILED, Platform Admin list + audited lift | ✅ code + unit-tested; live needs the SNS setup in `docs/DEPLOY.md` |
 | Real delivery through AWS SES | 🟡 code + unit-tested against the SDK; needs a verified SES sender + credentials |
 | Leave balance expiry | ⏸ no expiry event exists in Leave yet |
 | Payslip available | ⏸ Payroll (module 07) not built — will call the same dispatcher |
@@ -1594,7 +1595,8 @@ queue — never inline in the request path — with every send logged.
 
 ### Known gaps / TODO
 
-- First live SES send (owner action — deep spec §8).
+- First live SES send (owner action — deep spec §8), and a first real
+  bounce through SES → SNS → the webhook (same setup + `docs/DEPLOY.md`).
 
 ---
 
