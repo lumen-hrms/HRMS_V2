@@ -3,7 +3,9 @@ import { Download, Plus, Trash2, Upload } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { holidayRowErrors } from '@/lib/setup-rules';
 import { Field } from '@/components/ui/field';
+import { PhoneInput } from '@/components/ui/phone-input';
 import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
@@ -80,8 +82,8 @@ export function StepIssues({ issues, showErrors = true }: { issues: SetupIssue[]
           key={n}
           className={
             i.level === 'error'
-              ? 'rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive'
-              : 'rounded-md bg-warning/10 px-3 py-2 text-xs text-warning'
+              ? 'rounded-xl bg-destructive/10 px-3 py-2 text-xs text-destructive'
+              : 'rounded-xl bg-warning/10 px-3 py-2 text-xs text-warning'
           }
         >
           {i.row ? `Row ${i.row}: ` : ''}
@@ -99,7 +101,7 @@ function FieldWarnings({ issues }: { issues: SetupIssue[] }) {
   return (
     <div className="flex flex-col gap-1.5">
       {shown.map((i, n) => (
-        <p key={n} className="rounded-md bg-warning/10 px-3 py-2 text-xs text-warning">
+        <p key={n} className="rounded-xl bg-warning/10 px-3 py-2 text-xs text-warning">
           {i.message}
         </p>
       ))}
@@ -131,17 +133,17 @@ export function CompanyStep({ draft, update, err, issues }: StepProps) {
     <>
       <Section title="Company details" description="Your company’s legal identity. You can edit it later in Company settings.">
         <Field label="Legal name" required error={err('legalName')}>
-          <Input value={c.legalName ?? ''} onChange={set('legalName')} placeholder="Acme Health Pvt Ltd" />
+          <Input value={c.legalName ?? ''} onChange={set('legalName')} maxLength={150} placeholder="Acme Health Pvt Ltd" />
         </Field>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Address" required error={err('addressLine1')}>
-            <Input value={c.addressLine1 ?? ''} onChange={set('addressLine1')} />
+            <Input value={c.addressLine1 ?? ''} onChange={set('addressLine1')} maxLength={200} />
           </Field>
-          <Field label="Address line 2">
-            <Input value={c.addressLine2 ?? ''} onChange={set('addressLine2')} />
+          <Field label="Address line 2" error={err('addressLine2')}>
+            <Input value={c.addressLine2 ?? ''} onChange={set('addressLine2')} maxLength={200} />
           </Field>
           <Field label="City" required error={err('city')}>
-            <Input value={c.city ?? ''} onChange={set('city')} />
+            <Input value={c.city ?? ''} onChange={set('city')} maxLength={80} />
           </Field>
           <Field label="State" required error={err('state')}>
             <Select value={c.state ?? ''} onChange={set('state')}>
@@ -154,19 +156,27 @@ export function CompanyStep({ draft, update, err, issues }: StepProps) {
             </Select>
           </Field>
           <Field label="PIN code" required error={err('pincode')}>
-            <Input inputMode="numeric" value={c.pincode ?? ''} onChange={set('pincode')} />
+            <Input inputMode="numeric" value={c.pincode ?? ''} onChange={set('pincode')} maxLength={6} placeholder="6 digits, e.g. 411001" />
           </Field>
           <Field label="Contact email" required error={err('contactEmail')}>
-            <Input type="email" value={c.contactEmail ?? ''} onChange={set('contactEmail')} />
+            <Input type="email" value={c.contactEmail ?? ''} onChange={set('contactEmail')} maxLength={254} placeholder="name@company.com" />
           </Field>
           <Field label="Contact phone" required error={err('contactPhone')}>
-            <Input inputMode="tel" value={c.contactPhone ?? ''} onChange={set('contactPhone')} />
+            <PhoneInput
+              validate={false}
+              value={c.contactPhone ?? ''}
+              onChange={(v) =>
+                update((d) => {
+                  d.company.contactPhone = v;
+                })
+              }
+            />
           </Field>
-          <Field label="GSTIN" hint="Optional" error={err('gstin')}>
-            <Input value={c.gstin ?? ''} onChange={set('gstin')} />
+          <Field label="GSTIN" required error={err('gstin')}>
+            <Input value={c.gstin ?? ''} onChange={set('gstin')} maxLength={15} placeholder="27AAPFU0939F1ZV" />
           </Field>
           <Field label="CIN" hint="Optional" error={err('cin')}>
-            <Input value={c.cin ?? ''} onChange={set('cin')} />
+            <Input value={c.cin ?? ''} onChange={set('cin')} maxLength={21} placeholder="U72200MH2009PTC123456" />
           </Field>
         </div>
       </Section>
@@ -206,6 +216,7 @@ export function DepartmentsStep({ draft, update, err, issues }: StepProps) {
               <Input
                 value={dept.name}
                 disabled={!!dept.existingId}
+                maxLength={100}
                 placeholder="e.g. Engineering"
                 onChange={(e) =>
                   update((d) => {
@@ -214,10 +225,11 @@ export function DepartmentsStep({ draft, update, err, issues }: StepProps) {
                 }
               />
             </Field>
-            <Field className="w-32">
+            <Field className="w-40" error={err(`departments[${i}].code`)}>
               <Input
                 value={dept.code ?? ''}
                 disabled={!!dept.existingId}
+                maxLength={10}
                 placeholder="Code (optional)"
                 onChange={(e) =>
                   update((d) => {
@@ -294,16 +306,16 @@ export function ProfileStep({ draft, update, err, issues }: StepProps) {
       {!p.notAnEmployee && (
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Employee code" required error={err('employeeCode')}>
-            <Input value={p.employeeCode} onChange={set('employeeCode')} placeholder="e.g. ACME-001" />
+            <Input value={p.employeeCode} onChange={set('employeeCode')} maxLength={20} placeholder="e.g. ACME-001" />
           </Field>
-          <Field label="Designation">
-            <Input value={p.designation} onChange={set('designation')} />
+          <Field label="Designation" error={err('designation')}>
+            <Input value={p.designation} onChange={set('designation')} maxLength={100} />
           </Field>
           <Field label="First name" required error={err('firstName')}>
-            <Input value={p.firstName} onChange={set('firstName')} />
+            <Input value={p.firstName} onChange={set('firstName')} maxLength={50} />
           </Field>
           <Field label="Last name" required error={err('lastName')}>
-            <Input value={p.lastName} onChange={set('lastName')} />
+            <Input value={p.lastName} onChange={set('lastName')} maxLength={50} />
           </Field>
           <Field label="Department" required error={err('departmentName')}>
             <Select value={p.departmentName} onChange={set('departmentName')}>
@@ -320,7 +332,7 @@ export function ProfileStep({ draft, update, err, issues }: StepProps) {
           <Field label="Date of joining" required error={err('dateOfJoining')}>
             <Input type="date" value={p.dateOfJoining} onChange={set('dateOfJoining')} />
           </Field>
-          <Field label="Gender" hint="Used for gender-restricted leave types">
+          <Field label="Gender" hint="Used for gender-restricted leave types" error={err('gender')}>
             <Select value={p.gender} onChange={set('gender')}>
               <option value="">Prefer not to say</option>
               <option value="Male">Male</option>
@@ -338,8 +350,16 @@ export function ProfileStep({ draft, update, err, issues }: StepProps) {
               ))}
             </Select>
           </Field>
-          <Field label="Phone">
-            <Input inputMode="tel" value={p.phone} onChange={set('phone')} />
+          <Field label="Phone" error={err('phone')}>
+            <PhoneInput
+              validate={false}
+              value={p.phone}
+              onChange={(v) =>
+                update((d) => {
+                  d.profile.phone = v;
+                })
+              }
+            />
           </Field>
         </div>
       )}
@@ -399,8 +419,8 @@ export function WorkWeekStep({ draft, update, err, issues }: StepProps) {
                   }
                   className={
                     on
-                      ? 'rounded-md border border-primary bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground'
-                      : 'rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent'
+                      ? 'rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground'
+                      : 'rounded-xl border border-border px-3 py-1.5 text-sm hover:bg-accent'
                   }
                 >
                   {name}
@@ -421,7 +441,7 @@ export function WorkWeekStep({ draft, update, err, issues }: StepProps) {
               (d.shifts[i] as unknown as Record<string, unknown>)[k] = value;
             });
           return (
-            <div key={s.existingId ?? `new-${i}`} className="flex flex-col gap-3 rounded-lg border border-border p-4">
+            <div key={s.existingId ?? `new-${i}`} className="flex flex-col gap-3 rounded-xl border border-border p-4">
               <div className="flex items-center justify-between gap-2">
                 <label className="flex items-center gap-2 text-sm font-medium">
                   <input
@@ -453,7 +473,7 @@ export function WorkWeekStep({ draft, update, err, issues }: StepProps) {
               </div>
               <div className="grid gap-3 sm:grid-cols-4">
                 <Field label="Name" required error={f('name')} className="sm:col-span-2">
-                  <Input value={s.name} onChange={(e) => set('name', e.target.value)} />
+                  <Input value={s.name} onChange={(e) => set('name', e.target.value)} maxLength={60} />
                 </Field>
                 <Field label="Type" error={f('type')} className="sm:col-span-2">
                   <Select value={s.type} onChange={(e) => set('type', e.target.value)}>
@@ -487,7 +507,7 @@ export function WorkWeekStep({ draft, update, err, issues }: StepProps) {
                         onChange={(e) => set('coreStartTime', e.target.value)}
                       />
                     </Field>
-                    <Field label="Core ends" required>
+                    <Field label="Core ends" required error={f('coreEndTime')}>
                       <Input
                         type="time"
                         value={s.coreEndTime ?? ''}
@@ -563,11 +583,11 @@ export function AttendanceStep({ draft, update, err }: StepProps) {
         </div>
       </Field>
       <div className="grid gap-3 sm:grid-cols-3">
-        <Field label="Regularization window (days)" error={err('regularizationWindowDays')} hint="How far back an employee can fix a day.">
-          <Input type="number" min={1} value={a.regularizationWindowDays} onChange={(e) => set('regularizationWindowDays', num(e.target.value))} />
+        <Field label="Regularization window (days)" error={err('regularizationWindowDays')} hint="1–60. How far back an employee can fix a day.">
+          <Input type="number" min={1} max={60} value={a.regularizationWindowDays} onChange={(e) => set('regularizationWindowDays', num(e.target.value))} />
         </Field>
-        <Field label="Regularizations per month" error={err('regularizationMonthlyCap')}>
-          <Input type="number" min={1} value={a.regularizationMonthlyCap} onChange={(e) => set('regularizationMonthlyCap', num(e.target.value))} />
+        <Field label="Regularizations per month" error={err('regularizationMonthlyCap')} hint="1–31">
+          <Input type="number" min={1} max={31} value={a.regularizationMonthlyCap} onChange={(e) => set('regularizationMonthlyCap', num(e.target.value))} />
         </Field>
         <Field label="Requests nobody acts on" error={err('unactionedBehavior')} hint="Resolved at the payroll cut-off.">
           <Select value={a.unactionedBehavior} onChange={(e) => set('unactionedBehavior', e.target.value)}>
@@ -596,6 +616,7 @@ export function HolidaysStep({
 }) {
   const [row, setRow] = React.useState({ date: '', name: '', optional: false });
   const optionalCount = draft.holidays.filter((h) => h.optional).length;
+  const rowErrors = holidayRowErrors(row);
   return (
     <>
       <Section
@@ -618,7 +639,7 @@ export function HolidaysStep({
                 if (f) onImport(f);
               }}
             />
-            <span className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-border px-3 text-xs font-medium hover:bg-accent">
+            <span className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-xl border border-border px-3 text-xs font-medium hover:bg-accent">
               <Upload className="h-3.5 w-3.5" /> {importing ? 'Reading…' : 'Upload holidays'}
             </span>
           </label>
@@ -630,7 +651,7 @@ export function HolidaysStep({
           <div className="flex flex-col gap-1.5">
             <p className="text-xs font-medium text-destructive">The file wasn’t added — fix these rows and upload it again:</p>
             {importIssues.map((i, n) => (
-              <p key={n} className="rounded-md bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
+              <p key={n} className="rounded-xl bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
                 {i.row ? `Row ${i.row}: ` : ''}
                 {i.message}
               </p>
@@ -643,11 +664,11 @@ export function HolidaysStep({
         description="Public holidays are a day off for everyone. Optional holidays are working days unless an employee takes one as Restricted Holiday leave."
       >
         <div className="flex flex-wrap items-end gap-2">
-          <Field label="Date">
+          <Field label="Date" error={rowErrors.date}>
             <Input type="date" value={row.date} onChange={(e) => setRow({ ...row, date: e.target.value })} />
           </Field>
-          <Field label="Name" className="min-w-48 flex-1">
-            <Input value={row.name} onChange={(e) => setRow({ ...row, name: e.target.value })} />
+          <Field label="Name" className="min-w-48 flex-1" error={rowErrors.name}>
+            <Input value={row.name} onChange={(e) => setRow({ ...row, name: e.target.value })} maxLength={100} />
           </Field>
           <label className="flex h-9 items-center gap-2 text-sm">
             <input type="checkbox" className="h-4 w-4" checked={row.optional} onChange={(e) => setRow({ ...row, optional: e.target.checked })} />
@@ -656,7 +677,7 @@ export function HolidaysStep({
           <Button
             size="sm"
             className="mb-0.5"
-            disabled={!row.date || !row.name.trim()}
+            disabled={!row.date || !row.name.trim() || !!rowErrors.date || !!rowErrors.name}
             onClick={() => {
               update((d) => {
                 d.holidays.push({ date: row.date, name: row.name.trim(), optional: row.optional });
@@ -669,7 +690,7 @@ export function HolidaysStep({
           </Button>
         </div>
         {draft.holidays.length > 0 && (
-          <div className="max-h-96 overflow-auto rounded-md border border-border">
+          <div className="max-h-96 overflow-auto rounded-xl border border-border">
             <Table>
               <THead>
                 <TR>
@@ -796,8 +817,8 @@ export function LeavePolicyStep({ draft, update, err, issues }: StepProps) {
               <option value="MANAGER_THEN_HR">2 — reporting manager, then HR</option>
             </Select>
           </Field>
-          <Field label="Escalate after (days)" error={err('leaveEscalationDays')} hint="An undecided request is flagged after this long.">
-            <Input type="number" min={1} value={lp.leaveEscalationDays} onChange={(e) => set('leaveEscalationDays', num(e.target.value))} />
+          <Field label="Escalate after (days)" error={err('leaveEscalationDays')} hint="1–30. An undecided request is flagged after this long.">
+            <Input type="number" min={1} max={30} value={lp.leaveEscalationDays} onChange={(e) => set('leaveEscalationDays', num(e.target.value))} />
           </Field>
           <label className="flex items-center gap-2 self-end pb-2 text-sm">
             <input type="checkbox" className="h-4 w-4" checked={lp.allowLopRequests} onChange={(e) => set('allowLopRequests', e.target.checked)} />
@@ -817,16 +838,16 @@ export function LeavePolicyStep({ draft, update, err, issues }: StepProps) {
               (d.leavePolicy.types[i] as unknown as Record<string, unknown>)[k] = value;
             });
           return (
-            <div key={t.existingId ?? `new-${i}`} className="flex flex-col gap-3 rounded-lg border border-border p-4">
+            <div key={t.existingId ?? `new-${i}`} className="flex flex-col gap-3 rounded-xl border border-border p-4">
               {t.grantMode === 'ON_EVENT' ? (
                 <EventTypeFields t={t} f={f} setT={setT} />
               ) : (
               <div className="grid gap-3 sm:grid-cols-6">
                 <Field label="Name" required error={f('name')} className="sm:col-span-3">
-                  <Input value={t.name} onChange={(e) => setT('name', e.target.value)} />
+                  <Input value={t.name} onChange={(e) => setT('name', e.target.value)} maxLength={60} />
                 </Field>
                 <Field label="Code" required error={f('code')} className="sm:col-span-1">
-                  <Input value={t.code} onChange={(e) => setT('code', e.target.value.toUpperCase())} />
+                  <Input value={t.code} onChange={(e) => setT('code', e.target.value.toUpperCase())} maxLength={10} />
                 </Field>
                 <Field label="Accrues" error={f('accrualFrequency')} className="sm:col-span-2">
                   <Select value={t.accrualFrequency} onChange={(e) => setT('accrualFrequency', e.target.value)}>
@@ -836,13 +857,13 @@ export function LeavePolicyStep({ draft, update, err, issues }: StepProps) {
                   </Select>
                 </Field>
                 <Field label="Days / year" error={f('annualQuota')} className="sm:col-span-1">
-                  <Input type="number" step="0.5" min={0} value={t.annualQuota} onChange={(e) => setT('annualQuota', num(e.target.value))} />
+                  <Input type="number" step="0.5" min={0} max={365} value={t.annualQuota} onChange={(e) => setT('annualQuota', num(e.target.value))} />
                 </Field>
                 <Field label="Carry-forward cap" error={f('carryForwardCap')} className="sm:col-span-2">
-                  <Input type="number" step="0.5" min={0} value={t.carryForwardCap} onChange={(e) => setT('carryForwardCap', num(e.target.value))} />
+                  <Input type="number" step="0.5" min={0} max={365} value={t.carryForwardCap} onChange={(e) => setT('carryForwardCap', num(e.target.value))} />
                 </Field>
                 <Field label="Notice (days)" error={f('minNoticeDays')} className="sm:col-span-1">
-                  <Input type="number" min={0} value={t.minNoticeDays} onChange={(e) => setT('minNoticeDays', num(e.target.value))} />
+                  <Input type="number" min={0} max={90} value={t.minNoticeDays} onChange={(e) => setT('minNoticeDays', num(e.target.value))} />
                 </Field>
                 <Field label="Who can take it" error={f('genderRestriction')} className="sm:col-span-2">
                   <Select value={t.genderRestriction} onChange={(e) => setT('genderRestriction', e.target.value)}>
@@ -962,10 +983,10 @@ function EventTypeFields({
       </div>
       <div className="grid gap-3 sm:grid-cols-6">
         <Field label="Name" required error={f('name')} className="sm:col-span-3">
-          <Input value={t.name} onChange={(e) => setT('name', e.target.value)} />
+          <Input value={t.name} onChange={(e) => setT('name', e.target.value)} maxLength={60} />
         </Field>
         <Field label="Code" required error={f('code')} className="sm:col-span-1">
-          <Input value={t.code} onChange={(e) => setT('code', e.target.value.toUpperCase())} />
+          <Input value={t.code} onChange={(e) => setT('code', e.target.value.toUpperCase())} maxLength={10} />
         </Field>
         <Field label="Who can take it" error={f('genderRestriction')} className="sm:col-span-2">
           <Select value={t.genderRestriction} onChange={(e) => setT('genderRestriction', e.target.value)}>
@@ -975,7 +996,7 @@ function EventTypeFields({
           </Select>
         </Field>
         <Field label="Event the employee enters" error={f('daysPerEvent')} className="sm:col-span-3">
-          <Input value={t.eventLabel ?? ''} onChange={(e) => setT('eventLabel', e.target.value)} />
+          <Input value={t.eventLabel ?? ''} onChange={(e) => setT('eventLabel', e.target.value)} maxLength={100} />
         </Field>
         <Field label="Days per event" className="sm:col-span-1">
           <Input type="number" min={0} value={t.daysPerEvent ?? ''} onChange={(e) => setT('daysPerEvent', opt(e.target.value))} />
@@ -1027,7 +1048,7 @@ export function ReportTable({ report, keyLabel = 'Code' }: { report: ImportRepor
       {report.ignoredColumns.length > 0 && (
         <p className="text-xs text-warning">Ignored unrecognised columns: {report.ignoredColumns.join(', ')}</p>
       )}
-      <div className="max-h-96 overflow-auto rounded-md border border-border">
+      <div className="max-h-96 overflow-auto rounded-xl border border-border">
         <Table>
           <THead>
             <TR>
@@ -1116,7 +1137,7 @@ export function FileStep({
                 if (f) onUpload(f);
               }}
             />
-            <span className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-border px-3 text-xs font-medium hover:bg-accent">
+            <span className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-xl border border-border px-3 text-xs font-medium hover:bg-accent">
               <Upload className="h-3.5 w-3.5" /> {busy ? 'Checking…' : file ? 'Replace file' : 'Upload file'}
             </span>
           </label>

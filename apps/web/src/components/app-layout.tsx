@@ -161,7 +161,7 @@ export function AppLayout() {
               }}
               className={({ isActive }) =>
                 cn(
-                  'nav-item relative z-10 flex items-center rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                  'nav-item relative z-10 flex items-center rounded-xl px-3 py-2 text-sm font-medium transition-colors',
                   (pendingTo ? pendingTo === to : isActive)
                     ? 'nav-item-active'
                     : 'text-muted-foreground hover:text-foreground',
@@ -176,7 +176,7 @@ export function AppLayout() {
           ))}
         </nav>
         <div className="border-t border-border p-3">
-          <div className="mb-2 flex items-center gap-1 rounded-md bg-muted p-1">
+          <div className="mb-2 flex items-center gap-1 rounded-xl bg-muted p-1">
             {(
               [
                 ['light', Sun],
@@ -188,7 +188,7 @@ export function AppLayout() {
                 key={value}
                 onClick={() => setTheme(value)}
                 className={cn(
-                  'flex flex-1 items-center justify-center rounded py-1 text-muted-foreground',
+                  'flex flex-1 items-center justify-center rounded-xl py-1 text-muted-foreground',
                   theme === value && 'bg-card text-foreground shadow-sm',
                 )}
                 aria-label={value}
@@ -201,7 +201,7 @@ export function AppLayout() {
             to="/account"
             className={({ isActive }) =>
               cn(
-                'mb-2 flex items-center gap-2 rounded-md px-1 py-1 text-xs transition-colors',
+                'mb-2 flex items-center gap-2 rounded-xl px-1 py-1 text-xs transition-colors',
                 isActive ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
               )
             }
@@ -216,7 +216,7 @@ export function AppLayout() {
           </NavLink>
           <button
             onClick={handleLogout}
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            className="flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground"
           >
             <LogOut className="h-4 w-4" /> Log out
           </button>

@@ -186,7 +186,7 @@ export function TenantDetailPage() {
           <div className="ml-auto">
             <DropdownMenu
               trigger={
-                <span className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-sm hover:bg-accent">
+                <span className="inline-flex items-center gap-1 rounded-xl border border-border px-2.5 py-1.5 text-sm hover:bg-accent">
                   <MoreVertical className="h-4 w-4" /> Actions
                 </span>
               }

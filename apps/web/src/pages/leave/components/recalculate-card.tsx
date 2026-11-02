@@ -95,13 +95,13 @@ export function RecalculateCard() {
             {preview.changes.length === 0 ? 'nothing would change.' : `${preview.changes.length} balances would change. Nothing is saved until you apply.`}
           </p>
           {preview.negativeBalances > 0 && (
-            <p className="rounded-md bg-warning/10 px-3 py-2 text-xs text-warning">
+            <p className="rounded-xl bg-warning/10 px-3 py-2 text-xs text-warning">
               {preview.negativeBalances} balance{preview.negativeBalances === 1 ? '' : 's'} would go below zero because the
               leave was already taken — they’ll show negative until more is credited or you adjust them.
             </p>
           )}
           {preview.changes.length > 0 && (
-            <div className="max-h-80 overflow-auto rounded-md border border-border">
+            <div className="max-h-80 overflow-auto rounded-xl border border-border">
               <Table>
                 <THead>
                   <TR>

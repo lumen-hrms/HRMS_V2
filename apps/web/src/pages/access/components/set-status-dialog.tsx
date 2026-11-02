@@ -111,8 +111,8 @@ export function SetStatusDialog({
             <div
               className={
                 deactivating
-                  ? 'flex items-start gap-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive'
-                  : 'flex items-start gap-2 rounded-md bg-accent px-3 py-2 text-xs text-muted-foreground'
+                  ? 'flex items-start gap-2 rounded-xl bg-destructive/10 px-3 py-2 text-xs text-destructive'
+                  : 'flex items-start gap-2 rounded-xl bg-accent px-3 py-2 text-xs text-muted-foreground'
               }
             >
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />

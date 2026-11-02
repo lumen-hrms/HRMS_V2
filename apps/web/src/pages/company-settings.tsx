@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Field } from '@/components/ui/field';
+import { PhoneInput } from '@/components/ui/phone-input';
 import { Select } from '@/components/ui/select';
 import { useToast } from '@/components/ui/toast';
 import { INDIAN_STATES, stateLabel } from '@/lib/setup';
@@ -123,7 +124,10 @@ export function CompanySettingsPage() {
                 <Input type="email" value={form.contactEmail} onChange={set('contactEmail')} />
               </Field>
               <Field label="Contact phone" required>
-                <Input value={form.contactPhone} onChange={set('contactPhone')} />
+                <PhoneInput
+                  value={form.contactPhone}
+                  onChange={(v) => setForm((f) => (f ? { ...f, contactPhone: v } : f))}
+                />
               </Field>
               <Field label="GSTIN">
                 <Input value={form.gstin ?? ''} onChange={set('gstin')} />

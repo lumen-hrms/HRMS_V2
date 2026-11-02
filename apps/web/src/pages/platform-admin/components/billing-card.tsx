@@ -61,7 +61,7 @@ export function BillingCard({ tenant, onChanged }: { tenant: TenantRow; onChange
         </p>
       )}
       {overdue && (
-        <p className="rounded-lg bg-warning/10 p-2 text-xs text-warning">
+        <p className="rounded-xl bg-warning/10 p-2 text-xs text-warning">
           A charge failed. The workspace goes read-only on {overdue} unless a payment succeeds.
         </p>
       )}
@@ -73,7 +73,7 @@ export function BillingCard({ tenant, onChanged }: { tenant: TenantRow; onChange
         </div>
       )}
       {link && (
-        <div className="rounded-lg border border-border p-2 text-xs">
+        <div className="rounded-xl border border-border p-2 text-xs">
           <p className="mb-1 text-muted-foreground">Send this link to the customer:</p>
           <a href={link} target="_blank" rel="noreferrer" className="break-all text-primary underline">
             {link}

@@ -16,6 +16,7 @@ import { useToast } from '@/components/ui/toast';
 import { PageHeader } from '@/components/page-header';
 import { Money } from './components/money';
 import { FnfStatusBadge } from './components/status-badge';
+import { ConfirmDialog, type ConfirmRequest } from './components/confirm-dialog';
 
 export function FullAndFinalPage() {
   const { employeeId = '' } = useParams();
@@ -69,8 +70,9 @@ export function FullAndFinalPage() {
     }
   }
 
+  const [confirmReq, setConfirmReq] = React.useState<ConfirmRequest | null>(null);
+
   async function approve() {
-    if (!confirm('Approve this settlement? This is Full & Final\'s own one-approval step.')) return;
     setBusy('approve');
     try {
       await payroll.approveFnf(employeeId);
@@ -84,7 +86,6 @@ export function FullAndFinalPage() {
   }
 
   async function markPaid() {
-    if (!confirm('Mark this settlement as paid? This is irreversible.')) return;
     setBusy('paid');
     try {
       await payroll.markFnfPaid(employeeId);
@@ -194,12 +195,28 @@ export function FullAndFinalPage() {
             {canManage && (
               <div className="flex gap-2 border-t border-border pt-4">
                 {settlement.status === 'DRAFT' && (
-                  <Button disabled={busy !== null} onClick={approve}>
+                  <Button disabled={busy !== null} onClick={() =>
+                      setConfirmReq({
+                        title: 'Approve this settlement?',
+                        body: 'This is Full & Final’s own one-approval step.',
+                        confirmLabel: 'Approve',
+                        onConfirm: approve,
+                      })
+                    }
+                  >
                     {busy === 'approve' ? 'Approving…' : 'Approve'}
                   </Button>
                 )}
                 {settlement.status === 'APPROVED' && (
-                  <Button disabled={busy !== null} onClick={markPaid}>
+                  <Button disabled={busy !== null} onClick={() =>
+                      setConfirmReq({
+                        title: 'Mark this settlement as paid?',
+                        body: 'This is irreversible.',
+                        confirmLabel: 'Mark paid',
+                        onConfirm: markPaid,
+                      })
+                    }
+                  >
                     {busy === 'paid' ? 'Marking paid…' : 'Mark paid'}
                   </Button>
                 )}
@@ -208,13 +225,14 @@ export function FullAndFinalPage() {
           </CardContent>
         </Card>
       )}
+      <ConfirmDialog request={confirmReq} onClose={() => setConfirmReq(null)} />
     </div>
   );
 }
 
 function Line({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="flex items-center justify-between rounded-md border border-border p-3 text-sm">
+    <div className="flex items-center justify-between rounded-xl border border-border p-3 text-sm">
       <span className="text-muted-foreground">{label}</span>
       <Money value={value} className="font-medium" />
     </div>

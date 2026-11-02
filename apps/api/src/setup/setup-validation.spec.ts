@@ -29,6 +29,13 @@ describe('validateConfig', () => {
       ]);
     });
 
+    it('requires a GSTIN', () => {
+      const draft = validDraft({ company: { ...validDraft().company, gstin: '  ' } });
+      expect(errors(draft)).toEqual([
+        expect.objectContaining({ step: 'company', field: 'gstin', message: 'GSTIN is required' }),
+      ]);
+    });
+
     it('requires a go-live date no more than 90 days ahead', () => {
       expect(errors(validDraft({ goLiveDate: '' }))[0]).toMatchObject({ field: 'goLiveDate' });
       expect(errors(validDraft({ goLiveDate: '2027-02-01' }))[0]).toMatchObject({
@@ -123,6 +130,60 @@ describe('validateConfig', () => {
       attendance: { ...validDraft().attendance, payrollCutoffDay: 31, captureMethods: [] },
     });
     expect(errors(draft).map((i) => i.field)).toEqual(['captureMethods', 'payrollCutoffDay']);
+  });
+
+  describe('field format and length rules', () => {
+    const fieldsOf = (d: SetupDraft) => errors(d).map((i) => i.field);
+    const company = (patch: object) =>
+      validDraft({ company: { ...validDraft().company, ...patch } });
+    const profile = (patch: object) =>
+      validDraft({ profile: { ...validDraft().profile, ...patch } });
+
+    it('limits company name, address and city', () => {
+      expect(fieldsOf(company({ legalName: 'A' }))).toEqual(['legalName']);
+      expect(fieldsOf(company({ legalName: 'A'.repeat(151) }))).toEqual(['legalName']);
+      expect(fieldsOf(company({ addressLine1: 'x'.repeat(201) }))).toEqual(['addressLine1']);
+      expect(fieldsOf(company({ city: 'Pune 123' }))).toEqual(['city']);
+      expect(fieldsOf(company({ city: 'St. John’s' }))).toEqual([]);
+    });
+
+    it('checks employee code, names, designation, gender and joining year', () => {
+      expect(fieldsOf(profile({ employeeCode: 'AC ME#1' }))).toEqual(['employeeCode']);
+      expect(fieldsOf(profile({ firstName: 'Ani123' }))).toEqual(['firstName']);
+      expect(fieldsOf(profile({ lastName: "O'Neil-Smith" }))).toEqual([]);
+      expect(fieldsOf(profile({ designation: 'x'.repeat(101) }))).toEqual(['designation']);
+      expect(fieldsOf(profile({ gender: 'Robot' }))).toEqual(['gender']);
+      expect(fieldsOf(profile({ dateOfJoining: '1899-01-01' }))).toEqual(['dateOfJoining']);
+    });
+
+    it('checks department name length and code format / duplicates', () => {
+      const d = validDraft({
+        departments: [
+          { name: 'Leadership', code: 'LD' },
+          { name: 'Engineering', code: 'ld' },
+          { name: 'Ops', code: 'bad code!' },
+        ],
+      });
+      expect(errors(d).map((i) => i.field)).toEqual(['departments[1].code', 'departments[2].code']);
+      expect(
+        fieldsOf(validDraft({ departments: [{ name: 'Leadership' }, { name: 'x'.repeat(101) }] })),
+      ).toEqual(['departments[1].name']);
+    });
+
+    it('requires flexi core start and end, in order', () => {
+      const base = validDraft().shifts[0];
+      const withShift = (patch: object) =>
+        validDraft({ shifts: [{ ...base, type: 'FLEXI', ...patch }] });
+      expect(fieldsOf(withShift({ coreStartTime: '10:00' }))).toEqual(['shifts[0].coreEndTime']);
+      expect(fieldsOf(withShift({ coreStartTime: '15:00', coreEndTime: '11:00' }))).toEqual([
+        'shifts[0].coreEndTime',
+      ]);
+      expect(fieldsOf(withShift({ coreStartTime: '10:00', coreEndTime: '16:00' }))).toEqual([]);
+    });
+
+    it('rejects an implausible go-live year', () => {
+      expect(fieldsOf(validDraft({ goLiveDate: '1990-01-01' }))).toContain('goLiveDate');
+    });
   });
 
   describe('holidays', () => {

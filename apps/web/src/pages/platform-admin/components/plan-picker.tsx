@@ -27,7 +27,7 @@ export function PlanPicker({
               type="button"
               onClick={() => onChange(p.key)}
               className={cn(
-                'flex flex-col gap-0.5 rounded-lg border p-3 text-left transition-colors',
+                'flex flex-col gap-0.5 rounded-xl border p-3 text-left transition-colors',
                 active ? 'border-primary bg-accent ring-1 ring-primary' : 'border-border hover:bg-accent',
               )}
             >
@@ -44,7 +44,7 @@ export function PlanPicker({
       </div>
 
       {picked && (
-        <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs">
+        <div className="rounded-xl border border-border bg-muted/40 p-3 text-xs">
           <p className="mb-1.5 font-semibold text-foreground">
             {picked.name} — {inr(picked.listPricePerSeat, picked.currency)}/seat/mo ·{' '}
             {picked.isolationTier === 'DEDICATED' ? 'dedicated DB' : 'pooled'} (≈{' '}

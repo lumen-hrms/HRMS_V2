@@ -1,3 +1,4 @@
+import { IsValidPhone } from '../../common/phone';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -63,6 +64,7 @@ export class CreateEmployeeDto {
 
   @IsOptional()
   @IsString()
+  @IsValidPhone()
   phone?: string;
 
   @IsOptional()
@@ -145,6 +147,7 @@ export class UpdateEmployeeDto {
 
   @IsOptional()
   @IsString()
+  @IsValidPhone()
   phone?: string;
 
   @IsOptional()
@@ -292,10 +295,12 @@ export class UpsertEmergencyContactDto {
 
   @IsString()
   @MinLength(1)
+  @IsValidPhone()
   phone!: string;
 
   @IsOptional()
   @IsString()
+  @IsValidPhone()
   altPhone?: string;
 
   @IsOptional()

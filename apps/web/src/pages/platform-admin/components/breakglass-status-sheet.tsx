@@ -68,7 +68,7 @@ export function BreakGlassStatusSheet({
       }
     >
       <div className="flex flex-col gap-4 text-sm">
-        <div className="rounded-lg bg-warning/10 p-4 text-center">
+        <div className="rounded-xl bg-warning/10 p-4 text-center">
           <p className="text-xs font-semibold uppercase tracking-wide text-warning">
             Time remaining
           </p>
@@ -82,7 +82,7 @@ export function BreakGlassStatusSheet({
         <Detail label="Granted" value={fmtDateTime(grant.grantedAt)} />
         <Detail label="Reads recorded" value={String(grant.accessCount)} />
 
-        <p className="rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">
+        <p className="rounded-xl bg-muted/50 p-3 text-xs text-muted-foreground">
           Access is <strong>read-only</strong> and every query is written to the platform audit log
           and the tenant's own compliance view. It ends automatically at expiry.
         </p>

@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -6,11 +6,13 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
   IsPositive,
   IsString,
+  IsUUID,
   Matches,
   Max,
   MaxLength,
@@ -146,6 +148,41 @@ export class PtSlabQueryDto {
   @IsOptional()
   @IsEnum(IndianState)
   state?: IndianState;
+}
+
+export class ReadinessQueryDto {
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: 'period must be YYYY-MM' })
+  period!: string;
+}
+
+export class LineItemQueryDto {
+  @IsOptional() @IsString() @MaxLength(100) search?: string;
+  @IsOptional() @IsString() @MaxLength(100) department?: string;
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  hasException?: boolean;
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  adjustedOnly?: boolean;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) @Max(1000) changedOver?: number;
+  @IsOptional() @IsIn(['name', 'net', 'gross', 'change']) sort?:
+    'name' | 'net' | 'gross' | 'change';
+  @IsOptional() @IsIn(['asc', 'desc']) dir?: 'asc' | 'desc';
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) page?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) pageSize?: number;
+}
+
+export class BulkWorkStateDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(1000)
+  @IsUUID('all', { each: true })
+  employeeIds!: string[];
+
+  @IsEnum(IndianState)
+  workState!: IndianState;
 }
 
 export const PERIOD_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;

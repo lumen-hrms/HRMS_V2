@@ -116,7 +116,7 @@ export function AuditTab() {
   return (
     <div className="flex flex-col gap-4">
       {/* Sub-tabs */}
-      <div className="inline-flex gap-1 rounded-md bg-muted p-1">
+      <div className="inline-flex gap-1 rounded-xl bg-muted p-1">
         <SubTab active={feed === 'login'} onClick={() => setFeed('login')} icon={LogIn}>
           Sign-in activity
         </SubTab>
@@ -258,7 +258,7 @@ export function AuditTab() {
                 <TR key={r.id}>
                   <TD className="whitespace-nowrap text-muted-foreground">{fmtDateTimeIST(r.at)}</TD>
                   <TD>
-                    <span className="rounded bg-muted px-2 py-0.5 text-xs font-medium">
+                    <span className="rounded-xl bg-muted px-2 py-0.5 text-xs font-medium">
                       {moduleLabel(r.module)}
                     </span>
                   </TD>
@@ -334,7 +334,7 @@ function SubTab({
       type="button"
       onClick={onClick}
       className={cn(
-        'inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-sm font-medium transition-colors',
+        'inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-medium transition-colors',
         active ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
       )}
     >

@@ -184,7 +184,7 @@ export function TenantNewPage() {
             </p>
           </div>
           {pickedPlan && (
-            <p className="rounded-lg bg-muted/50 p-2.5 text-xs text-muted-foreground">
+            <p className="rounded-xl bg-muted/50 p-2.5 text-xs text-muted-foreground">
               ≈{' '}
               <strong className="text-foreground">
                 {inr(

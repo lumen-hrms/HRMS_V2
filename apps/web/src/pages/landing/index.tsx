@@ -30,6 +30,7 @@ import {
 import { trackPointer, useReveal } from './use-reveal';
 import { isApiError } from '@/lib/api';
 import { submitContactForm } from '@/lib/contact';
+import { COUNTRIES, joinPhone, phoneError, splitPhone } from '@/lib/phone';
 import './landing.css';
 
 /**
@@ -723,12 +724,24 @@ function Contact() {
   const [email, setEmail] = React.useState('');
   const [company, setCompany] = React.useState('');
   const [phone, setPhone] = React.useState('');
+  const [phoneCountry, setPhoneCountry] = React.useState('IN');
+  const [phoneMsg, setPhoneMsg] = React.useState<string | undefined>();
   const [message, setMessage] = React.useState('');
   const [status, setStatus] = React.useState<ContactStatus>('idle');
   const [error, setError] = React.useState<string | null>(null);
 
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => setPhoneMsg(phoneError(phone)), 400);
+    return () => window.clearTimeout(timer);
+  }, [phone]);
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const bad = phoneError(phone);
+    if (bad) {
+      setPhoneMsg(bad);
+      return;
+    }
     setStatus('sending');
     setError(null);
     try {
@@ -744,6 +757,7 @@ function Contact() {
       setEmail('');
       setCompany('');
       setPhone('');
+      setPhoneMsg(undefined);
       setMessage('');
     } catch (err) {
       setStatus('error');
@@ -822,16 +836,33 @@ function Contact() {
               </label>
               <label className="flex flex-col gap-1.5 text-sm">
                 <span className="text-[var(--text-2)]">Phone</span>
-                <input
-                  required
-                  type="tel"
-                  minLength={6}
-                  maxLength={40}
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="+91 98765 43210"
-                  className="form-field rounded-lg px-3.5 py-2.5 text-sm"
-                />
+                <div className="flex gap-2">
+                  <select
+                    aria-label="Country code"
+                    value={phoneCountry}
+                    onChange={(e) => {
+                      setPhoneCountry(e.target.value);
+                      setPhone(joinPhone(e.target.value, splitPhone(phone).national));
+                    }}
+                    className="form-field w-28 shrink-0 rounded-lg px-2 py-2.5 text-sm"
+                  >
+                    {COUNTRIES.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {c.code} +{c.dial}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    required
+                    type="tel"
+                    inputMode="tel"
+                    value={splitPhone(phone).national}
+                    onChange={(e) => setPhone(joinPhone(phone ? splitPhone(phone).country : phoneCountry, e.target.value))}
+                    placeholder="98765 43210"
+                    className="form-field min-w-0 flex-1 rounded-lg px-3.5 py-2.5 text-sm"
+                  />
+                </div>
+                {phoneMsg && <span className="text-xs text-red-500">{phoneMsg}</span>}
               </label>
               <label className="flex flex-col gap-1.5 text-sm sm:col-span-2">
                 <span className="text-[var(--text-2)]">Message</span>

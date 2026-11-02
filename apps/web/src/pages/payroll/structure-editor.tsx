@@ -174,7 +174,7 @@ export function StructureEditorPage() {
             </div>
 
             {exists && (
-              <p className="mb-4 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+              <p className="mb-4 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
                 Once a payroll run has used this structure, prefer <strong>Revise</strong> above —
                 it records a <code>SalaryRevision</code> and generates arrears for any
                 already-processed period a backdated change falls into. A plain in-place save

@@ -335,12 +335,12 @@ export function OrgChartPage() {
               <nav
                 aria-label="Focused team"
                 onPointerDown={(e) => e.stopPropagation()}
-                className="absolute left-3 top-3 flex max-w-[calc(100%-1.5rem)] items-center gap-1 overflow-x-auto rounded-lg border border-border bg-card/95 p-1 text-sm shadow-sm backdrop-blur"
+                className="absolute left-3 top-3 flex max-w-[calc(100%-1.5rem)] items-center gap-1 overflow-x-auto rounded-xl border border-border bg-card/95 p-1 text-sm shadow-sm backdrop-blur"
               >
                 <button
                   type="button"
                   onClick={() => clearFocus()}
-                  className="shrink-0 rounded-md px-2 py-1 font-medium text-primary hover:bg-accent"
+                  className="shrink-0 rounded-xl px-2 py-1 font-medium text-primary hover:bg-accent"
                 >
                   {scoped ? 'My chart' : 'Whole company'}
                 </button>
@@ -356,7 +356,7 @@ export function OrgChartPage() {
                       <button
                         type="button"
                         onClick={() => clearFocus(n)}
-                        className="shrink-0 rounded-md px-2 py-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                        className="shrink-0 rounded-xl px-2 py-1 text-muted-foreground hover:bg-accent hover:text-foreground"
                       >
                         {fullName(n)}
                       </button>
@@ -368,7 +368,7 @@ export function OrgChartPage() {
 
             <div
               onPointerDown={(e) => e.stopPropagation()}
-              className="absolute bottom-3 right-3 flex items-center gap-0.5 rounded-lg border border-border bg-card/95 p-1 shadow-sm backdrop-blur"
+              className="absolute bottom-3 right-3 flex items-center gap-0.5 rounded-xl border border-border bg-card/95 p-1 shadow-sm backdrop-blur"
             >
               <IconButton label="Zoom out" onClick={zoomOut}>
                 <Minus className="h-4 w-4" />
@@ -377,7 +377,7 @@ export function OrgChartPage() {
                 type="button"
                 onClick={resetZoom}
                 title="Reset to 100%"
-                className="w-12 rounded-md py-1 text-center text-xs font-medium tabular-nums text-muted-foreground hover:bg-accent hover:text-foreground"
+                className="w-12 rounded-xl py-1 text-center text-xs font-medium tabular-nums text-muted-foreground hover:bg-accent hover:text-foreground"
               >
                 {Math.round(scale * 100)}%
               </button>
@@ -395,7 +395,7 @@ export function OrgChartPage() {
                     type="button"
                     onClick={resetLayout}
                     title="Put every card back in its original position"
-                    className="flex items-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                    className="flex items-center gap-1 rounded-xl px-2 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
                   >
                     <RotateCcw className="h-3.5 w-3.5" /> Reset layout
                   </button>
@@ -450,7 +450,7 @@ function IconButton({
       onClick={onClick}
       aria-label={label}
       title={label}
-      className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+      className="rounded-xl p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
     >
       {children}
     </button>
@@ -505,7 +505,7 @@ function PeopleSearch({ nodes, onPick }: { nodes: OrgNode[]; onPick: (n: OrgNode
         role="combobox"
         aria-expanded={open && results.length > 0}
         aria-controls="org-search-results"
-        className="flex h-9 w-full rounded-md border border-input bg-card py-1 pl-8 pr-8 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="flex h-9 w-full rounded-xl border border-input bg-card py-1 pl-8 pr-8 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
       {query && (
         <button
@@ -515,7 +515,7 @@ function PeopleSearch({ nodes, onPick }: { nodes: OrgNode[]; onPick: (n: OrgNode
             setOpen(false);
           }}
           aria-label="Clear search"
-          className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+          className="absolute right-2 top-1/2 -translate-y-1/2 rounded-xl p-0.5 text-muted-foreground hover:text-foreground"
         >
           <X className="h-3.5 w-3.5" />
         </button>
@@ -524,7 +524,7 @@ function PeopleSearch({ nodes, onPick }: { nodes: OrgNode[]; onPick: (n: OrgNode
         <div
           id="org-search-results"
           role="listbox"
-          className="org-pop absolute left-0 top-full z-30 mt-1 w-full overflow-hidden rounded-lg border border-border bg-card shadow-lg"
+          className="org-pop absolute left-0 top-full z-30 mt-1 w-full overflow-hidden rounded-xl border border-border bg-card shadow-lg"
         >
           {results.length === 0 ? (
             <p className="px-3 py-2.5 text-sm text-muted-foreground">No one matches “{query.trim()}”.</p>

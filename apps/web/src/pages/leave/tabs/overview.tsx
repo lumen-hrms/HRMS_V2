@@ -155,7 +155,7 @@ function MiniStat({
 }) {
   return (
     <Card className="flex items-start gap-3 p-4">
-      <span className="flex h-9 w-9 items-center justify-center rounded-md bg-secondary text-secondary-foreground">
+      <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-secondary text-secondary-foreground">
         <Icon className="h-4 w-4" />
       </span>
       <div className="min-w-0">

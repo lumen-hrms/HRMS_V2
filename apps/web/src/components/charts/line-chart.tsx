@@ -131,7 +131,7 @@ export function LineChart({
         role="img"
         aria-label={ariaLabel}
         tabIndex={0}
-        className="block rounded outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="block rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onPointerMove={onPointerMove}
         onPointerLeave={() => setActive(null)}
         onFocus={() => setActive((a) => a ?? lastIdx)}

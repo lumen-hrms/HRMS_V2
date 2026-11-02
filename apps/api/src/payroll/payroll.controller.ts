@@ -30,10 +30,14 @@ import { SalaryStructureService } from './salary-structure.service';
 import { SalaryImportService } from './salary-import.service';
 import { MAX_IMPORT_FILE_BYTES, NDJSON, streamImport } from '../common/bulk-import';
 import { PayrollRunService } from './payroll-run.service';
+import { PayrollInsightsService } from './payroll-insights.service';
 import { TdsService } from './tds.service';
 import { FullAndFinalService } from './full-and-final.service';
 import {
   BankFileQueryDto,
+  BulkWorkStateDto,
+  LineItemQueryDto,
+  ReadinessQueryDto,
   CreatePayrollRunDto,
   GenerateFnfDto,
   PayslipQueryDto,
@@ -59,6 +63,7 @@ export class PayrollController {
     private readonly salaryImport: SalaryImportService,
     private readonly config: PayrollConfigService,
     private readonly runs: PayrollRunService,
+    private readonly insights: PayrollInsightsService,
     private readonly tds: TdsService,
     private readonly fnf: FullAndFinalService,
   ) {}
@@ -160,6 +165,51 @@ export class PayrollController {
   @Post('runs')
   createRun(@Body() dto: CreatePayrollRunDto, @CurrentUser() user: AuthenticatedUser) {
     return this.runs.createDraft(dto, user);
+  }
+
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER', 'AUDITOR')
+  @Get('runs')
+  listRuns() {
+    return this.runs.listRuns();
+  }
+
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  @Get('readiness')
+  getReadiness(@Query() query: ReadinessQueryDto) {
+    return this.insights.getReadiness(query.period);
+  }
+
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  @Get('people')
+  listPeople() {
+    return this.insights.listPeople();
+  }
+
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  @Post('people/work-state')
+  bulkSetWorkState(@Body() dto: BulkWorkStateDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.insights.bulkSetWorkState(dto.employeeIds, dto.workState, user);
+  }
+
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER', 'AUDITOR')
+  @Get('runs/:id/summary')
+  getRunSummary(@Param('id', ParseUUIDPipe) id: string) {
+    return this.insights.getRunSummary(id);
+  }
+
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  @Get('runs/:id/line-items')
+  listLineItems(@Param('id', ParseUUIDPipe) id: string, @Query() query: LineItemQueryDto) {
+    return this.insights.listLineItems(id, query);
+  }
+
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  @Get('runs/:id/line-items/:employeeId')
+  getLineItemDetail(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('employeeId', ParseUUIDPipe) employeeId: string,
+  ) {
+    return this.insights.getLineItemDetail(id, employeeId);
   }
 
   @Roles('COMPANY_ADMIN', 'HR_MANAGER', 'AUDITOR')

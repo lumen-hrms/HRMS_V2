@@ -399,7 +399,7 @@ function RowActions({
   return (
     <DropdownMenu
       trigger={
-        <span className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
+        <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl text-muted-foreground hover:bg-accent hover:text-foreground">
           <MoreHorizontal className="h-4 w-4" />
         </span>
       }
@@ -452,7 +452,7 @@ function StatTile({
         {label}
       </span>
       {value == null ? (
-        <div className="mt-1 h-8 w-12 animate-pulse rounded bg-muted" />
+        <div className="mt-1 h-8 w-12 animate-pulse rounded-xl bg-muted" />
       ) : (
         <span
           className={

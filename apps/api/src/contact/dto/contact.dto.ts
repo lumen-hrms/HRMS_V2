@@ -1,4 +1,5 @@
 import { Transform } from 'class-transformer';
+import { IsValidPhone } from '../../common/phone';
 import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator';
 
 const trim = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
@@ -26,6 +27,7 @@ export class CreateContactSubmissionDto {
   @IsString()
   @MinLength(6)
   @MaxLength(40)
+  @IsValidPhone()
   phone!: string;
 
   @Transform(trim)

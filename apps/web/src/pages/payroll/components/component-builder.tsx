@@ -105,7 +105,7 @@ export function ComponentBuilder({
         </Field>
       </div>
 
-      <div className="flex items-center gap-4 rounded-md border border-border bg-muted/40 p-3 text-sm">
+      <div className="flex items-center gap-4 rounded-xl border border-border bg-muted/40 p-3 text-sm">
         <span className="text-muted-foreground">Monthly CTC</span>
         <span className="font-medium tabular-nums">{formatMoney(monthlyCtc)}</span>
         <span className="text-muted-foreground">Basic % of CTC</span>

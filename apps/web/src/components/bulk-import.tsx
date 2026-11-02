@@ -145,7 +145,7 @@ function ImportProgressPanel({
   const pct = progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
 
   return (
-    <div className="flex flex-col gap-2 rounded-md border border-border bg-muted/40 p-4" role="status" aria-live="polite">
+    <div className="flex flex-col gap-2 rounded-xl border border-border bg-muted/40 p-4" role="status" aria-live="polite">
       <div className="flex items-center justify-between gap-3 text-sm">
         <span className="flex items-center gap-2 font-medium">
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -308,7 +308,7 @@ export function BulkImport({
               onChange={chooseFile}
               disabled={busy !== null}
             />
-            <span className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm font-medium hover:bg-accent">
+            <span className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-border px-3 py-1.5 text-sm font-medium hover:bg-accent">
               <Upload className="h-4 w-4" />
               {busy === 'preview' ? 'Checking…' : file ? 'Choose a different file' : 'Choose file'}
             </span>
@@ -377,7 +377,7 @@ export function BulkImport({
                 Ignored unrecognised columns: {report.ignoredColumns.join(', ')}
               </p>
             )}
-            <div className="max-h-[28rem] overflow-auto rounded-md border border-border">
+            <div className="max-h-[28rem] overflow-auto rounded-xl border border-border">
               <Table>
                 <THead>
                   <TR>

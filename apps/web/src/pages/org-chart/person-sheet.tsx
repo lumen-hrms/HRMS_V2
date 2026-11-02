@@ -57,7 +57,7 @@ export function PersonSheet({
           )}
           <Link
             to={`/employees/${node.id}`}
-            className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90"
+            className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90"
           >
             Open full profile <ExternalLink className="h-4 w-4" />
           </Link>
@@ -86,7 +86,7 @@ export function PersonSheet({
             {node.workEmail && (
               <a
                 href={`mailto:${node.workEmail}`}
-                className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-border bg-card text-sm font-medium hover:bg-accent"
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-border bg-card text-sm font-medium hover:bg-accent"
               >
                 <Mail className="h-4 w-4" /> Email
               </a>
@@ -94,7 +94,7 @@ export function PersonSheet({
             {node.phone && (
               <a
                 href={`tel:${node.phone.replace(/\s+/g, '')}`}
-                className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-border bg-card text-sm font-medium hover:bg-accent"
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-border bg-card text-sm font-medium hover:bg-accent"
               >
                 <Phone className="h-4 w-4" /> Call
               </a>
@@ -193,7 +193,7 @@ function PersonRow({ person, onClick }: { person: OrgNode; onClick: () => void }
     <button
       type="button"
       onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-lg p-1.5 text-left hover:bg-accent"
+      className="flex w-full items-center gap-3 rounded-xl p-1.5 text-left hover:bg-accent"
     >
       <PersonAvatar person={person} size={32} />
       <div className="min-w-0 flex-1">

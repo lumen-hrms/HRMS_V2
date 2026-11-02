@@ -21,6 +21,7 @@ import {
   type SetupValidation,
   type SubmitResult,
 } from '@/lib/setup';
+import { isRequiredMessage, localSetupErrors, type LocalErrors } from '@/lib/setup-rules';
 import {
   AttendanceStep,
   CompanyStep,
@@ -33,6 +34,9 @@ import {
 } from '@/pages/setup/steps';
 import lumenMarkDark from '@/assets/brand/lumen-mark-dark.png';
 import lumenMarkWhite from '@/assets/brand/lumen-mark-white.png';
+
+const VALIDATE_DEBOUNCE_MS = 600;
+const LOCAL_DEBOUNCE_MS = 400;
 
 /**
  * Company setup — the full-screen first run a Company Admin must complete
@@ -58,6 +62,10 @@ export function SetupPage() {
     balances: null,
   });
   const [issues, setIssues] = React.useState<SetupIssue[]>([]);
+  // In-browser field checks (see lib/setup-rules.ts), refreshed shortly after typing stops.
+  const [localErrors, setLocalErrors] = React.useState<LocalErrors>({});
+  // Steps where the user already tried to continue — only then do "is required" messages show.
+  const [attempted, setAttempted] = React.useState<Set<SetupStepId>>(new Set());
   const [savedAt, setSavedAt] = React.useState<string | null>(null);
   const [dirty, setDirty] = React.useState(false);
   const [step, setStep] = React.useState(0);
@@ -106,6 +114,36 @@ export function SetupPage() {
     setDirty(true);
   }, []);
 
+  // Re-validate shortly after typing stops, so field messages clear as soon as
+  // the value is fixed (not only on Next). Saving the draft returns the validation.
+  React.useEffect(() => {
+    if (!dirty || !draft) return;
+    let stale = false;
+    const timer = window.setTimeout(() => {
+      setupApi
+        .save(draft)
+        .then(({ savedAt: at, validation }) => {
+          if (stale) return;
+          setSavedAt(at);
+          setDirty(false);
+          applyValidation(validation);
+        })
+        .catch(() => {
+          /* silent: the explicit save on Next/Back reports failures */
+        });
+    }, VALIDATE_DEBOUNCE_MS);
+    return () => {
+      stale = true;
+      window.clearTimeout(timer);
+    };
+  }, [draft, dirty, applyValidation]);
+
+  React.useEffect(() => {
+    if (!draft) return;
+    const timer = window.setTimeout(() => setLocalErrors(localSetupErrors(draft)), LOCAL_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [draft]);
+
   /** Saves pending edits (if any) and re-validates; null when the save failed. */
   async function save(): Promise<SetupValidation | null> {
     if (!draft) return null;
@@ -140,6 +178,7 @@ export function SetupPage() {
     if (!v) return;
     const blocking = v.issues.filter((i) => i.step === current && i.level === 'error');
     if (blocking.length > 0) {
+      setAttempted((a) => new Set(a).add(current));
       toast({ title: `Fix ${blocking.length} problem${blocking.length === 1 ? '' : 's'} on this step to continue`, tone: 'error' });
       return;
     }
@@ -216,8 +255,14 @@ export function SetupPage() {
     }
   }
 
-  const fieldErr = (id: SetupStepId) => (field: string) =>
-    issuesFor(id).find((i) => i.level === 'error' && i.field === field)?.message;
+  const fieldErr = (id: SetupStepId) => (field: string) => {
+    const tried = attempted.has(id);
+    const local = localErrors[id]?.[field];
+    if (local) return local.required && !tried ? undefined : local.message;
+    const server = issuesFor(id).find((i) => i.level === 'error' && i.field === field)?.message;
+    if (!server) return undefined;
+    return isRequiredMessage(server) && !tried ? undefined : server;
+  };
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
@@ -264,7 +309,7 @@ export function SetupPage() {
                       disabled={i > furthest}
                       onClick={() => void goTo(i)}
                       className={cn(
-                        'flex w-full items-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-left text-sm',
+                        'flex w-full items-center gap-2 whitespace-nowrap rounded-xl px-3 py-2 text-left text-sm',
                         i === step ? 'bg-secondary font-medium' : 'hover:bg-accent',
                         i > furthest && 'cursor-not-allowed opacity-50',
                       )}
@@ -433,7 +478,7 @@ function Review({
           </CardHeader>
           <CardContent className="flex flex-col gap-1.5">
             {errors.map((i, n) => (
-              <button key={n} type="button" onClick={() => onJump(i.step)} className="rounded-md bg-destructive/10 px-3 py-2 text-left text-xs text-destructive hover:underline">
+              <button key={n} type="button" onClick={() => onJump(i.step)} className="rounded-xl bg-destructive/10 px-3 py-2 text-left text-xs text-destructive hover:underline">
                 {label(i.step)}
                 {i.row ? ` · row ${i.row}` : ''}: {i.message}
               </button>
@@ -449,7 +494,7 @@ function Review({
           </CardHeader>
           <CardContent className="flex flex-col gap-1.5">
             {warnings.map((i, n) => (
-              <p key={n} className="rounded-md bg-warning/10 px-3 py-2 text-xs text-warning">
+              <p key={n} className="rounded-xl bg-warning/10 px-3 py-2 text-xs text-warning">
                 {label(i.step)}
                 {i.row ? ` · row ${i.row}` : ''}: {i.message}
               </p>
@@ -473,7 +518,7 @@ function SubmitDone({ result, onContinue }: { result: SubmitResult; onContinue: 
         the workspace can use Lumen now.
       </p>
       {result.loginFailures.length > 0 && (
-        <div className="w-full rounded-md bg-warning/10 p-3 text-left text-xs text-warning">
+        <div className="w-full rounded-xl bg-warning/10 p-3 text-left text-xs text-warning">
           <p className="font-medium">
             {result.loginFailures.length} login{result.loginFailures.length === 1 ? '' : 's'} couldn’t be created — the
             employees were saved. Retry from the dashboard:

@@ -203,7 +203,7 @@ only adds and updates, never deletes.
 
 | # | Step | Captures |
 |---|---|---|
-| 1 | Company | `company_profiles` (legal name, address, state, PIN, contact, optional GSTIN/CIN) + the **go-live date** (`tenant_settings.go_live_date`) |
+| 1 | Company | `company_profiles` (legal name, address, state, PIN, contact, **required** GSTIN, optional CIN; phones are country-code + per-country format) + the **go-live date** (`tenant_settings.go_live_date`) |
 | 2 | Departments | at least one |
 | 3 | Your profile | the submitting admin's own employee record, linked to their login (or "I'm not an employee") |
 | 4 | Work week & shifts | time zone, weekly offs, shifts, exactly one default |

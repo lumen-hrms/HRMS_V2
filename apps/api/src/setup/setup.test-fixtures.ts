@@ -13,6 +13,7 @@ export function validDraft(overrides: Partial<SetupDraft> = {}): SetupDraft {
       pincode: '411001',
       contactEmail: 'hr@acme.example',
       contactPhone: '9876543210',
+      gstin: '27AAPFU0939F1ZV',
     },
     profile: {
       notAnEmployee: false,

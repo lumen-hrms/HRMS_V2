@@ -104,7 +104,7 @@ export function BreakGlassDialog({
           </>
         ) : (
           <>
-            <div className="mb-4 flex items-start gap-3 rounded-lg bg-warning/10 p-3 text-sm text-warning">
+            <div className="mb-4 flex items-start gap-3 rounded-xl bg-warning/10 p-3 text-sm text-warning">
               <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
               <span>
                 You will get <strong>read-only</strong>, <strong>time-boxed</strong>,

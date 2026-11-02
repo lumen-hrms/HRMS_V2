@@ -1,4 +1,5 @@
 import { IndianState } from '@prisma/client';
+import { phoneError } from '../common/phone';
 
 /**
  * Company profile rules, shared by `PATCH /api/tenant-config/company-profile`
@@ -18,8 +19,8 @@ export interface CompanyProfileInput {
 }
 
 export const PINCODE_PATTERN = /^[1-9]\d{5}$/;
-export const PHONE_PATTERN = /^(\+91[\s-]?)?[6-9]\d{9}$/;
 export const GSTIN_PATTERN = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+export const CITY_PATTERN = /^\p{L}[\p{L} .'’-]{1,79}$/u;
 export const CIN_PATTERN = /^[LU]\d{5}[A-Z]{2}\d{4}[A-Z]{3}\d{6}$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const STATES = new Set<string>(Object.values(IndianState));
@@ -39,6 +40,21 @@ export function companyProfileErrors(p: CompanyProfileInput): Record<string, str
   for (const [field, label] of required) {
     if (!String(p[field] ?? '').trim()) errors[field] = `${label} is required`;
   }
+  const len = (v: string | null | undefined) => (v ?? '').trim().length;
+  if (!errors.legalName && (len(p.legalName) < 2 || len(p.legalName) > 150)) {
+    errors.legalName = 'Legal name must be 2–150 characters';
+  }
+  if (!errors.addressLine1 && len(p.addressLine1) > 200) {
+    errors.addressLine1 = 'Address can be at most 200 characters';
+  }
+  if (len(p.addressLine2) > 200)
+    errors.addressLine2 = 'Address line 2 can be at most 200 characters';
+  if (!errors.city && !CITY_PATTERN.test(p.city!.trim())) {
+    errors.city = 'City must be 2–80 letters (spaces, . ’ - allowed)';
+  }
+  if (!errors.contactEmail && len(p.contactEmail) > 254) {
+    errors.contactEmail = 'Email can be at most 254 characters';
+  }
   if (p.state && !STATES.has(p.state)) errors.state = 'Pick a state from the list';
   if (p.pincode && !PINCODE_PATTERN.test(p.pincode.trim())) {
     errors.pincode = 'PIN code must be 6 digits';
@@ -46,9 +62,8 @@ export function companyProfileErrors(p: CompanyProfileInput): Record<string, str
   if (p.contactEmail && !EMAIL_PATTERN.test(p.contactEmail.trim())) {
     errors.contactEmail = 'Enter a valid email address';
   }
-  if (p.contactPhone && !PHONE_PATTERN.test(p.contactPhone.replace(/\s/g, ''))) {
-    errors.contactPhone = 'Enter a 10-digit Indian mobile number';
-  }
+  const phoneProblem = p.contactPhone ? phoneError(p.contactPhone) : undefined;
+  if (phoneProblem) errors.contactPhone = phoneProblem;
   if (p.gstin && !GSTIN_PATTERN.test(p.gstin.trim().toUpperCase())) {
     errors.gstin = 'GSTIN must be 15 characters, e.g. 27AAPFU0939F1ZV';
   }

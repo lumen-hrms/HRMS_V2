@@ -161,7 +161,7 @@ export function Combobox({
           }
         }}
         className={cn(
-          'flex h-9 w-full items-center gap-2 rounded-md border border-input bg-card/60 px-3 py-1 text-left text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
+          'flex h-9 w-full items-center gap-2 rounded-xl border border-input bg-card/60 px-3 py-1 text-left text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
           open && 'ring-2 ring-ring',
           className,
         )}
@@ -184,7 +184,7 @@ export function Combobox({
           <div
             ref={panelRef}
             style={{ position: 'fixed', ...pos, maxHeight: PANEL_MAX_H }}
-            className="z-[60] flex flex-col overflow-hidden glass-strong rounded-lg text-card-foreground"
+            className="z-[60] flex flex-col overflow-hidden glass-strong rounded-xl text-card-foreground"
           >
             <div className="relative border-b border-border">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -221,7 +221,7 @@ export function Combobox({
                     onMouseEnter={() => setActive(i)}
                     onClick={() => pick(o)}
                     className={cn(
-                      'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left',
+                      'flex w-full items-center gap-2.5 rounded-xl px-2 py-1.5 text-left',
                       i === active && 'bg-accent',
                     )}
                   >

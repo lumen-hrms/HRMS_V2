@@ -74,20 +74,20 @@ export function LeaveMonthCalendar({
         <div className="flex items-center gap-1">
           <button
             onClick={() => onMonthChange(new Date(year, m - 1, 1))}
-            className="rounded p-1 hover:bg-accent"
+            className="rounded-xl p-1 hover:bg-accent"
             aria-label="Previous month"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
           <button
             onClick={() => onMonthChange(new Date())}
-            className="rounded px-2 py-1 text-xs font-medium hover:bg-accent"
+            className="rounded-xl px-2 py-1 text-xs font-medium hover:bg-accent"
           >
             Today
           </button>
           <button
             onClick={() => onMonthChange(new Date(year, m + 1, 1))}
-            className="rounded p-1 hover:bg-accent"
+            className="rounded-xl p-1 hover:bg-accent"
             aria-label="Next month"
           >
             <ChevronRight className="h-4 w-4" />
@@ -115,7 +115,7 @@ export function LeaveMonthCalendar({
             <div
               key={key}
               className={cn(
-                'min-h-16 rounded-md border p-1 text-left',
+                'min-h-16 rounded-xl border p-1 text-left',
                 isOff || holiday ? 'bg-muted/60' : 'bg-card',
                 inHighlight ? 'border-primary ring-1 ring-primary' : 'border-border',
               )}
@@ -140,7 +140,7 @@ export function LeaveMonthCalendar({
                 {dayEntries.slice(0, 3).map((e) => (
                   <span
                     key={e.requestId + key}
-                    className="truncate rounded px-1 text-[10px] font-medium text-white"
+                    className="truncate rounded-xl px-1 text-[10px] font-medium text-white"
                     style={{ background: e.colorToken, opacity: e.status === 'APPROVED' ? 1 : 0.55 }}
                     title={`${e.employeeName} · ${e.leaveTypeCode} · ${e.status}`}
                   >
