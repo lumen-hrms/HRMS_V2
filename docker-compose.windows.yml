@@ -1,0 +1,9 @@
+# Overlay for run-windows.bat. Applied on top of docker-compose.yml.
+#
+# minio/minio was removed from Docker Hub (and quay.io/minio/minio is closed),
+# so a machine without a cached copy can't pull it. This swaps in the
+# community-maintained fork, pinned so it can't change underneath us. It ships
+# `mc`, so the healthcheck in docker-compose.yml works unchanged.
+services:
+  minio:
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z

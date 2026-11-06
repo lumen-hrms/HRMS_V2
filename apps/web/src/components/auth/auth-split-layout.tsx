@@ -73,7 +73,7 @@ export function AuthSplitLayout({
           className="brand-in relative z-[2] mb-5 max-w-[360px] text-[26px] font-bold leading-[1.3]"
           style={{ color: '#f3f5fa', animationDelay: '80ms' }}
         >
-          Empower People. Build Tomorrow.
+          People operations, illuminated.
         </h2>
         {taglineLines.map((line, i) => (
           <p
