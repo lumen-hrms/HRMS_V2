@@ -2,6 +2,9 @@ import { EmployeeInsightsService } from './employee-insights.service';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
 
 const d = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+// A date `offset` days from today, so tests that depend on "today" don't rot.
+const day = (offset: number) =>
+  new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
 
 const user = {
   sub: 'u-me',
@@ -99,8 +102,8 @@ describe('EmployeeInsightsService.build', () => {
       leaves: [
         {
           employeeId: 'peer',
-          startDate: d('2026-10-31'),
-          endDate: d('2026-11-02'),
+          startDate: d(day(-1)),
+          endDate: d(day(1)),
           halfDay: false,
         },
       ],

@@ -6,8 +6,16 @@ import { useToast } from '@/components/ui/toast';
  * Shared bits for module 09 (Documents) — every uploaded file is
  * `PENDING_SCAN` until the server's malware scan clears it, and only a
  * `CLEAN` file can be downloaded (docs/modules/09_DOCUMENTS.md §3).
+ * `UNSCANNED` is what the API reports instead of `PENDING_SCAN`/`SCAN_FAILED`
+ * when the deployment has `DOCUMENT_SCANNING_ENABLED=false` (no clamd): the
+ * file was never scanned, and is downloadable.
  */
-export type ScanStatus = 'PENDING_SCAN' | 'CLEAN' | 'INFECTED' | 'SCAN_FAILED';
+export type ScanStatus = 'PENDING_SCAN' | 'CLEAN' | 'INFECTED' | 'SCAN_FAILED' | 'UNSCANNED';
+
+/** Only a scanned-clean file, or one from a scan-disabled deployment, can be opened. */
+export function canDownload(status: ScanStatus): boolean {
+  return status === 'CLEAN' || status === 'UNSCANNED';
+}
 
 export interface DocumentRef {
   id: string;

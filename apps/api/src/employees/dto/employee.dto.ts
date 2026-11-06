@@ -222,7 +222,7 @@ export class UpdateEmployeeDto {
 }
 
 // Statutory + bank fields are a dedicated endpoint, not the general PATCH,
-// because PAN/bank account need KMS field encryption (CLAUDE.md) on write —
+// because PAN/bank account need field encryption (CLAUDE.md) on write —
 // the general update path never touches ciphertext.
 export class UpdateSensitiveFieldsDto {
   @IsOptional()

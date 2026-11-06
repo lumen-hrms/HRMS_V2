@@ -20,8 +20,8 @@ and the per-role screen map. Pair it with:
 
 > **Field scope note (updated 2026-09-11):** the full SRS-driven field set
 > below is **live in the API** — identity/personal, employment,
-> compensation-adjacent, statutory (KMS-encrypted PAN), bank
-> (KMS-encrypted account number), emergency contacts, and document
+> compensation-adjacent, statutory (field-encrypted PAN), bank
+> (field-encrypted account number), emergency contacts, and document
 > category/delete are all real endpoints today (`docs/modules/
 > 03_EMPLOYEE_MASTER.md` §4). `apps/web/src/pages/employees/{detail,list}.tsx`
 > now render this prompt's target header-banner + internal-tabs detail page

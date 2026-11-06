@@ -5,7 +5,7 @@
 > build prompt is `docs/ui-build-prompts/03-employee-master.md`.
 >
 > **Status:** 🟡 — the full field set (identity/personal, employment,
-> compensation-adjacent, statutory with KMS encryption, bank, emergency
+> compensation-adjacent, statutory with field encryption, bank, emergency
 > contacts), the lifecycle state machine, bulk-import UI, document
 > hardening, department edit/delete-with-reassign, the interactive org
 > chart, a real photo upload and the reveal-reason confirm dialog are all
@@ -45,7 +45,7 @@ Attendance, Payroll, Compliance, Dashboard, Org Chart) references an
 - **bulk onboarding** via an Excel template with per-row validation.
 
 **In scope (V1):** full field set, in the UI and persisted — identity/personal,
-employment, compensation-adjacent, statutory (KMS-encrypted PAN, bank),
+employment, compensation-adjacent, statutory (field-encrypted PAN, bank),
 emergency contacts; Department (with edit/delete-and-reassign) + single
 reporting line; org chart (rooted per role, searchable, pan/zoom,
 hover contact card); bulk import (both API and UI); documents (upload/list/download/
@@ -179,7 +179,7 @@ default — see `TENANT_CONFIGURATION.md`) · `lifecycleState` ✅ (see §4.4) �
 salary **structure** still lives in Payroll (module 07, not built); this
 stays only the headline number for reference/reports.
 
-**Statutory (India)** — ✅ all persisted: `pan` (**KMS-encrypted** —
+**Statutory (India)** — ✅ all persisted: `pan` (**field-encrypted** —
 `panCiphertext` + a precomputed `panMasked` (`ABCDE****F`); plaintext never
 stored) · `aadhaarLast4` (**exactly 4 digits — never the full 12**,
 enforced by DTO validation) · `uan` · `pfNumber` · `esicNumber` ·
@@ -188,7 +188,7 @@ enforced by DTO validation) · `uan` · `pfNumber` · `esicNumber` ·
 `PATCH /employees/:id`.
 
 **Bank (disbursement)** — ✅ `bankAccountHolderName` ·
-`bankAccountNumber` (**KMS-encrypted** — `bankAccountCiphertext` +
+`bankAccountNumber` (**field-encrypted** — `bankAccountCiphertext` +
 `bankAccountMasked` (`••••1234`); same dedicated endpoint as statutory) ·
 `bankIfsc` (`^[A-Z]{4}0[A-Z0-9]{6}$`) · `bankName` · `bankBranch` ·
 `bankAccountType` (`SAVINGS|CURRENT`).
@@ -314,16 +314,14 @@ lists a bucket or returns a raw key.
 
 - Default `Shift` + weekly-off from `TENANT_CONFIGURATION.md` (for
   `shiftId = null`).
-- **Field encryption key — built, interim.** `FieldEncryptionService`
+- **Field encryption key — built.** `FieldEncryptionService`
   (`apps/api/src/crypto`) does AES-256-GCM with a data key from
   `FIELD_ENCRYPTION_KEY` (base64, 32 bytes; `openssl rand -base64 32`).
   Resolved lazily (not at boot), so a tenant with the var unset can still
   run the API — only a PAN/bank write or reveal fails, with a clear message.
-  This is the "KMS data key" half of the envelope today; the key itself is
-  a static secret in the team vault, not yet wrapped by a real AWS KMS
-  master key — that lands with the production AWS migration
-  (`CLAUDE.md`'s Stack table). Swapping the key source later only touches
-  this one file, since callers only ever see `encrypt`/`decrypt`.
+  The key is a static secret in the team vault; AWS KMS is deliberately
+  not used. Changing the key source later only touches this one file,
+  since callers only ever see `encrypt`/`decrypt`.
 
 ---
 
@@ -571,7 +569,7 @@ Supabase dev DB** via `./scripts/dev.sh migrate`):
 ## 10. Dependencies
 
 **Upstream:** module 01 (linked-login provisioning, `scopeFor` uses
-`req.user`) · `TENANT_CONFIGURATION.md` (default shift) · KMS · Storage
+`req.user`) · `TENANT_CONFIGURATION.md` (default shift) · Storage
 (module 09).
 
 **Downstream (consumers of `Employee`):**

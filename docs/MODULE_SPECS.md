@@ -21,8 +21,31 @@
 > spec draft that is no longer maintained — ignore them; this file and the
 > code are the source of truth.)
 >
-> **Last synced to code:** 2026-11-02. Landed since the previous sync
+> **Last synced to code:** 2026-11-06. Landed since the previous sync
 > (dated 2026-10-29):
+>
+> - **Documents: scanning switch (module 09 stays ✅ 100%).**
+>   `DOCUMENT_SCANNING_ENABLED=false` turns the ClamAV scan off for
+>   environments with no clamd; uploads are then downloadable and shown as
+>   "Not scanned" (`UNSCANNED`), `INFECTED` stays blocked, downloads are
+>   audited with `scanned:false`, and turning it back on scans the backlog.
+>   Default on — fail-closed behaviour is unchanged. Tests added.
+>
+> - **Payroll: bank advice file groundwork (module 07 stays ✅ 100%).** The
+>   company's own bank (the account salaries are paid FROM — encrypted, masked
+>   on read; table `payroll_bank_config`, migration
+>   `20261206090000_payroll_bank_config`) is set under Payroll › Settings ›
+>   Bank & disbursement. After a run is processed, the run page's **Bank file**
+>   dialog shows a pre-download check — count, total, split by payment mode
+>   (same-bank vs NEFT/IMPS/RTGS, from the IFSC prefix; RTGS < ₹2L and IMPS >
+>   ₹5L fall back to NEFT), and every employee left out by name with the reason
+>   (missing or malformed account/IFSC, bad name, zero pay) — then downloads
+>   it. Formats live in a versioned registry (`BANK_FORMATS`): the generic CSV
+>   works; ICICI, Axis, SBI, HDFC and HSBC are listed as "layout coming soon"
+>   until each bank's real template + an accepted sample are added. Each
+>   download is audited. The app still moves no money; Disburse is bookkeeping.
+>   New API: `GET/PUT /payroll/config/bank`, `GET /payroll/bank-formats`,
+>   `GET /payroll/runs/:id/bank-file[/preview]` (`PayrollBankService`).
 >
 > - **Payroll: screens redesigned (module 07 stays ✅ 100%).** The Payroll page
 >   is now Overview · Runs · People & Pay · Settings (+ My Pay), with the tab
@@ -566,9 +589,8 @@
 >   field set: identity/personal extras, employment extras,
 >   compensation-adjacent, statutory + bank. PAN
 >   and the bank account number are AES-256-GCM field-encrypted
->   (`FieldEncryptionService`, `apps/api/src/crypto` — the app-layer half of
->   CLAUDE.md's KMS non-negotiable; a real AWS KMS-wrapped key is a later
->   swap) with a dedicated `PATCH .../sensitive-fields` write path and a
+>   (`FieldEncryptionService`, `apps/api/src/crypto` — the app-layer PII
+>   encryption non-negotiable in CLAUDE.md; AWS KMS is deliberately not used) with a dedicated `PATCH .../sensitive-fields` write path and a
 >   logged `POST .../reveal`. New: emergency-contact CRUD; document MIME/size
 >   enforcement moved server-side plus `category` + delete; department
 >   `PATCH`/`DELETE` (RULE-6 reassign guard); the org chart now roots per
@@ -656,7 +678,7 @@
 |---|---|---|
 | 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ | `████████████████████` 100% — auth/RBAC/tenancy live; `access` module wired (Users, role/status/reset, login+access audit, My Account) with e2e RBAC + append-only tests; `LoginAuditEntry` table written on every session outcome, with a daily BullMQ job purging entries past the 2-year retention window. `BAD_CREDENTIALS`/`TENANT_SUSPENDED` staying server-unobserved is an owner-approved scope decision (§1), not a gap |
 | 2. Platform Admin | ✅ | `███████████████████░` 99% — full operator console UI (tenants list, new-tenant wizard, tenant detail tabs, **Plans catalog**, **Leads**, **Settings**, audit screen); onboarding emails a hosted reset link; **operator-editable `platform.plans`** (per-seat list price / default seats / modules / features / isolation tier) with snapshot-at-assign + re-snapshot-on-renewal; **per-tenant negotiated per-seat rate** (`PATCH .../pricing`; monthly = rate × seats, computed); **trial lifecycle** (`trialEndsAt`, daily `expire-trials` → `READ_ONLY`, `PATCH .../trial`, `POST .../convert`, Tenant guide tab); `PATCH .../plan` + `POST .../renew` live (renewal now also runs on a daily scheduled job off `renewsAt`); `PlatformAuditLog` written for every operator action and readable (`GET .../audit`), now true append-only at the DB grant level; `GET tenants/:id` and `POST .../refresh-headcount` live. The public landing-page contact form (`POST /api/contact`, no tenant, rate-limited) writes an append-only lead + best-effort notifies the operator-configured recipient list (`GET`/`PATCH .../settings`). Break-glass has a full audited request/track/expire/revoke lifecycle but does not yet grant an operator actual elevated tenant-data access during the window — that escalation mechanism is a deliberate follow-on |
-| 3. Employee Master + Org Structure | ✅ | `████████████████████` 100% — lifecycle state machine, the full field set (statutory/bank via KMS-style AES-256-GCM encryption, emergency contacts, comp-adjacent fields), bulk-import UI, document hardening, department edit/delete-with-reassign, an interactive org chart (pan/zoom canvas, search, expand/collapse, subtree focus, hover contact card, quick-view), a real photo-upload widget, a proper reveal-reason dialog, and Leave's recursive Line-Manager scoping mirror are all live. Only the deliberately-deferred BU→Team hierarchy remains |
+| 3. Employee Master + Org Structure | ✅ | `████████████████████` 100% — lifecycle state machine, the full field set (statutory/bank via AES-256-GCM encryption, emergency contacts, comp-adjacent fields), bulk-import UI, document hardening, department edit/delete-with-reassign, an interactive org chart (pan/zoom canvas, search, expand/collapse, subtree focus, hover contact card, quick-view), a real photo-upload widget, a proper reveal-reason dialog, and Leave's recursive Line-Manager scoping mirror are all live. Only the deliberately-deferred BU→Team hierarchy remains |
 | 4. Leave Management | ✅ | `████████████████████` 100% — backend fully wired & tested; FE live path built and running against the real API by default (`client.ts`'s `USE_MOCK` now defaults to **off**, matching `access/client.ts` — set `VITE_LEAVE_MOCK=true` to force the fixture store); `allowLopRequests`/`minNoticeDays`/`fyStartMonth`/`genderRestriction`/`requiresApproval` all enforced/settable; one entitlement engine (prorated annual grants, monthly/quarterly back-credit, go-live/joining-date clipping, opening balances, year-end carry-forward); event-based maternity/paternity/marriage leave (per-event allowance, limits, windows, proof); optional holidays are working days, taken via Restricted Holiday leave; holiday CSV/XLSX import; comp-off credit on holiday/weekly-off clock-in; approved leave reconciles into `AttendanceRecord.ON_LEAVE` |
 | 5. Attendance & Time Tracking | ✅ | `████████████████████` 100% — reads the tenant's `Shift`/`tenant_settings` config, gated behind the `ATTENDANCE` plan entitlement; punches write-path, a nightly finalization job (holiday → weekly-off → punches → genuine absence; skips tenants in setup and days before go-live), full regularization approval (window/cap enforcement, approve/reject/bulk-approve, audited, auto-resolved at payroll cut-off), manager/HR team roster + manual marking, overtime hours, and a `getLopDays()` export contract for Payroll are all live. GPS/biometric/selfie-QR capture and `POST /attendance/ingest` stay explicitly deferred (CLAUDE.md) |
 | 6. Dashboard | ✅ | `████████████████████` 100% — role-branched `GET /api/dashboard` (admin aggregates vs. personal view) includes an own-attendance "today" snapshot for every role with a linked employee record, gated on the tenant's `ATTENDANCE` entitlement, plus quick actions (clock in/out/break, approve/reject a pending request) that call Attendance's/Leave's own existing endpoints directly and re-fetch the dashboard afterward — no new mutation surface. Admin payroll-cost/attrition tiles and an upcoming-payslip date stay explicitly blocked on Payroll (module 07, not built) — same "not counted against 100%" treatment as Attendance's own Payroll-blocked items. Deep spec: `docs/modules/06_DASHBOARD.md` |
@@ -692,7 +714,7 @@ live e-filing APIs, SSO.
   set on the same connection/transaction. New tables must carry `tenant_id`,
   an `@@index([tenantId])`, and an RLS policy in the roles/RLS migration.
 - **Money:** `NUMERIC`, never float. **Timestamps:** `TIMESTAMPTZ`, stored
-  UTC, displayed IST. **PII (PAN, bank a/c):** app-layer KMS encryption on
+  UTC, displayed IST. **PII (PAN, bank a/c):** app-layer AES-256-GCM encryption on
   top of at-rest. **Aadhaar:** last 4 digits only.
 - **DTOs / enums shared with the frontend** go in `packages/shared-types`.
 - **OpenAPI** (`@nestjs/swagger`) is the API contract — annotate new

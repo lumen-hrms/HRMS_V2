@@ -41,11 +41,16 @@ jobs:
           RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
           RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
           APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          # Repo *variable* (Settings → Variables), not a secret. Set to `false`
+          # on a box with no clamd: the API serves uploads unscanned and the
+          # ClamAV container below is skipped (and stopped if it exists).
+          # Unset/anything else = scanning on. docs/modules/09_DOCUMENTS.md.
+          DOCUMENT_SCANNING_ENABLED: ${{ vars.DOCUMENT_SCANNING_ENABLED }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2SSHKEY }}
-          envs: S3_ENDPOINT,S3_REGION,S3_ACCESS_KEY,S3_SECRET_KEY,S3_BUCKET,SES_REGION,SES_FROM_ADDRESS,SES_CONFIGURATION_SET,SES_EVENTS_TOPIC_ARN,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,APP_BASE_URL,RAZORPAY_KEY_ID,RAZORPAY_KEY_SECRET,RAZORPAY_WEBHOOK_SECRET
+          envs: S3_ENDPOINT,S3_REGION,S3_ACCESS_KEY,S3_SECRET_KEY,S3_BUCKET,SES_REGION,SES_FROM_ADDRESS,SES_CONFIGURATION_SET,SES_EVENTS_TOPIC_ARN,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,APP_BASE_URL,RAZORPAY_KEY_ID,RAZORPAY_KEY_SECRET,RAZORPAY_WEBHOOK_SECRET,DOCUMENT_SCANNING_ENABLED
           script: |
             set -e
             cd ~/HRMS_V2
@@ -67,7 +72,8 @@ jobs:
             for v in S3_ENDPOINT S3_REGION S3_ACCESS_KEY S3_SECRET_KEY S3_BUCKET \
                      SES_REGION SES_FROM_ADDRESS SES_CONFIGURATION_SET SES_EVENTS_TOPIC_ARN \
                      AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY APP_BASE_URL \
-                     RAZORPAY_KEY_ID RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET; do
+                     RAZORPAY_KEY_ID RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET \
+                     DOCUMENT_SCANNING_ENABLED; do
               val="${!v}"
               val="${val#"${val%%[![:space:]]*}"}"   # trim leading whitespace
               val="${val%"${val##*[![:space:]]}"}"   # trim trailing whitespace
@@ -114,11 +120,19 @@ jobs:
             # Created once and left running across deploys (signature DB
             # lives in the named volume). Memory-capped so an OOM kills
             # clamd, not the API; past the cap it spills into the 2 GiB
-            # swap. Not waited on: scanning fails closed and the documents
+            # swap. `stable-debian` (not `stable`, which is amd64-only) so the
+            # same line works on the arm64/Graviton box. Not waited on: scanning
+            # fails closed and the documents
             # sweep catches up once clamd is listening.
-            if ! docker ps -a --format '{{.Names}}' | grep -qx clamav; then
-              docker run -d --name clamav --restart unless-stopped --network hrms \
-                --memory=700m --memory-swap=1800m \
-                -v hrms_clamav_data:/var/lib/clamav clamav/clamav:stable
+            scanning_flag="$(echo "$DOCUMENT_SCANNING_ENABLED" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+            if [ "$scanning_flag" = "false" ] || [ "$scanning_flag" = "0" ]; then
+              echo "DOCUMENT_SCANNING_ENABLED=false — not starting ClamAV"
+              docker stop clamav >/dev/null 2>&1 || true
+            else
+              if ! docker ps -a --format '{{.Names}}' | grep -qx clamav; then
+                docker run -d --name clamav --restart unless-stopped --network hrms \
+                  --memory=700m --memory-swap=1800m \
+                  -v hrms_clamav_data:/var/lib/clamav clamav/clamav:stable-debian
+              fi
+              docker start clamav >/dev/null
             fi
-            docker start clamav >/dev/null

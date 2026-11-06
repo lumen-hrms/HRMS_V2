@@ -208,6 +208,20 @@ dependency.
 - Repeatable job `sweep` every 15 minutes: re-enqueue `PENDING_SCAN` rows
   older than 10 minutes and `SCAN_FAILED` rows, per tenant.
 - docker-compose gets a `clamav/clamav` service on `3310`.
+- **Scanning switch — `DOCUMENT_SCANNING_ENABLED`** (default on; only an
+  explicit `false`/`0` disables it). For environments with no clamd (the
+  small preview box) so every upload flow stays usable. When **off**:
+  upload enqueues no scan; the `scan` job and `sweep` return immediately
+  (no scanner call, no `SCAN_FAILED` writes); rows stay `PENDING_SCAN` in
+  the DB, and the API reports `PENDING_SCAN`/`SCAN_FAILED` rows as
+  `UNSCANNED` ("Not scanned" badge), which **is** downloadable.
+  `INFECTED` is still blocked, visibility rules are unchanged, and each
+  download is audited with `scanned: false`. A warning is logged at boot.
+  When switched back **on** (with `CLAMAV_HOST` pointing at a clamd), the
+  next `sweep` re-enqueues every stale `PENDING_SCAN` row, so everything
+  uploaded while it was off gets scanned and is blocked until it is.
+  Trade-off: while off, users can download files nobody scanned — fine for
+  a no-real-data preview, not for a client demo with real uploads.
 
 ### 4.5 HTTP surface
 
@@ -258,6 +272,8 @@ subtree → `CLEAN` → presigned URL → audit `documents.downloaded`.
 ### 5.4 Scanner outage
 ClamAV down → jobs retry, then `SCAN_FAILED` → files stay undownloadable →
 ClamAV back → next `sweep` re-enqueues → `CLEAN`. No human step.
+(With `DOCUMENT_SCANNING_ENABLED=false` there is no outage state: files are
+`UNSCANNED` and downloadable — see §4.4.)
 
 ---
 

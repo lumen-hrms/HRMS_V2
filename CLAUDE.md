@@ -142,14 +142,14 @@ only" (Employee) — those can't be expressed as a static role check alone.
   not in this app.
 - Audit log (`audit_log` table) is append-only from day one — the app's
   DB role has no `UPDATE`/`DELETE` grant on it.
-- PII fields (PAN, bank account) get application-layer encryption via a
-  KMS data key on top of RDS/S3 encryption-at-rest — a raw DB dump alone
+- PII fields (PAN, bank account) get application-layer encryption via an
+  AES-256-GCM key on top of RDS/S3 encryption-at-rest — a raw DB dump alone
   should not be enough to read them. **Built** (module 03):
   `FieldEncryptionService` (`apps/api/src/crypto`) does AES-256-GCM with a
   key from `FIELD_ENCRYPTION_KEY`; only ciphertext + a masked form are
-  stored, reveal is permissioned + logged. The key today is a static team-
-  vault secret, not yet a real AWS KMS-wrapped data key — that swap lands
-  with the production AWS migration and only touches that one file.
+  stored, reveal is permissioned + logged. The key is a static team-
+  vault secret (`FIELD_ENCRYPTION_KEY`); AWS KMS is deliberately not used.
+  Ciphertext is versioned (`v1:`), so rotation can be added without KMS.
 - No blanket "PII must stay in India" legal claim — DPDP Act 2023 doesn't
   currently mandate that; hosting in Mumbai is a trust/latency choice, not
   a compliance requirement. Don't market it as the latter.
@@ -263,7 +263,9 @@ every user upload — employee profile documents, leave attachments (moved
 out of `leave_requests.attachment_*`), regularization evidence: MIME
 allow-list + magic-byte check + 10 MB cap before storage, a ClamAV scan
 (BullMQ `documents` queue → clamd; docker-compose runs it) that must pass
-before any presigned URL is issued (fail closed, self-healing sweep),
+before any presigned URL is issued (fail closed, self-healing sweep;
+`DOCUMENT_SCANNING_ENABLED=false` turns scanning off for a box with no clamd — files then
+download as "Not scanned", and re-enabling it scans the backlog),
 visibility = the subject employee's `scopeFor` scope, and audited *soft*
 delete (`hrms_app` has no `DELETE` on `documents`). Retention purge is an
 owner-approved V1 scope cut. See `docs/modules/09_DOCUMENTS.md`.

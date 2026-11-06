@@ -8,8 +8,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
+import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 import type { Document, DocumentCategory, DocumentOwnerType, Prisma } from '@prisma/client';
+import type { AppConfig } from '../config/configuration';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { recursiveReportIds } from '../common/reporting-hierarchy';
@@ -42,8 +44,23 @@ export interface UploadInput {
   category?: DocumentCategory;
 }
 
+/**
+ * What the API reports as a document's scan state. With scanning disabled
+ * (`DOCUMENT_SCANNING_ENABLED=false`) a row that was never scanned is shown
+ * as `UNSCANNED` — honest about it, and downloadable — instead of the
+ * misleading "Scanning…". INFECTED/CLEAN are always reported as stored.
+ */
+export type ReportedScanStatus = Document['scanStatus'] | 'UNSCANNED';
+
+export function reportedScanStatus(doc: Document, scanningEnabled: boolean): ReportedScanStatus {
+  if (!scanningEnabled && (doc.scanStatus === 'PENDING_SCAN' || doc.scanStatus === 'SCAN_FAILED')) {
+    return 'UNSCANNED';
+  }
+  return doc.scanStatus;
+}
+
 /** What leaves the API — never the storage key (module 09 §1). */
-export function toDocumentDto(doc: Document) {
+export function toDocumentDto(doc: Document, scanningEnabled = true) {
   return {
     id: doc.id,
     employeeId: doc.employeeId,
@@ -53,7 +70,7 @@ export function toDocumentDto(doc: Document) {
     category: doc.category,
     mimeType: doc.mimeType,
     sizeBytes: doc.sizeBytes,
-    scanStatus: doc.scanStatus,
+    scanStatus: reportedScanStatus(doc, scanningEnabled),
     uploadedByName: doc.uploadedByName,
     uploadedAt: doc.uploadedAt,
   };
@@ -101,7 +118,12 @@ export class DocumentsService {
     private readonly tenantPrisma: TenantPrismaService,
     private readonly storage: StorageService,
     @InjectQueue(DOCUMENTS_QUEUE) private readonly queue: Queue,
+    private readonly config: ConfigService<AppConfig, true>,
   ) {}
+
+  private get scanningEnabled(): boolean {
+    return this.config.get('documents', { infer: true }).scanningEnabled;
+  }
 
   // ---- Upload ----
 
@@ -183,9 +205,11 @@ export class DocumentsService {
       });
     }
 
-    await this.enqueueScan(tenantId, doc.id);
+    // Scanning off: leave the row PENDING_SCAN and enqueue nothing. If scanning
+    // is switched on later, the sweep picks every such row up and scans it.
+    if (this.scanningEnabled) await this.enqueueScan(tenantId, doc.id);
     await this.audit(actor, 'documents.uploaded', doc);
-    return toDocumentDto(doc);
+    return toDocumentDto(doc, this.scanningEnabled);
   }
 
   // ---- Read ----
@@ -198,7 +222,7 @@ export class DocumentsService {
       where: { employeeId, ownerType: 'EMPLOYEE_PROFILE', deletedAt: null },
       orderBy: { uploadedAt: 'desc' },
     });
-    return docs.map(toDocumentDto);
+    return docs.map((d) => toDocumentDto(d, this.scanningEnabled));
   }
 
   /**
@@ -214,7 +238,7 @@ export class DocumentsService {
     const docs = await this.tenantPrisma.client.document.findMany({
       where: { ownerType, ownerId: { in: ownerIds }, deletedAt: null },
     });
-    return new Map(docs.map((d) => [d.ownerId!, toDocumentDto(d)]));
+    return new Map(docs.map((d) => [d.ownerId!, toDocumentDto(d, this.scanningEnabled)]));
   }
 
   /**
@@ -224,7 +248,8 @@ export class DocumentsService {
    */
   async getDownloadUrl(documentId: string, actor: AuthenticatedUser) {
     const doc = await this.findVisible(documentId, actor);
-    switch (doc.scanStatus) {
+    const scanned = reportedScanStatus(doc, this.scanningEnabled) === 'CLEAN';
+    switch (reportedScanStatus(doc, this.scanningEnabled)) {
       case 'PENDING_SCAN':
         throw new ConflictException('This file is still being scanned — try again shortly.');
       case 'SCAN_FAILED':
@@ -234,8 +259,9 @@ export class DocumentsService {
       case 'INFECTED':
         throw new GoneException('This file was blocked: malware was detected on upload.');
     }
+    const audit = this.auditData(actor, 'documents.downloaded', doc);
     await this.tenantPrisma.client.auditLog.create({
-      data: this.auditData(actor, 'documents.downloaded', doc),
+      data: { ...audit, metadata: { ...(audit.metadata as object), scanned } },
     });
     const url = await this.storage.getPresignedDownloadUrl(
       doc.storageKey,
@@ -256,7 +282,7 @@ export class DocumentsService {
       where: { id: documentId },
       data: { category },
     });
-    return toDocumentDto(updated);
+    return toDocumentDto(updated, this.scanningEnabled);
   }
 
   /** Soft delete (V1 retention decision, module 09 §1) — the object is kept. */

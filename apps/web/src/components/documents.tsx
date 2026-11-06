@@ -1,18 +1,19 @@
 import { Paperclip } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { useOpenDocument, type DocumentRef, type ScanStatus } from '@/lib/documents';
+import { canDownload, useOpenDocument, type DocumentRef, type ScanStatus } from '@/lib/documents';
 
 /** Nothing for CLEAN; a warning/destructive badge otherwise (module 09). */
 export function ScanStatusBadge({ status }: { status: ScanStatus }) {
   if (status === 'CLEAN') return null;
   if (status === 'INFECTED') return <Badge variant="destructive">Blocked — malware detected</Badge>;
+  if (status === 'UNSCANNED') return <Badge variant="outline">Not scanned</Badge>;
   return <Badge variant="warning">Scanning…</Badge>;
 }
 
-/** Inline paperclip link for an attachment; not clickable until the file is CLEAN. */
+/** Inline paperclip link for an attachment; not clickable until the file is CLEAN (or UNSCANNED). */
 export function DocumentLink({ doc }: { doc: DocumentRef }) {
   const open = useOpenDocument();
-  const clean = doc.scanStatus === 'CLEAN';
+  const clean = canDownload(doc.scanStatus);
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5">
       <button

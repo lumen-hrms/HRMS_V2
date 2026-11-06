@@ -16,7 +16,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/context/auth-context';
 import { ScanStatusBadge } from '@/components/documents';
-import { UPLOAD_ACCEPT, uploadProblem, useOpenDocument, type ScanStatus } from '@/lib/documents';
+import { canDownload, UPLOAD_ACCEPT, uploadProblem, useOpenDocument, type ScanStatus } from '@/lib/documents';
 import { assignableRoles, ROLE_LABELS } from '@/lib/roles';
 import { useLinkableLogins } from '@/pages/employees/linkable-logins';
 
@@ -582,7 +582,7 @@ export function EmployeeDetailPage() {
                     <Button
                       size="sm"
                       variant="ghost"
-                      disabled={d.scanStatus !== 'CLEAN'}
+                      disabled={!canDownload(d.scanStatus)}
                       onClick={() => openDocument(d.id)}
                     >
                       <Download className="h-3.5 w-3.5" /> Download
