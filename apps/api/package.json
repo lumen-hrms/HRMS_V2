@@ -25,6 +25,7 @@
     "user:remove": "node --env-file=.env -r ts-node/register scripts/remove-user.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-cloudwatch": "^3.1163.0",
     "@aws-sdk/client-s3": "^3.1121.0",
     "@aws-sdk/client-sesv2": "^3.1121.0",
     "@aws-sdk/s3-request-presigner": "^3.1121.0",

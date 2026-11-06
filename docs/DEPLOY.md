@@ -438,3 +438,5 @@ setup:
   in git history / the chat transcript still need rotating — see
   `CLAUDE.md` / the team vault. Rotate before this URL goes near a real
   customer.
+
+> The Hyderabad box is started/stopped on demand — see `docs/EC2_POWER.md`.
