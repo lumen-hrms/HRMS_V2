@@ -322,11 +322,75 @@ export interface PayrollRun {
   exceptionCount?: number;
 }
 
+export type PaymentMode = 'OWN_BANK' | 'NEFT' | 'IMPS' | 'RTGS';
+export type PreferredPaymentMode = Exclude<PaymentMode, 'OWN_BANK'>;
+
+export interface CompanyBankOption {
+  code: string;
+  label: string;
+  ifscPrefix: string | null;
+}
+
+export interface BankConfig {
+  bankCode: string;
+  accountHolderName: string;
+  accountMasked: string;
+  ifsc: string;
+  bankName: string | null;
+  branch: string | null;
+  defaultPaymentMode: PreferredPaymentMode;
+  updatedAt: string;
+}
+
+export interface BankConfigResponse {
+  banks: CompanyBankOption[];
+  config: BankConfig | null;
+}
+
+export interface SaveBankConfigInput {
+  bankCode: string;
+  accountHolderName: string;
+  /** Omit to keep the number already stored. */
+  accountNumber?: string;
+  ifsc: string;
+  bankName?: string;
+  branch?: string;
+  defaultPaymentMode: PreferredPaymentMode;
+}
+
+export interface BankFormatOption {
+  id: string;
+  label: string;
+  bankCode: string | null;
+  version: string;
+  available: boolean;
+}
+
+export interface LeftOutEmployee {
+  employeeId: string;
+  name: string;
+  employeeCode: string;
+  reason: 'MISSING_BANK_DETAILS' | 'INVALID_DETAILS';
+  problems: string[];
+}
+
+export interface BankFilePreview {
+  period: string;
+  format: { id: string; label: string; version: string; available: boolean };
+  company: { bankCode: string; accountMasked: string; ifsc: string } | null;
+  counts: { paid: number; included: number; leftOut: number };
+  total: string;
+  byMode: Array<{ mode: PaymentMode; count: number; total: string }>;
+  leftOut: LeftOutEmployee[];
+  warnings: string[];
+}
+
 export interface BankFileResult {
   filename: string;
   mimeType: string;
   content: string;
   skippedEmployeeCount: number;
+  summary: BankFilePreview;
 }
 
 export interface PayslipUrl {
