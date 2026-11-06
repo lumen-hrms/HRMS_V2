@@ -278,7 +278,12 @@ this doc works around the bug, it doesn't fix it.)
   2 GiB swap — scans are slower than on a bigger box, and if memory runs
   out the kernel kills clamd (it restarts), not the API. First start
   downloads signatures for a few minutes; the documents sweep scans any
-  backlog once clamd is listening. If the box struggles (`free -m`,
+  backlog once clamd is listening. **No clamd at all?** Set the GitHub repo
+  *variable* `DOCUMENT_SCANNING_ENABLED=false` (and in `apps/api/.env`): the
+  workflow then skips (and stops) ClamAV, uploads skip the scan and are
+  downloadable as "Not scanned". To turn scanning back on, set it to `true`,
+  point `CLAMAV_HOST`/`CLAMAV_PORT` at a clamd, and redeploy — the next
+  15-minute sweep scans everything uploaded in the meantime. If the box struggles (`free -m`,
   `docker stats`, API restarts), move to a `t3.small` or a separate clamd
   host and point `CLAMAV_HOST` at it. Production (ECS) runs clamd as its
   own service.

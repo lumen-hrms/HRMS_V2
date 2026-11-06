@@ -9,6 +9,10 @@
 import { api } from '@/lib/api';
 import type {
   BankFileResult,
+  BankFilePreview,
+  BankFormatOption,
+  BankConfigResponse,
+  SaveBankConfigInput,
   FullAndFinalSettlement,
   PayrollRun,
   PayrollRunSummary,
@@ -184,6 +188,18 @@ export function disburseRun(id: string) {
 }
 export function getBankFile(id: string, format = 'CSV') {
   return api.get<BankFileResult>(`/payroll/runs/${id}/bank-file?format=${format}`);
+}
+export function previewBankFile(id: string, format = 'CSV') {
+  return api.get<BankFilePreview>(`/payroll/runs/${id}/bank-file/preview?format=${format}`);
+}
+export function listBankFormats() {
+  return api.get<BankFormatOption[]>('/payroll/bank-formats');
+}
+export function getBankConfig() {
+  return api.get<BankConfigResponse>('/payroll/config/bank');
+}
+export function saveBankConfig(input: SaveBankConfigInput) {
+  return api.put<BankConfigResponse>('/payroll/config/bank', input);
 }
 
 // ---- Payslip ----

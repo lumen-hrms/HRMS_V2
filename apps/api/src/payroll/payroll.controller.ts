@@ -31,10 +31,12 @@ import { SalaryImportService } from './salary-import.service';
 import { MAX_IMPORT_FILE_BYTES, NDJSON, streamImport } from '../common/bulk-import';
 import { PayrollRunService } from './payroll-run.service';
 import { PayrollInsightsService } from './payroll-insights.service';
+import { PayrollBankService } from './payroll-bank.service';
 import { TdsService } from './tds.service';
 import { FullAndFinalService } from './full-and-final.service';
 import {
   BankFileQueryDto,
+  SaveBankConfigDto,
   BulkWorkStateDto,
   LineItemQueryDto,
   ReadinessQueryDto,
@@ -64,6 +66,7 @@ export class PayrollController {
     private readonly config: PayrollConfigService,
     private readonly runs: PayrollRunService,
     private readonly insights: PayrollInsightsService,
+    private readonly bank: PayrollBankService,
     private readonly tds: TdsService,
     private readonly fnf: FullAndFinalService,
   ) {}
@@ -260,13 +263,43 @@ export class PayrollController {
   }
 
   @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  @Get('runs/:id/bank-file/preview')
+  previewBankFile(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: BankFileQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.bank.preview(id, query.format ?? 'CSV', user);
+  }
+
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
   @Get('runs/:id/bank-file')
   getBankFile(
     @Param('id', ParseUUIDPipe) id: string,
     @Query() query: BankFileQueryDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.runs.getBankFile(id, query.format ?? 'CSV', user);
+    return this.bank.generate(id, query.format ?? 'CSV', user);
+  }
+
+  // ---- Company bank details + bank-file formats ----
+
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  @Get('config/bank')
+  getBankConfig() {
+    return this.bank.getConfig();
+  }
+
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  @Put('config/bank')
+  saveBankConfig(@Body() dto: SaveBankConfigDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.bank.saveConfig(dto, user);
+  }
+
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  @Get('bank-formats')
+  listBankFormats() {
+    return this.bank.listFormats();
   }
 
   // ---- Payslips (module 07 §9 Phase 5) ----

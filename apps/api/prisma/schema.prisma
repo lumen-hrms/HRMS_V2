@@ -604,8 +604,8 @@ model Employee {
   costCenter String?  @map("cost_center")
 
   // Statutory (India) — module 03 §4.2/INV-2/INV-3. `pan`/bank account are
-  // application-layer encrypted (FieldEncryptionService, CLAUDE.md's KMS
-  // non-negotiable); only the masked form and the ciphertext are stored —
+  // application-layer encrypted (FieldEncryptionService, CLAUDE.md's PII
+  // encryption non-negotiable); only the masked form and the ciphertext are stored —
   // plaintext never lands in a column. Aadhaar: last 4 digits only, ever.
   panCiphertext String?    @map("pan_ciphertext")
   panMasked     String?    @map("pan_masked")
@@ -615,7 +615,7 @@ model Employee {
   esicNumber    String?    @map("esic_number")
   taxRegime     TaxRegime? @map("tax_regime")
 
-  // Bank (disbursement) — bank account number is KMS-encrypted like PAN.
+  // Bank (disbursement) — bank account number is field-encrypted like PAN.
   bankAccountHolderName String?          @map("bank_account_holder_name")
   bankAccountCiphertext String?          @map("bank_account_ciphertext")
   bankAccountMasked     String?          @map("bank_account_masked")
@@ -1619,6 +1619,32 @@ model ProfessionalTaxSlab {
   @@unique([tenantId, state, grossFrom])
   @@index([tenantId])
   @@map("professional_tax_slabs")
+  @@schema("public")
+}
+
+// The company's own bank (the account salaries are paid FROM) — used only to
+// shape the bank advice file (bank format, own-bank vs other-bank rows). The
+// app never moves money. The account number is application-layer encrypted
+// like employee bank accounts; only the masked form is ever returned.
+model PayrollBankConfig {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @unique @map("tenant_id") @db.Uuid
+
+  // ICICI | AXIS | SBI | HDFC | HSBC | OTHER
+  bankCode           String  @map("bank_code")
+  accountHolderName  String  @map("account_holder_name")
+  accountCiphertext  String  @map("account_ciphertext")
+  accountMasked      String  @map("account_masked")
+  ifsc               String
+  bankName           String? @map("bank_name")
+  branch             String?
+  // NEFT | IMPS | RTGS — what other-bank rows use by default.
+  defaultPaymentMode String  @default("NEFT") @map("default_payment_mode")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("payroll_bank_config")
   @@schema("public")
 }
 

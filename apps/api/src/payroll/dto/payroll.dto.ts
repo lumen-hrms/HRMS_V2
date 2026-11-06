@@ -232,6 +232,42 @@ export class PayslipQueryDto {
   period!: string;
 }
 
+const BENEFICIARY_NAME = /^[A-Za-z][A-Za-z .'&-]{1,99}$/;
+
+/** Company bank details for the bank advice file (the account salaries are paid FROM). */
+export class SaveBankConfigDto {
+  @IsIn(['ICICI', 'AXIS', 'SBI', 'HDFC', 'HSBC', 'OTHER'])
+  bankCode!: string;
+
+  @IsString()
+  @Matches(BENEFICIARY_NAME, {
+    message: 'Account holder name must be 2–100 letters (spaces and . ’ & - allowed)',
+  })
+  accountHolderName!: string;
+
+  // Omit to keep the number already stored.
+  @IsOptional()
+  @Matches(/^\d{9,18}$/, { message: 'Account number must be 9–18 digits' })
+  accountNumber?: string;
+
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
+  @Matches(/^[A-Z]{4}0[A-Z0-9]{6}$/, { message: 'IFSC must be 11 characters, e.g. HDFC0001234' })
+  ifsc!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  bankName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  branch?: string;
+
+  @IsIn(['NEFT', 'IMPS', 'RTGS'])
+  defaultPaymentMode!: 'NEFT' | 'IMPS' | 'RTGS';
+}
+
 export class BankFileQueryDto {
   @IsOptional()
   @IsString()

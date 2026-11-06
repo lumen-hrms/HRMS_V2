@@ -20,7 +20,7 @@ function docRow(overrides: Record<string, any> = {}) {
   };
 }
 
-function build() {
+function build(scanningEnabled = true) {
   const client = {
     document: {
       findUnique: jest.fn().mockResolvedValue(docRow()),
@@ -47,6 +47,7 @@ function build() {
     storage as any,
     scanner as any,
     notifications as any,
+    { get: () => ({ scanningEnabled }) } as any,
   );
   return { processor, client, raw, queue, storage, scanner, notifications };
 }
@@ -134,6 +135,37 @@ describe('DocumentScanProcessor.scanDocument', () => {
       where: { id: 'doc-1' },
       data: { scanStatus: 'SCAN_FAILED' },
     });
+  });
+});
+
+describe('DocumentScanProcessor with scanning disabled', () => {
+  it.each(['scan', 'sweep'])(
+    'ignores a %s job: no scanner, no queue, no status writes',
+    async (name) => {
+      const { processor, scanner, queue, client, storage } = build(false);
+      await processor.process({
+        name,
+        data: { tenantId: 'tenant-1', documentId: 'doc-1' },
+        attemptsMade: 4,
+        opts: { attempts: 5 },
+      } as any);
+      expect(scanner.scan).not.toHaveBeenCalled();
+      expect(storage.download).not.toHaveBeenCalled();
+      expect(queue.add).not.toHaveBeenCalled();
+      expect(client.document.findMany).not.toHaveBeenCalled();
+      expect(client.document.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it('still processes jobs when scanning is enabled', async () => {
+    const { processor, scanner } = build(true);
+    await processor.process({
+      name: 'scan',
+      data: { tenantId: 'tenant-1', documentId: 'doc-1' },
+      attemptsMade: 0,
+      opts: { attempts: 5 },
+    } as any);
+    expect(scanner.scan).toHaveBeenCalled();
   });
 });
 

@@ -1,6 +1,8 @@
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Job, Queue } from 'bullmq';
+import type { AppConfig } from '../config/configuration';
 import { PAUSED_WORKER, startBackgroundWorker } from '../common/background-workers';
 import { PlatformPrismaClientProvider } from '../prisma/platform-prisma-client.provider';
 import { TenantPrismaClientProvider } from '../prisma/tenant-prisma-client.provider';
@@ -45,13 +47,24 @@ export class DocumentScanProcessor extends WorkerHost implements OnApplicationBo
     private readonly storage: StorageService,
     private readonly scanner: ClamAvScanner,
     private readonly notifications: NotificationDispatcher,
+    private readonly config: ConfigService<AppConfig, true>,
   ) {
     super();
+  }
+
+  /** `DOCUMENT_SCANNING_ENABLED` — when off, scan/sweep jobs do nothing. */
+  private get scanningEnabled(): boolean {
+    return this.config.get('documents', { infer: true }).scanningEnabled;
   }
 
   /** Starts the worker + registers its schedule only where background workers
    *  are enabled (`common/background-workers.ts`). */
   async onApplicationBootstrap() {
+    if (!this.scanningEnabled) {
+      this.logger.warn(
+        'Document scanning is DISABLED (DOCUMENT_SCANNING_ENABLED=false) — uploads are served unscanned.',
+      );
+    }
     await startBackgroundWorker(this, async () => {
       await this.queue.upsertJobScheduler(
         'documents-scan-sweep',
@@ -62,6 +75,8 @@ export class DocumentScanProcessor extends WorkerHost implements OnApplicationBo
   }
 
   async process(job: Job): Promise<void> {
+    // Scanning off: nothing to do, and crucially nothing to mark SCAN_FAILED.
+    if (!this.scanningEnabled) return;
     if (job.name === 'scan') {
       const isFinalAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
       await this.scanDocument(job.data as ScanJobData, isFinalAttempt);

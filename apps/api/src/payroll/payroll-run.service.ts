@@ -13,7 +13,6 @@ import { TenantPrismaService } from '../prisma/tenant-prisma.service';
 import { AttendanceService } from '../attendance/attendance.service';
 import { HR_ROLES, NotificationDispatcher } from '../notifications/notification-dispatcher.service';
 import { StorageService } from '../storage/storage.service';
-import { FieldEncryptionService } from '../crypto/field-encryption.service';
 import { PayrollConfigService } from './payroll-config.service';
 import { writePayrollAudit } from './payroll-audit';
 import {
@@ -26,7 +25,6 @@ import type { PtSlabRow } from './professional-tax.util';
 import { BASIC_CODE, resolveMonthlyAmounts } from './salary-components.util';
 import type { AdHocAdjustmentDto, CreatePayrollRunDto } from './dto/payroll.dto';
 import { generatePayslipPdf } from './payslip-generator';
-import { BANK_FILE_GENERATORS, type BankFileRow } from './bank-file-generator';
 import { TdsService, type EmployeeTdsContext } from './tds.service';
 import { computeMonthlyTds } from './tds-calculator';
 
@@ -107,7 +105,6 @@ export class PayrollRunService {
     private readonly attendance: AttendanceService,
     private readonly notifications: NotificationDispatcher,
     private readonly storage: StorageService,
-    private readonly fieldEncryption: FieldEncryptionService,
     private readonly tds: TdsService,
   ) {}
 
@@ -873,79 +870,6 @@ export class PayrollRunService {
       `payslip-${period}.pdf`,
     );
     return { url, expiresInSeconds: 300 };
-  }
-
-  /**
-   * Disbursement file (FR-PAY-015, §12 decision 12) — generated on demand
-   * from the (immutable, once PROCESSED) line items, not pre-generated and
-   * stored, since the only implementation today is a dummy generic CSV.
-   */
-  async getBankFile(runId: string, format: string, user: AuthenticatedUser) {
-    this.assertCanManage(user);
-    const run = await this.getRunOrThrow(runId);
-    if (run.status !== 'PROCESSED' && run.status !== 'DISBURSED') {
-      throw new ConflictException('The bank file is only available once a run is PROCESSED');
-    }
-    const generator = BANK_FILE_GENERATORS[format];
-    if (!generator) {
-      throw new BadRequestException(
-        `Bank file format "${format}" is not implemented yet — only ${Object.keys(BANK_FILE_GENERATORS).join(', ')} available`,
-      );
-    }
-
-    const lineItems = await this.tenantPrisma.client.payrollLineItem.findMany({ where: { runId } });
-    const employees = await this.tenantPrisma.client.employee.findMany({
-      where: { id: { in: lineItems.map((li) => li.employeeId) } },
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        employeeCode: true,
-        bankAccountCiphertext: true,
-        bankIfsc: true,
-        bankName: true,
-      },
-    });
-    const employeesById = new Map(employees.map((e) => [e.id, e]));
-
-    const rows: BankFileRow[] = [];
-    let skipped = 0;
-    for (const item of lineItems) {
-      const emp = employeesById.get(item.employeeId);
-      if (!emp?.bankAccountCiphertext || !emp.bankIfsc) {
-        skipped += 1;
-        continue;
-      }
-      rows.push({
-        employeeId: item.employeeId,
-        employeeName: `${emp.firstName} ${emp.lastName}`,
-        employeeCode: emp.employeeCode,
-        accountNumber: this.fieldEncryption.decrypt(emp.bankAccountCiphertext),
-        ifsc: emp.bankIfsc,
-        bankName: emp.bankName,
-        amount: item.netPay.toNumber(),
-      });
-    }
-
-    await writePayrollAudit(
-      this.tenantPrisma,
-      user,
-      'payroll.bank_file_generated',
-      'payroll_run',
-      runId,
-      {
-        format,
-        rowCount: rows.length,
-        skippedCount: skipped,
-      },
-    );
-
-    return {
-      filename: generator.filename(run.period),
-      mimeType: generator.mimeType,
-      content: generator.generate(rows),
-      skippedEmployeeCount: skipped,
-    };
   }
 
   async disburse(runId: string, user: AuthenticatedUser) {

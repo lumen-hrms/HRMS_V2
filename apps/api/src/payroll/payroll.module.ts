@@ -8,6 +8,7 @@ import { SalaryStructureService } from './salary-structure.service';
 import { SalaryImportService } from './salary-import.service';
 import { PayrollRunService } from './payroll-run.service';
 import { PayrollInsightsService } from './payroll-insights.service';
+import { PayrollBankService } from './payroll-bank.service';
 import { TdsService } from './tds.service';
 import { FullAndFinalService } from './full-and-final.service';
 import { DECLARATION_PROVIDER, NullDeclarationProvider } from './declaration-provider';
@@ -21,6 +22,7 @@ import { DECLARATION_PROVIDER, NullDeclarationProvider } from './declaration-pro
     SalaryImportService,
     PayrollRunService,
     PayrollInsightsService,
+    PayrollBankService,
     TdsService,
     FullAndFinalService,
     { provide: DECLARATION_PROVIDER, useClass: NullDeclarationProvider },

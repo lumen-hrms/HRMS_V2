@@ -57,7 +57,7 @@ function docRow(overrides: Record<string, any> = {}) {
   };
 }
 
-function build(clientOverrides: Record<string, any> = {}) {
+function build(clientOverrides: Record<string, any> = {}, scanningEnabled = true) {
   const client = {
     employee: {
       findUnique: jest.fn().mockResolvedValue({ id: 'emp-1' }),
@@ -94,6 +94,7 @@ function build(clientOverrides: Record<string, any> = {}) {
     { tenantId: 'tenant-1', client } as any,
     storage as any,
     queue as any,
+    { get: () => ({ scanningEnabled }) } as any,
   );
   return { service, client, storage, queue };
 }
@@ -301,6 +302,58 @@ describe('DocumentsService.getDownloadUrl (RULE-2)', () => {
     );
     expect(client.document.findFirst).toHaveBeenCalledWith({
       where: { id: 'doc-1', deletedAt: null },
+    });
+  });
+});
+
+describe('DocumentsService with scanning disabled (DOCUMENT_SCANNING_ENABLED=false)', () => {
+  it('uploads without enqueuing a scan and reports UNSCANNED', async () => {
+    const { service, queue, storage } = build({}, false);
+    const dto = await service.upload(
+      { employeeId: 'emp-1', ownerType: 'LEAVE_REQUEST', ownerId: 'lr-1', file: file() },
+      actor(),
+    );
+    expect(storage.upload).toHaveBeenCalled();
+    expect(queue.add).not.toHaveBeenCalled();
+    expect(dto.scanStatus).toBe('UNSCANNED');
+  });
+
+  it.each(['PENDING_SCAN', 'SCAN_FAILED'])(
+    'issues a URL for a %s document and audits scanned:false',
+    async (scanStatus) => {
+      const { service, storage, client } = build({}, false);
+      client.document.findFirst.mockResolvedValue(docRow({ scanStatus }));
+      await expect(service.getDownloadUrl('doc-1', actor())).resolves.toHaveProperty('url');
+      expect(storage.getPresignedDownloadUrl).toHaveBeenCalled();
+      expect(client.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'documents.downloaded',
+          metadata: expect.objectContaining({ scanned: false }),
+        }),
+      });
+    },
+  );
+
+  it('still refuses an INFECTED document', async () => {
+    const { service, storage, client } = build({}, false);
+    client.document.findFirst.mockResolvedValue(docRow({ scanStatus: 'INFECTED' }));
+    await expect(service.getDownloadUrl('doc-1', actor())).rejects.toBeInstanceOf(GoneException);
+    expect(storage.getPresignedDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it('keeps visibility rules: another employee still gets a 404', async () => {
+    const { service, client } = build({}, false);
+    client.document.findFirst.mockResolvedValue(docRow({ scanStatus: 'PENDING_SCAN' }));
+    await expect(
+      service.getDownloadUrl('doc-1', actor({ role: 'EMPLOYEE', employeeId: 'emp-other' })),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('records scanned:true for a CLEAN download when scanning is on', async () => {
+    const { service, client } = build();
+    await service.getDownloadUrl('doc-1', actor());
+    expect(client.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ metadata: expect.objectContaining({ scanned: true }) }),
     });
   });
 });

@@ -943,7 +943,7 @@ export class EmployeesService {
   /**
    * Statutory + bank fields (module 03 §4.2/INV-3) — a dedicated endpoint so
    * PAN and the bank account number are never written through the generic
-   * `update()` path. Both are KMS-encrypted (`FieldEncryptionService`); only
+   * `update()` path. Both are field-encrypted (`FieldEncryptionService`); only
    * the ciphertext and a precomputed masked form are stored — plaintext
    * never lands in a column, and a read never needs the encryption key.
    */

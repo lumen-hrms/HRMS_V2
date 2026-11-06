@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 import { PtSlabEditor } from '../components/pt-slab-editor';
 import { TaxSlabEditor } from '../components/tax-slab-editor';
 import { fmtDateTime } from '../components/format';
+import { BankSettings } from '../components/bank-settings';
 
 const LEAVE_ENCASHMENT_COMPONENT_OPTIONS = ['BASIC', 'DA', 'HRA', 'SPECIAL_ALLOWANCE', 'CONVEYANCE', 'LTA', 'MEDICAL'];
 
@@ -32,7 +33,7 @@ interface NumField {
 
 const pct = (key: NumKey, label: string, hint: string, step = '0.01'): NumField => ({ key, label, hint, min: 0, max: 100, step });
 
-type GroupId = 'statutory' | 'overtime' | 'fnf' | 'pt' | 'tax';
+type GroupId = 'statutory' | 'overtime' | 'fnf' | 'pt' | 'tax' | 'bank';
 interface Group {
   id: GroupId;
   label: string;
@@ -82,6 +83,7 @@ const GROUPS: Group[] = [
   },
   { id: 'pt', label: 'Professional Tax', description: 'State-wise monthly slabs.', numbers: [], flags: [] },
   { id: 'tax', label: 'Income tax (TDS)', description: 'Slabs and standard deduction per regime and financial year.', numbers: [], flags: [] },
+  { id: 'bank', label: 'Bank & disbursement', description: 'The company account salaries are paid from, used to shape the bank file.', numbers: [], flags: [] },
 ];
 
 function numberError(f: NumField, raw: unknown): string | undefined {
@@ -116,7 +118,9 @@ export function SettingsTab({ readOnly }: { readOnly: boolean }) {
   }, []);
   React.useEffect(load, [load]);
 
-  const current = GROUPS.find((g) => g.id === group)!;
+  // Bank details are for payroll admins only (an auditor gets no account details).
+  const visibleGroups = readOnly ? GROUPS.filter((g) => g.id !== 'bank') : GROUPS;
+  const current = visibleGroups.find((g) => g.id === group) ?? visibleGroups[0];
   const keysOf = (g: Group): Array<keyof PayrollSettings> => [...g.numbers.map((f) => f.key), ...g.flags];
 
   const isDirty = (g: Group) =>
@@ -162,7 +166,7 @@ export function SettingsTab({ readOnly }: { readOnly: boolean }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-2">
-        {GROUPS.map((g) => (
+        {visibleGroups.map((g) => (
           <button
             key={g.id}
             onClick={() => {
@@ -191,6 +195,8 @@ export function SettingsTab({ readOnly }: { readOnly: boolean }) {
             <PtSlabEditor readOnly={readOnly} />
           ) : group === 'tax' ? (
             <TaxSlabEditor readOnly={readOnly} />
+          ) : group === 'bank' ? (
+            <BankSettings readOnly={readOnly} />
           ) : loadError ? (
             <div className="flex items-center justify-between gap-2 rounded-xl bg-destructive/10 px-3 py-2 text-sm text-destructive">
               <span>{loadError}</span>

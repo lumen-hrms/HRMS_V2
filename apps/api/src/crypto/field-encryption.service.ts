@@ -13,11 +13,9 @@ const VERSION_PREFIX = 'v1';
  * enough to read them"). AES-256-GCM with a data key from
  * `FIELD_ENCRYPTION_KEY` (base64, 32 bytes).
  *
- * This is the "KMS data key" half of the envelope today — the key itself is
- * a static secret in the team vault, same tier as the DB/Firebase
- * credentials, not yet wrapped by a real AWS KMS master key (that lands with
- * the production AWS migration per CLAUDE.md's Stack table). Callers never
- * see this distinction — `encrypt`/`decrypt` is the whole interface, so
+ * The key is a static secret in the team vault, same tier as the
+ * DB/Firebase credentials; AWS KMS is deliberately not used. Callers never
+ * see where the key comes from — `encrypt`/`decrypt` is the whole interface, so
  * swapping the key source later touches only this file.
  *
  * Ciphertext format: `v1:<iv-base64>:<authTag-base64>:<ciphertext-base64>` —

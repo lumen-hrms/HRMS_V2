@@ -147,7 +147,6 @@ function buildService(overrides: Record<string, any> = {}) {
     upload: jest.fn().mockResolvedValue(undefined),
     getPresignedDownloadUrl: jest.fn().mockResolvedValue('https://storage.example/presigned'),
   };
-  const fieldEncryption = { decrypt: jest.fn((v: string) => `plain:${v}`) };
   // Empty slabs -> zero projected tax -> tdsDeducted stays 0 for every
   // existing fixture, same as before Phase 6; TDS-specific tests below
   // override this with their own context.
@@ -182,7 +181,6 @@ function buildService(overrides: Record<string, any> = {}) {
     attendance as any,
     notifications as any,
     storage as any,
-    fieldEncryption as any,
     tds as any,
   );
   return {
@@ -193,7 +191,6 @@ function buildService(overrides: Record<string, any> = {}) {
     attendance,
     notifications,
     storage,
-    fieldEncryption,
     tds,
   };
 }
@@ -993,91 +990,5 @@ describe('PayrollRunService.getPayslipDownloadUrl', () => {
     await expect(service.getPayslipDownloadUrl('emp-1', '2026-09', admin)).rejects.toThrow(
       NotFoundException,
     );
-  });
-});
-
-describe('PayrollRunService.getBankFile', () => {
-  it('generates a CSV with decrypted account numbers for employees with bank details', async () => {
-    const { service, client, fieldEncryption } = buildService();
-    client.payrollRun.findUnique.mockResolvedValue({
-      id: 'run-1',
-      status: 'PROCESSED',
-      period: '2026-09',
-    });
-    client.payrollLineItem.findMany.mockResolvedValue([
-      { employeeId: 'emp-1', netPay: new Prisma.Decimal(40000) },
-    ]);
-    client.employee.findMany.mockResolvedValue([
-      {
-        id: 'emp-1',
-        firstName: 'Asha',
-        lastName: 'Rao',
-        employeeCode: 'E001',
-        bankAccountCiphertext: 'cipher-abc',
-        bankIfsc: 'HDFC0001234',
-        bankName: 'HDFC Bank',
-      },
-    ]);
-
-    const result = await service.getBankFile('run-1', 'CSV', admin);
-
-    expect(fieldEncryption.decrypt).toHaveBeenCalledWith('cipher-abc');
-    expect(result.mimeType).toBe('text/csv');
-    expect(result.filename).toBe('bank-file-2026-09.csv');
-    expect(result.content).toContain('plain:cipher-abc');
-    expect(result.content).toContain('40000.00');
-    expect(result.skippedEmployeeCount).toBe(0);
-  });
-
-  it('skips employees missing bank account details and reports the count', async () => {
-    const { service, client } = buildService();
-    client.payrollRun.findUnique.mockResolvedValue({
-      id: 'run-1',
-      status: 'PROCESSED',
-      period: '2026-09',
-    });
-    client.payrollLineItem.findMany.mockResolvedValue([
-      { employeeId: 'emp-1', netPay: new Prisma.Decimal(40000) },
-    ]);
-    client.employee.findMany.mockResolvedValue([
-      {
-        id: 'emp-1',
-        firstName: 'Asha',
-        lastName: 'Rao',
-        employeeCode: 'E001',
-        bankAccountCiphertext: null,
-        bankIfsc: null,
-        bankName: null,
-      },
-    ]);
-
-    const result = await service.getBankFile('run-1', 'CSV', admin);
-    expect(result.skippedEmployeeCount).toBe(1);
-    expect(result.content.split('\n')).toHaveLength(2); // header + trailing newline only
-  });
-
-  it('rejects an unimplemented bank format', async () => {
-    const { service, client } = buildService();
-    client.payrollRun.findUnique.mockResolvedValue({
-      id: 'run-1',
-      status: 'PROCESSED',
-      period: '2026-09',
-    });
-    await expect(service.getBankFile('run-1', 'HDFC', admin)).rejects.toThrow(BadRequestException);
-  });
-
-  it('rejects generating a bank file before the run is PROCESSED', async () => {
-    const { service, client } = buildService();
-    client.payrollRun.findUnique.mockResolvedValue({
-      id: 'run-1',
-      status: 'APPROVED',
-      period: '2026-09',
-    });
-    await expect(service.getBankFile('run-1', 'CSV', admin)).rejects.toThrow(ConflictException);
-  });
-
-  it('rejects non-admin/HR roles', async () => {
-    const { service } = buildService();
-    await expect(service.getBankFile('run-1', 'CSV', employee)).rejects.toThrow(ForbiddenException);
   });
 });

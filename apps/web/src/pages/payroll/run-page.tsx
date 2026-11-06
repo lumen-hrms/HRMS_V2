@@ -15,6 +15,7 @@ import { RunStepper } from './components/run-stepper';
 import { StatTile, Delta } from './components/stat-tile';
 import { Money, formatMoney } from './components/money';
 import { ConfirmDialog, type ConfirmRequest } from './components/confirm-dialog';
+import { BankFileDialog } from './components/bank-file-dialog';
 import { ReviewTable } from './components/review-table';
 import { EmployeeDrawer } from './components/employee-drawer';
 import { fmtDateTime, pctChange, periodLabel } from './components/format';
@@ -39,6 +40,7 @@ export function RunPage({ runId, onBack }: { runId: string; onBack: () => void }
   const [version, setVersion] = React.useState(0);
   const [confirm, setConfirm] = React.useState<ConfirmRequest | null>(null);
   const [openEmployee, setOpenEmployee] = React.useState<string | null>(null);
+  const [bankFileOpen, setBankFileOpen] = React.useState(false);
 
   const load = React.useCallback(async () => {
     try {
@@ -65,27 +67,6 @@ export function RunPage({ runId, onBack }: { runId: string; onBack: () => void }
       toast({ title: isApiError(err) ? err.message : 'That didn’t work — try again', tone: 'error' });
     } finally {
       setBusy(null);
-    }
-  }
-
-  async function downloadBankFile() {
-    try {
-      const f = await payroll.getBankFile(runId);
-      const url = URL.createObjectURL(new Blob([f.content], { type: f.mimeType }));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = f.filename;
-      a.click();
-      URL.revokeObjectURL(url);
-      if (f.skippedEmployeeCount > 0) {
-        toast({
-          title: `Bank file downloaded — ${f.skippedEmployeeCount} employee(s) left out`,
-          description: 'They have no bank account details on file.',
-          tone: 'info',
-        });
-      }
-    } catch (err) {
-      toast({ title: isApiError(err) ? err.message : 'Could not download the bank file', tone: 'error' });
     }
   }
 
@@ -245,8 +226,8 @@ export function RunPage({ runId, onBack }: { runId: string; onBack: () => void }
                 </Button>
               )}
               {locked && (
-                <Button variant="outline" onClick={downloadBankFile}>
-                  <Download className="h-4 w-4" /> Bank file (CSV)
+                <Button variant="outline" onClick={() => setBankFileOpen(true)}>
+                  <Download className="h-4 w-4" /> Bank file
                 </Button>
               )}
             </div>
@@ -323,6 +304,7 @@ export function RunPage({ runId, onBack }: { runId: string; onBack: () => void }
         }}
       />
       <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
+      {bankFileOpen && <BankFileDialog runId={runId} onClose={() => setBankFileOpen(false)} />}
     </div>
   );
 }
