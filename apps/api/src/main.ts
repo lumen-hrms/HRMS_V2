@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
+import { countRequest, startActivityMetric } from './common/activity-metric';
 import { backgroundWorkersEnabled } from './common/background-workers';
 import { AppLogger } from './common/logging/app-logger';
 import {
@@ -37,12 +38,14 @@ async function bootstrap() {
   // SNS posts SES bounce/complaint events as `text/plain` JSON (module 10 §4.4).
   app.useBodyParser('text', { type: 'text/plain' });
   app.setGlobalPrefix('api');
+  app.use(countRequest);
   app.use(requestLogging);
   app.useGlobalInterceptors(new HandlerNameInterceptor());
   app.useGlobalFilters(new ErrorReasonFilter(app.getHttpAdapter()));
 
   const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
   await app.listen(port);
+  startActivityMetric();
   logger.log(`HRMS API listening on http://localhost:${port}/api`);
   logger.log(
     backgroundWorkersEnabled()
