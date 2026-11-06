@@ -14,6 +14,8 @@ Sign in at http://localhost:5173 with the **domain** (company subdomain),
 | --- | --- | --- | --- |
 | Anuj Mankumare(Company Admin) | Company Admin | `anujm0707@gmail.com` | `Redbull@123` |
 | Aarti Bhat | employee | `aarti.bhat.rbr@mailinator.com` | `Test@123` |
+| Dietrich Mateschitz | Admin | 'dietrich.m.rbr@mailinator.com' | 'Test@123' |
+
 
 ## Seeded demo clients (`npm run prisma:seed`)
 
