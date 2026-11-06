@@ -10,6 +10,7 @@ import {
   LeaveStatusBadge,
   LeaveTypeChip,
   LopBadge,
+  NoEmployeeProfile,
   dayLabel,
   fmtDate,
   fmtRange,
@@ -37,15 +38,14 @@ export function MyRequestsTab({ refreshKey }: { refreshKey: number }) {
   const [sheetOpen, setSheetOpen] = React.useState(false);
 
   const load = React.useCallback(() => {
-    if (!ctx) return;
+    if (!ctx?.employeeId) return;
     leaveApi.requestsForEmployee(ctx.employeeId).then(setRows);
   }, [ctx]);
 
   React.useEffect(load, [load, refreshKey]);
 
-  if (!ctx) {
-    return <p className="text-sm text-muted-foreground">This account has no linked employee record.</p>;
-  }
+  if (!ctx) return null;
+  if (!ctx.employeeId) return <NoEmployeeProfile role={ctx.role} />;
 
   const filtered = (rows ?? []).filter((r) => filter === 'ALL' || r.status === filter);
 

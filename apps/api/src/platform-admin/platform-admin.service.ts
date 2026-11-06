@@ -5,13 +5,15 @@ import {
   Inject,
   Injectable,
   Logger,
+  NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import type * as admin from 'firebase-admin';
 import { FIREBASE_AUTH } from '../firebase/firebase-admin.provider';
-import { sendFirebasePasswordResetEmail } from '../firebase/send-reset-email';
+import { AuthEmailService } from '../notifications/auth-email.service';
 import { PlatformPrismaClientProvider } from '../prisma/platform-prisma-client.provider';
 import { TenantPrismaClientProvider } from '../prisma/tenant-prisma-client.provider';
 import { withTenantContext } from '../prisma/with-tenant-context';
@@ -21,14 +23,19 @@ import { PlansService } from './plans.service';
 import type {
   AdjustPricingDto,
   ChangeTenantPlanDto,
+  ConvertTenantDto,
   CreateTenantDto,
+  SetTrialEndDto,
   PlatformAuditQueryDto,
+  RequestBreakGlassDto,
 } from './dto/platform-admin.dto';
 import type {
   AuthenticatedPlatformAdmin,
+  BreakGlassGrantDto,
   PlatformAuditAction,
   PlatformAuditEntryDto,
 } from './platform-admin.types';
+import { seedPayrollDefaults } from '../payroll/payroll-defaults';
 
 function inDateRange(iso: string, from?: string, to?: string): boolean {
   const day = iso.slice(0, 10);
@@ -91,6 +98,22 @@ function mapAuditRow(row: {
       after = Array.isArray(m.changed) ? (m.changed as string[]).join(', ') : null;
       note = str(m.note);
       break;
+    case 'headcount.refreshed':
+      before = str(m.from);
+      after = str(m.to);
+      break;
+    case 'breakglass.requested':
+      after = m.expiresAt ? `expires ${str(m.expiresAt)}` : null;
+      note = str(m.reason);
+      break;
+    case 'breakglass.revoked':
+    case 'breakglass.expired':
+      note = str(m.reason ?? m.note);
+      break;
+    case 'platform_settings.updated':
+      before = Array.isArray(m.before) ? (m.before as string[]).join(', ') || '(none)' : null;
+      after = Array.isArray(m.after) ? (m.after as string[]).join(', ') || '(none)' : null;
+      break;
     default:
       note = str(m.note ?? m.reason);
   }
@@ -107,6 +130,10 @@ function mapAuditRow(row: {
   };
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** Trial length when the operator doesn't choose one at onboarding. */
+const DEFAULT_TRIAL_DAYS = 7;
+
 @Injectable()
 export class PlatformAdminService {
   private readonly logger = new Logger(PlatformAdminService.name);
@@ -117,6 +144,7 @@ export class PlatformAdminService {
     private readonly config: ConfigService<AppConfig, true>,
     private readonly plans: PlansService,
     @Inject(FIREBASE_AUTH) private readonly firebaseAuth: admin.auth.Auth,
+    private readonly authEmails: AuthEmailService,
   ) {}
 
   // ---- Auth ----
@@ -148,10 +176,10 @@ export class PlatformAdminService {
   // ---- Tenant provisioning & metadata ----
   //
   // Everything below reads/writes ONLY platform.* tables via
-  // `this.platformPrisma`, EXCEPT `seedCompanyAdmin` and `refreshHeadcount`,
-  // which deliberately use the separate `hrms_app` connection
-  // (`this.tenantPrismaRaw`) scoped to one tenant at a time via
-  // `withTenantContext`. That keeps the `hrms_platform` role itself
+  // `this.platformPrisma`, EXCEPT `seedTenantRows`, `resendAdminReset` and
+  // `refreshHeadcount`, which deliberately use the separate `hrms_app`
+  // connection (`this.tenantPrismaRaw`) scoped to one tenant at a time via
+  // the RLS session variable. That keeps the `hrms_platform` role itself
   // (`this.platformPrisma`'s connection) with literally zero grants on
   // `public` — see tenant-isolation.e2e-spec.ts, which asserts a raw query
   // against public.employees over the platform connection is rejected by
@@ -162,6 +190,36 @@ export class PlatformAdminService {
       include: { subscription: true },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  /**
+   * `GET /api/platform-admin/tenants/:id` — the console's tenant-detail
+   * page. `firstAdminEmail` reads the tenant's oldest COMPANY_ADMIN login
+   * over the scoped `hrms_app` connection (same pattern as
+   * `resendAdminReset`); `headcountHistory` has no dedicated time-series
+   * table yet, so it's the one current data point until that's built.
+   */
+  async getTenant(tenantId: string) {
+    const tenant = await this.platformPrisma.tenant.findUnique({
+      where: { id: tenantId },
+      include: { subscription: true },
+    });
+    if (!tenant) throw new NotFoundException('Tenant not found');
+
+    const scoped = withTenantContext(this.tenantPrismaRaw, tenantId);
+    const admin = await scoped.user.findFirst({
+      where: { tenantId, role: 'COMPANY_ADMIN' },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const recentAudit = await this.audit({ tenantId });
+
+    return {
+      ...tenant,
+      firstAdminEmail: admin?.email ?? null,
+      headcountHistory: [{ at: tenant.updatedAt.toISOString(), count: tenant.employeeCount }],
+      recentAudit: recentAudit.slice(0, 20),
+    };
   }
 
   async updateTenantStatus(
@@ -219,6 +277,8 @@ export class PlatformAdminService {
     // `dto.pricePerSeat` is the negotiated rate for this deal; omitted → the
     // plan's list price.
     const snap = await this.plans.snapshotFor(plan, dto.seats, dto.pricePerSeat);
+    const trialDays = dto.trialDays ?? DEFAULT_TRIAL_DAYS;
+    const trialEndsAt = new Date(Date.now() + trialDays * DAY_MS);
 
     const tenant = await this.platformPrisma.tenant.create({
       data: {
@@ -233,24 +293,33 @@ export class PlatformAdminService {
             features: snap.features,
             pricePerSeat: snap.pricePerSeat,
             isolationTier: snap.isolationTier,
+            trialEndsAt,
           },
         },
       },
     });
 
-    let adminResetEmailSent = true;
+    let adminFirebaseUid: string | undefined;
     try {
-      const seeded = await this.seedCompanyAdmin(tenant.id, dto.adminEmail, dto.adminName);
-      adminResetEmailSent = seeded.resetEmailSent;
-      // Working HR-config defaults so the tenant functions before anyone
-      // opens Settings (see docs/TENANT_CONFIGURATION.md).
-      await this.seedTenantDefaults(tenant.id);
+      adminFirebaseUid = await this.createAdminLogin(tenant.id, dto.adminEmail, dto.adminName);
+      // The admin's users row + working HR-config defaults, in ONE
+      // transaction — a failure here leaves no orphaned `public` rows.
+      await this.seedTenantRows(tenant.id, dto.adminEmail, adminFirebaseUid);
     } catch (err) {
       // Roll back the tenant record if we couldn't finish provisioning —
-      // a half-provisioned tenant is worse than no tenant at all.
+      // a half-provisioned tenant is worse than no tenant at all. The
+      // Firebase login goes too, or a retry with the same email is refused.
+      if (adminFirebaseUid) await this.discardFirebaseUser(adminFirebaseUid, dto.adminEmail);
       await this.platformPrisma.tenant.delete({ where: { id: tenant.id } });
+      this.logger.warn(
+        `Tenant onboarding for "${subdomain}" failed and was rolled back: ${err instanceof Error ? err.message.split('\n').filter(Boolean).pop() : String(err)}`,
+      );
       throw err;
     }
+
+    // Only now that provisioning has fully succeeded — an invite sent
+    // before a rollback points the customer at a tenant that doesn't exist.
+    const adminResetEmailSent = await this.sendAdminInvite(tenant.id, dto.adminEmail);
 
     await this.refreshHeadcount(tenant.id);
 
@@ -267,6 +336,7 @@ export class PlatformAdminService {
             plan,
             seats: snap.seats,
             pricePerSeat: snap.pricePerSeat.toFixed(2),
+            trialEndsAt: trialEndsAt.toISOString(),
           },
         },
       });
@@ -295,10 +365,7 @@ export class PlatformAdminService {
     });
     if (!admin) throw new BadRequestException('This tenant has no Company Admin to reset');
 
-    await sendFirebasePasswordResetEmail(
-      this.config.get('firebase.webApiKey', { infer: true }),
-      admin.email,
-    );
+    await this.authEmails.sendPasswordReset({ email: admin.email, kind: 'INVITE', tenantId });
     return { email: admin.email };
   }
 
@@ -309,6 +376,165 @@ export class PlatformAdminService {
    * prior negotiated rate is dropped — re-negotiate afterwards via
    * `adjustPricing`). Audits `tenant.plan_changed`.
    */
+  /**
+   * `PATCH /tenants/:id/trial` — sets when the trial ends. A date in the
+   * future on a READ_ONLY tenant reopens its trial. Converted (ACTIVE) and
+   * SUSPENDED tenants are refused: a converted tenant has no trial, and a
+   * suspended one is changed through its status instead.
+   */
+  async setTrialEnd(tenantId: string, dto: SetTrialEndDto, actorEmail?: string) {
+    const current = await this.platformPrisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { status: true, subscription: { select: { trialEndsAt: true } } },
+    });
+    if (!current) throw new BadRequestException('Tenant not found');
+    if (!current.subscription) throw new BadRequestException('Tenant has no subscription');
+    if (current.status === 'ACTIVE' || current.status === 'SUSPENDED') {
+      throw new BadRequestException(
+        current.status === 'ACTIVE'
+          ? 'This tenant is already converted to a paid plan; it has no trial to change.'
+          : 'A suspended tenant’s trial cannot be changed. Resume the tenant first.',
+      );
+    }
+
+    const trialEndsAt = new Date(dto.trialEndsAt);
+    if (Number.isNaN(trialEndsAt.getTime())) {
+      throw new BadRequestException('trialEndsAt must be a valid date');
+    }
+    if (trialEndsAt.getTime() <= Date.now()) {
+      throw new BadRequestException('The trial end date must be in the future.');
+    }
+
+    const reopening = current.status === 'READ_ONLY';
+    await this.platformPrisma.$transaction([
+      this.platformPrisma.subscription.update({
+        where: { tenantId },
+        data: { trialEndsAt },
+      }),
+      ...(reopening
+        ? [
+            this.platformPrisma.tenant.update({
+              where: { id: tenantId },
+              data: { status: 'TRIAL' },
+            }),
+          ]
+        : []),
+    ]);
+
+    await this.bestEffortAudit({
+      actorEmail: actorEmail ?? 'unknown',
+      action: 'tenant.trial_updated',
+      targetType: 'tenant',
+      targetId: tenantId,
+      reason: dto.reason,
+      metadata: {
+        before: current.subscription.trialEndsAt?.toISOString() ?? null,
+        after: trialEndsAt.toISOString(),
+        reopened: reopening,
+      },
+    });
+    return { trialEndsAt: trialEndsAt.toISOString(), status: reopening ? 'TRIAL' : current.status };
+  }
+
+  /**
+   * `POST /tenants/:id/convert` — the operator confirms the paid plan after
+   * payment (payment itself is outside the app). Ends the trial, sets the
+   * tenant ACTIVE and starts a one-year term. A plan different from the
+   * current one goes through `changeTenantPlan`, so entitlements and pricing
+   * re-snapshot exactly as a normal plan change would.
+   */
+  async convertTenant(tenantId: string, dto: ConvertTenantDto, actorEmail?: string) {
+    const current = await this.platformPrisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { status: true, subscription: { select: { plan: true } } },
+    });
+    if (!current) throw new BadRequestException('Tenant not found');
+    if (!current.subscription) throw new BadRequestException('Tenant has no subscription');
+    if (current.status === 'ACTIVE') {
+      throw new BadRequestException(
+        'This tenant is already converted. Use the plan change instead.',
+      );
+    }
+    if (current.status === 'SUSPENDED') {
+      throw new BadRequestException('Resume the tenant before converting it to a paid plan.');
+    }
+
+    if (current.subscription.plan !== dto.plan) {
+      await this.changeTenantPlan(tenantId, { plan: dto.plan, reason: dto.reason }, actorEmail);
+    }
+
+    const renewsAt = new Date();
+    renewsAt.setFullYear(renewsAt.getFullYear() + 1);
+    await this.platformPrisma.$transaction([
+      this.platformPrisma.tenant.update({ where: { id: tenantId }, data: { status: 'ACTIVE' } }),
+      this.platformPrisma.subscription.update({
+        where: { tenantId },
+        data: { trialEndsAt: null, renewsAt },
+      }),
+    ]);
+
+    await this.bestEffortAudit({
+      actorEmail: actorEmail ?? 'unknown',
+      action: 'tenant.converted',
+      targetType: 'tenant',
+      targetId: tenantId,
+      reason: dto.reason,
+      metadata: {
+        fromStatus: current.status,
+        plan: dto.plan,
+        renewsAt: renewsAt.toISOString(),
+      },
+    });
+    return { status: 'ACTIVE', plan: dto.plan, renewsAt: renewsAt.toISOString() };
+  }
+
+  /**
+   * Daily job: every TRIAL tenant whose window has passed goes READ_ONLY.
+   * Returns how many tenants were moved (for the job log and tests).
+   */
+  async expireTrials(now: Date = new Date()): Promise<number> {
+    const expired = await this.platformPrisma.tenant.findMany({
+      where: { status: 'TRIAL', subscription: { is: { trialEndsAt: { lte: now } } } },
+      select: { id: true, subscription: { select: { trialEndsAt: true } } },
+    });
+    for (const tenant of expired) {
+      await this.platformPrisma.tenant.update({
+        where: { id: tenant.id },
+        data: { status: 'READ_ONLY' },
+      });
+      await this.bestEffortAudit({
+        actorEmail: 'system:trial-expiry',
+        action: 'tenant.trial_expired',
+        targetType: 'tenant',
+        targetId: tenant.id,
+        metadata: { trialEndsAt: tenant.subscription?.trialEndsAt?.toISOString() ?? null },
+      });
+    }
+    return expired.length;
+  }
+
+  /** Audit write that never fails the operation it describes (same policy as the rest of this file). */
+  private async bestEffortAudit(entry: {
+    actorEmail: string;
+    action: string;
+    targetType: string;
+    targetId: string;
+    reason?: string;
+    metadata: Record<string, unknown>;
+  }) {
+    const { reason, ...rest } = entry;
+    try {
+      await this.platformPrisma.platformAuditLog.create({
+        data: {
+          ...rest,
+          metadata: { ...rest.metadata, reason: reason ?? null } as Prisma.InputJsonValue,
+        },
+      });
+    } catch {
+      // best-effort — the change itself already succeeded.
+    }
+  }
+
   async changeTenantPlan(tenantId: string, dto: ChangeTenantPlanDto, actorEmail?: string) {
     const sub = await this.platformPrisma.subscription.findUnique({
       where: { tenantId },
@@ -482,16 +708,12 @@ export class PlatformAdminService {
   }
 
   /**
-   * Creates the tenant's first COMPANY_ADMIN: a Firebase user with a random
-   * password (never shown to anyone) + a hosted password-reset email so the
-   * customer sets their own password on first sign-in.
+   * Creates the Firebase login for the tenant's first COMPANY_ADMIN, with a
+   * random password (never shown to anyone) and the tenant/role claims. The
+   * customer sets their own password from the invite `sendAdminInvite` sends
+   * once provisioning has finished. Returns the Firebase uid.
    */
-  private async seedCompanyAdmin(tenantId: string, email: string, name: string) {
-    const scoped = withTenantContext(this.tenantPrismaRaw, tenantId);
-
-    const existing = await scoped.user.findFirst({ where: { tenantId, email } });
-    if (existing) throw new BadRequestException('That admin email is already in use');
-
+  private async createAdminLogin(tenantId: string, email: string, name: string) {
     let firebaseUid: string;
     try {
       const created = await this.firebaseAuth.createUser({
@@ -502,59 +724,142 @@ export class PlatformAdminService {
       firebaseUid = created.uid;
     } catch (err: any) {
       if (err?.code === 'auth/email-already-exists') {
-        throw new BadRequestException('That admin email is already registered with Firebase');
+        const owner = await this.workspaceOwningLogin(email);
+        this.logger.warn(
+          `Tenant onboarding refused: a login for ${email} already exists${owner ? ` (${owner})` : ''}`,
+        );
+        throw new BadRequestException(
+          `A login for ${email} already exists${owner ? ` — it belongs to ${owner}` : ''}. Use a different email, or remove the old login first.`,
+        );
       }
-      throw err;
-    }
-    await this.firebaseAuth.setCustomUserClaims(firebaseUid, { tenantId, role: 'COMPANY_ADMIN' });
-
-    const user = await scoped.user.create({
-      data: { tenantId, email, firebaseUid, role: 'COMPANY_ADMIN' },
-    });
-
-    // Non-fatal: the login exists either way. `resetEmailSent` is surfaced
-    // all the way up to the New Tenant wizard so the operator isn't left
-    // guessing why the customer says they never got the email — the only
-    // trace used to be this log line.
-    let resetEmailSent = true;
-    try {
-      await sendFirebasePasswordResetEmail(
-        this.config.get('firebase.webApiKey', { infer: true }),
-        email,
+      // Anything else here is almost always the Admin SDK itself failing to
+      // authenticate to Google (revoked/rotated service-account key, clock
+      // skew) rather than a bad request — surface that distinctly instead of
+      // letting a raw Firebase error reach the client as an opaque 500.
+      this.logger.error(
+        `Tenant onboarding failed: could not create the admin login for ${email} (sign-in service error ${err?.code ?? 'unknown'} — check the service-account credentials)`,
+        err instanceof Error ? err.stack : String(err),
       );
+      throw new ServiceUnavailableException(
+        'Could not create the admin login right now — the sign-in service did not respond. No tenant was created; try again in a few minutes.',
+      );
+    }
+
+    try {
+      await this.firebaseAuth.setCustomUserClaims(firebaseUid, {
+        tenantId,
+        role: 'COMPANY_ADMIN',
+      });
     } catch (err) {
-      resetEmailSent = false;
+      this.logger.error(
+        `Tenant onboarding failed: could not assign the Company Admin role to ${email} (check the service-account credentials)`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      // Don't strand a Firebase login with no tenant behind it.
+      await this.discardFirebaseUser(firebaseUid, email);
+      throw new ServiceUnavailableException(
+        'Could not finish setting up the admin login — the sign-in service did not respond. No tenant was created; try again in a few minutes.',
+      );
+    }
+
+    return firebaseUid;
+  }
+
+  /**
+   * Sends the Company Admin's hosted password-reset INVITE. Non-fatal: the
+   * login exists either way. The result is surfaced all the way up to the
+   * New Tenant wizard so the operator isn't left guessing why the customer
+   * says they never got the email (and can use `resendAdminReset`).
+   */
+  private async sendAdminInvite(tenantId: string, email: string) {
+    try {
+      await this.authEmails.sendPasswordReset({ email, kind: 'INVITE', tenantId });
+      return true;
+    } catch (err) {
       this.logger.error(
         `Tenant admin ${email} created but the password-reset email failed to send`,
         err instanceof Error ? err.stack : String(err),
       );
+      return false;
     }
+  }
 
-    return { user, resetEmailSent };
+  /** "the Company Admin of Med United (medunited)" — which workspace an existing
+   *  login is tied to, for an actionable onboarding error. Best-effort: null
+   *  when the login has no tenant or the lookup fails. */
+  private async workspaceOwningLogin(email: string): Promise<string | null> {
+    try {
+      const existing = await this.firebaseAuth.getUserByEmail(email);
+      const claims = existing.customClaims as
+        { tenantId?: string; role?: string; type?: string } | undefined;
+      if (claims?.type === 'platform_admin') return 'a platform admin';
+      if (!claims?.tenantId) return null;
+      const tenant = await this.platformPrisma.tenant.findUnique({
+        where: { id: claims.tenantId },
+        select: { name: true, subdomain: true },
+      });
+      if (!tenant) return null;
+      const role = claims.role ? `the ${humanRole(claims.role)} of ` : '';
+      return `${role}${tenant.name} (${tenant.subdomain})`;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Best-effort compensation for a failed provisioning step — logs rather
+   * than masking the original error if Firebase refuses the delete too. */
+  private async discardFirebaseUser(firebaseUid: string, email: string) {
+    try {
+      await this.firebaseAuth.deleteUser(firebaseUid);
+    } catch (err) {
+      this.logger.error(
+        `Onboarding rollback incomplete: the half-created login for ${email} could not be removed — run \`npm run user:remove -- ${email} --yes\` before retrying with this email`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
   }
 
   /**
-   * Seeds the tenant's operational HR config with sensible defaults —
-   * 5-day week (Sun/Sat off), one 09:00–18:00 "General" shift, self-service
-   * attendance. The Company Admin tunes these in-app; nothing here is a
-   * commercial/plan concern. Uses the tenant-scoped `hrms_app` connection,
-   * same as seedCompanyAdmin (the platform role has no grants on `public`).
+   * Writes every `public` row a new tenant starts with — the first
+   * COMPANY_ADMIN's users row plus working HR-config defaults so the tenant
+   * functions before anyone opens Settings (5-day week, one 09:00–18:00
+   * "General" shift, self-service attendance, payroll settings + PT slabs;
+   * see docs/TENANT_CONFIGURATION.md). The Company Admin tunes these in-app.
+   *
+   * One interactive transaction on the tenant-scoped `hrms_app` connection
+   * (the platform role has no grants on `public`, and `hrms_app` has no
+   * DELETE on most of these tables) with the RLS session variable set first:
+   * a failure on any step rolls all of them back, so a failed onboarding
+   * leaves no orphaned rows for a tenant that was never created.
    */
-  private async seedTenantDefaults(tenantId: string) {
-    const scoped = withTenantContext(this.tenantPrismaRaw, tenantId);
+  private async seedTenantRows(tenantId: string, email: string, firebaseUid: string) {
+    await this.tenantPrismaRaw.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, TRUE)`;
 
-    await scoped.tenantSettings.create({ data: { tenantId } });
-    await scoped.attendanceSettings.create({ data: { tenantId } });
-    await scoped.shift.create({
-      data: {
-        tenantId,
-        name: 'General',
-        type: 'FIXED',
-        startTime: '09:00',
-        endTime: '18:00',
-        isDefault: true,
+        const existing = await tx.user.findFirst({ where: { tenantId, email } });
+        if (existing) throw new BadRequestException('That admin email is already in use');
+        await tx.user.create({
+          data: { tenantId, email, firebaseUid, role: 'COMPANY_ADMIN' },
+        });
+
+        await tx.tenantSettings.create({ data: { tenantId } });
+        await tx.attendanceSettings.create({ data: { tenantId } });
+        await tx.shift.create({
+          data: {
+            tenantId,
+            name: 'General',
+            type: 'FIXED',
+            startTime: '09:00',
+            endTime: '18:00',
+            isDefault: true,
+          },
+        });
+        await seedPayrollDefaults(tx, tenantId);
       },
-    });
+      // A dozen round-trips to the pooler; Prisma's 5s default is tight.
+      { timeout: 15_000 },
+    );
   }
 
   /**
@@ -597,5 +902,241 @@ export class PlatformAdminService {
       where: { id: tenantId },
       data: { employeeCount: count },
     });
+    return count;
   }
+
+  /**
+   * `POST /api/platform-admin/tenants/:id/refresh-headcount` — expose the
+   * existing on-demand `refreshHeadcount()` (already called internally by
+   * `createTenant`) as an operator-triggerable route, with an audit row.
+   */
+  async refreshHeadcountRoute(tenantId: string, actorEmail?: string) {
+    const before = await this.platformPrisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { employeeCount: true, name: true },
+    });
+    if (!before) throw new NotFoundException('Tenant not found');
+
+    const employeeCount = await this.refreshHeadcount(tenantId);
+
+    if (employeeCount !== before.employeeCount) {
+      await this.platformPrisma.platformAuditLog
+        .create({
+          data: {
+            actorEmail: actorEmail ?? 'unknown',
+            action: 'headcount.refreshed',
+            targetType: 'tenant',
+            targetId: tenantId,
+            metadata: { tenantName: before.name, from: before.employeeCount, to: employeeCount },
+          },
+        })
+        .catch(() => undefined);
+    }
+
+    return { employeeCount };
+  }
+
+  // ---- Break-glass support access ----
+  //
+  // The auditable control-plane record for time-boxed, logged, read-only
+  // support access (CLAUDE.md's multi-tenancy section). Deliberately does
+  // NOT itself widen `hrms_platform`'s grants — see the migration comment
+  // on `platform.break_glass_grants`.
+
+  async requestBreakGlass(tenantId: string, dto: RequestBreakGlassDto, actorEmail?: string) {
+    const tenant = await this.platformPrisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { name: true },
+    });
+    if (!tenant) throw new NotFoundException('Tenant not found');
+
+    const existing = await this.platformPrisma.breakGlassGrant.findFirst({
+      where: { tenantId, status: 'ACTIVE', expiresAt: { gt: new Date() } },
+    });
+    if (existing) {
+      throw new ConflictException('This tenant already has an active break-glass grant');
+    }
+
+    const expiresAt = new Date(Date.now() + dto.ttlMinutes * 60_000);
+    const grant = await this.platformPrisma.breakGlassGrant.create({
+      data: {
+        tenantId,
+        requestedBy: actorEmail ?? 'unknown',
+        reason: dto.reason,
+        expiresAt,
+      },
+    });
+
+    await this.platformPrisma.platformAuditLog
+      .create({
+        data: {
+          actorEmail: actorEmail ?? 'unknown',
+          action: 'breakglass.requested',
+          targetType: 'tenant',
+          targetId: tenantId,
+          metadata: {
+            tenantName: tenant.name,
+            reason: dto.reason,
+            expiresAt: expiresAt.toISOString(),
+          },
+        },
+      })
+      .catch(() => undefined);
+
+    return { id: grant.id, expiresAt: expiresAt.toISOString() };
+  }
+
+  /** `GET /api/platform-admin/tenants/:id/breakglass` — the tenant's current ACTIVE grant, if any. */
+  async getActiveBreakGlass(tenantId: string): Promise<BreakGlassGrantDto | null> {
+    const grant = await this.platformPrisma.breakGlassGrant.findFirst({
+      where: { tenantId, status: 'ACTIVE', expiresAt: { gt: new Date() } },
+      include: { tenant: { select: { name: true } } },
+      orderBy: { grantedAt: 'desc' },
+    });
+    if (!grant) return null;
+
+    return {
+      id: grant.id,
+      tenantName: grant.tenant.name,
+      reason: grant.reason,
+      grantedAt: grant.grantedAt.toISOString(),
+      expiresAt: grant.expiresAt.toISOString(),
+      status: grant.status,
+      accessCount: grant.accessCount,
+    };
+  }
+
+  async revokeBreakGlass(tenantId: string, grantId: string, actorEmail?: string) {
+    const grant = await this.platformPrisma.breakGlassGrant.findUnique({
+      where: { id: grantId },
+      include: { tenant: { select: { name: true } } },
+    });
+    if (!grant || grant.tenantId !== tenantId) throw new NotFoundException('Grant not found');
+    if (grant.status !== 'ACTIVE') throw new BadRequestException('This grant is not active');
+
+    await this.platformPrisma.breakGlassGrant.update({
+      where: { id: grantId },
+      data: { status: 'REVOKED', revokedAt: new Date(), revokedBy: actorEmail ?? 'unknown' },
+    });
+
+    await this.platformPrisma.platformAuditLog
+      .create({
+        data: {
+          actorEmail: actorEmail ?? 'unknown',
+          action: 'breakglass.revoked',
+          targetType: 'tenant',
+          targetId: tenantId,
+          metadata: { tenantName: grant.tenant.name },
+        },
+      })
+      .catch(() => undefined);
+
+    return { status: 'REVOKED' as const };
+  }
+
+  /**
+   * Flips ACTIVE grants past `expiresAt` to EXPIRED and audits it — called
+   * by `BreakGlassExpiryProcessor` (a daily BullMQ job). Not a route: expiry
+   * is time-driven, not operator-triggered.
+   */
+  async expireOverdueBreakGlassGrants() {
+    const overdue = await this.platformPrisma.breakGlassGrant.findMany({
+      where: { status: 'ACTIVE', expiresAt: { lte: new Date() } },
+      include: { tenant: { select: { name: true } } },
+    });
+    for (const grant of overdue) {
+      await this.platformPrisma.breakGlassGrant.update({
+        where: { id: grant.id },
+        data: { status: 'EXPIRED' },
+      });
+      await this.platformPrisma.platformAuditLog
+        .create({
+          data: {
+            actorEmail: 'system:breakglass-expiry',
+            action: 'breakglass.expired',
+            targetType: 'tenant',
+            targetId: grant.tenantId,
+            metadata: { tenantName: grant.tenant.name },
+          },
+        })
+        .catch(() => undefined);
+    }
+    return overdue.length;
+  }
+
+  // ---- Platform settings + leads (contact form) ----
+  //
+  // `platform.platform_settings` is a singleton row (id 'singleton'); an
+  // operator editing `contactNotifyEmails` is the only write this module
+  // makes to it today. `platform.contact_submissions` is append-only
+  // (leads) — see the migration + ContactService for the write side.
+
+  /** `GET /api/platform-admin/settings`. */
+  async getSettings(): Promise<{ contactNotifyEmails: string[] }> {
+    const row = await this.platformPrisma.platformSettings.findUnique({
+      where: { id: 'singleton' },
+      select: { contactNotifyEmails: true },
+    });
+    return { contactNotifyEmails: row?.contactNotifyEmails ?? [] };
+  }
+
+  /** `PATCH /api/platform-admin/settings` — replaces the notify list wholesale. */
+  async updateSettings(
+    contactNotifyEmails: string[],
+    actorEmail?: string,
+  ): Promise<{ contactNotifyEmails: string[] }> {
+    const before = await this.platformPrisma.platformSettings.findUnique({
+      where: { id: 'singleton' },
+      select: { contactNotifyEmails: true },
+    });
+    const updated = await this.platformPrisma.platformSettings.upsert({
+      where: { id: 'singleton' },
+      create: { id: 'singleton', contactNotifyEmails },
+      update: { contactNotifyEmails },
+      select: { contactNotifyEmails: true },
+    });
+
+    await this.platformPrisma.platformAuditLog
+      .create({
+        data: {
+          actorEmail: actorEmail ?? 'unknown',
+          action: 'platform_settings.updated',
+          targetType: 'platform_settings',
+          targetId: 'singleton',
+          metadata: {
+            before: before?.contactNotifyEmails ?? [],
+            after: contactNotifyEmails,
+          },
+        },
+      })
+      .catch(() => undefined);
+
+    return updated;
+  }
+
+  /** `GET /api/platform-admin/leads` — contact-form submissions, newest first. */
+  async listLeads() {
+    const rows = await this.platformPrisma.contactSubmission.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      at: r.createdAt.toISOString(),
+      name: r.name,
+      email: r.email,
+      company: r.company,
+      phone: r.phone,
+      message: r.message,
+    }));
+  }
+}
+
+/** COMPANY_ADMIN -> "Company Admin". */
+function humanRole(role: string): string {
+  return role
+    .toLowerCase()
+    .split('_')
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join(' ');
 }

@@ -5,16 +5,16 @@
 > build prompt is `docs/ui-build-prompts/03-employee-master.md`.
 >
 > **Status:** 🟡 — the full field set (identity/personal, employment,
-> compensation-adjacent, statutory with KMS encryption, bank, emergency
+> compensation-adjacent, statutory with field encryption, bank, emergency
 > contacts), the lifecycle state machine, bulk-import UI, document
-> hardening, and department edit/delete-with-reassign are all live. Only
-> the org chart's client-side polish (search/expand/zoom) and the
-> deliberately-deferred BU→Dept→Team hierarchy remain.
-> **Progress:** ~97% (see `docs/MODULE_SPECS.md` status table — keep in sync).
+> hardening, department edit/delete-with-reassign, the interactive org
+> chart, a real photo upload and the reveal-reason confirm dialog are all
+> live. Only the deliberately-deferred BU→Dept→Team hierarchy remains.
+> **Progress:** 100% (see `docs/MODULE_SPECS.md` status table — keep in sync).
 > **Code:** `apps/api/src/employees` (`EmployeesService`,
 > `EmployeesController`, `DocumentsController`, `DepartmentsController`),
 > `apps/api/src/storage`, `apps/api/src/crypto` (`FieldEncryptionService`),
-> `apps/web/src/pages/employees`, `apps/web/src/pages/{departments,org-chart}.tsx`.
+> `apps/web/src/pages/employees`, `apps/web/src/pages/departments.tsx`, `apps/web/src/pages/org-chart/`.
 > **Related:** `docs/MODULE_SPECS.md` §3, §9 · `docs/BACKEND_ARCHITECTURE.md`
 > §4 (`scopeFor`), §5 (`employees/`), §6 (data model) ·
 > module `01_IDENTITY_AND_ACCESS.md` (linked-login provisioning; the
@@ -45,10 +45,10 @@ Attendance, Payroll, Compliance, Dashboard, Org Chart) references an
 - **bulk onboarding** via an Excel template with per-row validation.
 
 **In scope (V1):** full field set, in the UI and persisted — identity/personal,
-employment, compensation-adjacent, statutory (KMS-encrypted PAN, bank),
+employment, compensation-adjacent, statutory (field-encrypted PAN, bank),
 emergency contacts; Department (with edit/delete-and-reassign) + single
-reporting line; org chart (rooted per role; search/expand/zoom still
-pending); bulk import (both API and UI); documents (upload/list/download/
+reporting line; org chart (rooted per role, searchable, pan/zoom,
+hover contact card); bulk import (both API and UI); documents (upload/list/download/
 delete/category, MIME+size enforced server-side).
 
 **Out of scope / deferred:** no-code custom field builder (`FR-EMP-008`),
@@ -62,8 +62,8 @@ penny-drop bank verification, background-verification workflow.
 
 | Persona | Why they touch this module | What they can do | What they cannot do |
 |---|---|---|---|
-| **Employee** | Their own record is here; it feeds their payslip, leave, attendance. | View **their own** full record; edit their own contact fields (personal email, phone, address, emergency contacts); upload their own documents; view themselves in the org chart (self-centred). | Cannot see any colleague's record; cannot edit employment / compensation / statutory / bank / lifecycle; cannot delete documents. |
-| **Line Manager** | Needs visibility of their team for approvals and 1:1s. | View **own + direct/indirect reports'** records (read); see their subtree in the org chart and Departments (read). | Cannot edit anyone's record (not even reports'); cannot add employees; no bulk import; no lifecycle transitions. |
+| **Employee** | Their own record is here; it feeds their payslip, leave, attendance. | View **their own** full record; edit their own contact fields (phone, address, emergency contacts — **not** email: it is also their login's sign-in email, so only HR sets it); upload their own documents; view themselves in the org chart (self-centred); browse a **view-only directory of everyone still employed** (name, ID, designation, department, manager, location, joining date, work email, phone) with a **My team** filter (their manager + teammates under that manager + everyone reporting to them, directly or indirectly). | Cannot open any colleague's record; the directory carries no compensation, DOB, personal email, statutory IDs or lifecycle status; cannot edit employment / compensation / statutory / bank / lifecycle; cannot delete documents. |
+| **Line Manager** | Needs visibility of their team for approvals and 1:1s. | View **own + direct/indirect reports'** full records (read), keeping status and employment type for them in the list; browse the same **view-only company directory** as an Employee (limited fields, **My team** filter); see their subtree in the org chart and Departments (read). | Cannot open a non-report's record; the directory carries no compensation, DOB, personal email or statutory IDs; cannot edit anyone's record (not even reports'); cannot add employees; no bulk import; no lifecycle transitions. |
 | **HR Manager** | Primary operator. Onboards, maintains, offboards people; manages departments and the hierarchy. | Full CRUD on all employees in the tenant; create an employee **with a linked login** (role ≤ HR_MANAGER); run bulk import; drive lifecycle transitions; upload/delete documents; reveal masked PAN/Aadhaar/bank (logged); create/edit/delete departments; edit reporting lines. | Cannot grant `COMPANY_ADMIN` on a linked login; cannot bypass the masked-reveal audit; cannot hard-delete an employee with history (separate, don't delete). |
 | **Company Admin** | Same operational surface as HR Manager, plus the org-structure owner. | Everything HR Manager can do, **plus** grant `COMPANY_ADMIN` on a linked login. | Same data-integrity limits (no hard delete of employees with history). |
 | **Auditor** (read-only) | Reviews people data + document trail for compliance. | View every employee record (including — decision pending in §12 — masked or revealed statutory/bank), Departments, Org Chart; download documents. | Every mutating control absent; no reveal that isn't itself read-only + logged; no export beyond what's granted. |
@@ -74,8 +74,10 @@ penny-drop bank verification, background-verification workflow.
 - **HR Manager** lives on the **Directory** (search, filter, bulk actions)
   and the **Employee Detail** tabbed page. Onboarding is either one-at-a-time
   (Add Employee form, Identity + Employment required, rest deferred) or
-  **Bulk Import** (download `.xlsx` template → upload → per-row result table →
-  re-upload only failed rows). Offboarding is a **lifecycle transition** to
+  **Bulk Import** (download the template → upload `.csv`/`.xlsx` → preview
+  (dry run, nothing written) → confirm → per-row result table → re-upload
+  only failed rows). Salaries are imported separately (Payroll › Structures
+  › Import salaries, module 07). Offboarding is a **lifecycle transition** to
   `NOTICE_PERIOD` then `SEPARATED`, each captured with the required date +
   reason; `SEPARATED` cascades to disable the linked login (module 01).
 - **Employee** sees a single "My Profile" view — their record with only
@@ -114,13 +116,15 @@ penny-drop bank verification, background-verification workflow.
    **and logged** (`employee.field_revealed` audit row, value never
    included in the metadata). Aadhaar: **last 4 digits only** — the full 12
    is never accepted or stored.
-7. **Org chart is correctly rooted per role — built; polish pending.**
+7. **Org chart is correctly rooted per role and interactive — built.**
    Reflects `reportingManagerId`; Employee/Line Manager get a subtree
    rooted at themselves, HR/Admin/Auditor get the whole tree
-   (`EmployeesService.orgChart`). Expand/collapse, search-to-focus, and
-   PNG/PDF export are **not built** — the frontend renders a plain nested
-   list (`apps/web/src/pages/org-chart.tsx`); PNG/PDF export is explicitly
-   deferred (§1).
+   (`EmployeesService.orgChart`, SEPARATED excluded, cycles pruned). Each
+   node carries work email (linked login — never `personalEmail`), phone,
+   department, location, joining date and report counts for the hover
+   card. `apps/web/src/pages/org-chart/` renders a pan/zoom canvas with
+   expand/collapse, search-to-reveal, subtree focus, department highlight
+   and a click-to-drawer quick view. PNG/PDF export stays deferred (§1).
 8. **Linked-login provisioning is transactional with the employee** — create
    employee + Firebase user + claims + `users` row in one flow (module 01
    §5.3); privilege ceiling enforced.
@@ -175,7 +179,7 @@ default — see `TENANT_CONFIGURATION.md`) · `lifecycleState` ✅ (see §4.4) �
 salary **structure** still lives in Payroll (module 07, not built); this
 stays only the headline number for reference/reports.
 
-**Statutory (India)** — ✅ all persisted: `pan` (**KMS-encrypted** —
+**Statutory (India)** — ✅ all persisted: `pan` (**field-encrypted** —
 `panCiphertext` + a precomputed `panMasked` (`ABCDE****F`); plaintext never
 stored) · `aadhaarLast4` (**exactly 4 digits — never the full 12**,
 enforced by DTO validation) · `uan` · `pfNumber` · `esicNumber` ·
@@ -184,7 +188,7 @@ enforced by DTO validation) · `uan` · `pfNumber` · `esicNumber` ·
 `PATCH /employees/:id`.
 
 **Bank (disbursement)** — ✅ `bankAccountHolderName` ·
-`bankAccountNumber` (**KMS-encrypted** — `bankAccountCiphertext` +
+`bankAccountNumber` (**field-encrypted** — `bankAccountCiphertext` +
 `bankAccountMasked` (`••••1234`); same dedicated endpoint as statutory) ·
 `bankIfsc` (`^[A-Z]{4}0[A-Z0-9]{6}$`) · `bankName` · `bankBranch` ·
 `bankAccountType` (`SAVINGS|CURRENT`).
@@ -205,10 +209,24 @@ EXPERIENCE|OTHER`, settable via `PATCH /documents/:id/category`) ·
 **Derived (read-only)** — `reportingManager {firstName,lastName}` ·
 `directReports [{id,firstName,lastName,designation}]`.
 
-**Linked login (create-time, optional)** — `loginEmail` · `loginRole`
+**Linked login (create-time, optional)** — either a *new* login:
+`loginEmail` · `loginRole`
 (`COMPANY_ADMIN|HR_MANAGER|LINE_MANAGER|EMPLOYEE|AUDITOR`) ·
-`loginTempPassword` (or "send reset link"). Provisions a Firebase user +
-claims + `public.users` row (module 01).
+`loginTempPassword` (or "send reset link"), which provisions a Firebase
+user + claims + `public.users` row (module 01) — **or** `existingUserId`,
+which links a login that already exists in the tenant and has no employee
+yet (never both; 400). The existing-login path is how the first Company
+Admin — created at onboarding with no employee record — gets self-service
+Leave/Attendance/Payslips.
+
+**Link login (after create)** — `PATCH /employees/:id/login { userId }`
+(`EmployeesService.linkLogin()`, Company Admin / HR Manager). Rejects an
+employee that already has a login, a `SEPARATED` employee, a login already
+linked elsewhere (also caught by the `employees.user_id` unique index under
+a race), a login outside the tenant (404 — RLS hides it, plus an explicit
+`tenantId` check), and a login above the actor's RULE-2 ceiling. The
+login's role is never changed. Audited as `access.user_linked` (module 01's
+access-change feed). Unlinking is not offered.
 
 ### 4.3 `Department`
 
@@ -272,7 +290,7 @@ transition graph (`apps/web/src/pages/employees/detail.tsx`).
 | `PATCH` | `/api/employees/:id/sensitive-fields` | Company Admin, HR Manager | `{pan?, aadhaarLast4?, uan?, pfNumber?, esicNumber?, taxRegime?, bankAccountHolderName?, bankAccountNumber?, bankIfsc?, bankName?, bankBranch?, bankAccountType?}` — encrypts `pan`/`bankAccountNumber`, computes the masked forms, audits which fields changed (never the values). |
 | `POST` | `/api/employees/:id/reveal` | Company Admin, HR Manager, Auditor | `{field: 'pan'\|'bankAccountNumber', reason}` — decrypts and returns the value; writes an `employee.field_revealed` audit row (reason logged, value never logged). |
 | `GET`/`POST`/`PATCH`/`DELETE` | `/api/employees/:id/emergency-contacts[/:contactId]` | read: row-scoped · write: any authenticated (own record) or Admin/HR | RULE-5 primary-swap on create/update. |
-| `POST` | `/api/employees/bulk-import` | Company Admin, HR Manager | Multipart `file` (`.xlsx`). Requires `employeeCode`/`firstName`/`lastName` columns. Returns `[{ row, status: 'ok'|'error', message }]`. Never fails the batch. Frontend: `apps/web/src/pages/employees/import.tsx` (template download, upload, per-row result table, failed-row re-download). |
+| `POST` | `/api/employees/bulk-import?dryRun=true\|false` | Company Admin, HR Manager | Multipart `file` (`.csv` or `.xlsx`, ≤5 MB, ≤5,000 rows). Creates or updates (matched by `employeeCode`) with the full field set — see §5.2. Returns an `ImportReport` (`{dryRun, totalRows, succeeded, failed, ignoredColumns, summary, results: [{row, employeeCode, action, success, error?, warnings?, detail?}]}`). Never fails the batch. `EmployeeImportService`; frontend `apps/web/src/pages/employees/import.tsx` on the shared `components/bulk-import.tsx`. |
 | `GET` | `/api/employees/:id/documents` | row-scoped | List metadata. |
 | `POST` | `/api/employees/:id/documents?label=&category=` | Admin/HR (any employee) or Employee (own record only); Line Manager/Auditor cannot upload | MIME allow-list (PDF/JPG/PNG) + 10 MB cap enforced in the service, not just the controller. |
 | `GET` | `/api/documents/:id/download-url` | row-scoped (via the document's owning employee) | 5-minute presigned URL. |
@@ -296,16 +314,14 @@ lists a bucket or returns a raw key.
 
 - Default `Shift` + weekly-off from `TENANT_CONFIGURATION.md` (for
   `shiftId = null`).
-- **Field encryption key — built, interim.** `FieldEncryptionService`
+- **Field encryption key — built.** `FieldEncryptionService`
   (`apps/api/src/crypto`) does AES-256-GCM with a data key from
   `FIELD_ENCRYPTION_KEY` (base64, 32 bytes; `openssl rand -base64 32`).
   Resolved lazily (not at boot), so a tenant with the var unset can still
   run the API — only a PAN/bank write or reveal fails, with a clear message.
-  This is the "KMS data key" half of the envelope today; the key itself is
-  a static secret in the team vault, not yet wrapped by a real AWS KMS
-  master key — that lands with the production AWS migration
-  (`CLAUDE.md`'s Stack table). Swapping the key source later only touches
-  this one file, since callers only ever see `encrypt`/`decrypt`.
+  The key is a static secret in the team vault; AWS KMS is deliberately
+  not used. Changing the key source later only touches this one file,
+  since callers only ever see `encrypt`/`decrypt`.
 
 ---
 
@@ -324,20 +340,44 @@ lists a bucket or returns a raw key.
 5. Later the employee logs in and sees **only** their own record; their Line
    Manager sees them in the team list and org chart.
 
-### 5.2 Bulk import — built (`apps/web/src/pages/employees/import.tsx`)
+### 5.2 Bulk import — built (`EmployeeImportService`, `apps/web/src/pages/employees/import.tsx`)
 
-1. HR → **Employees → Bulk import** → downloads the `.csv` template
-   (required: `employeeCode`, `firstName`, `lastName`; optional:
-   `personalEmail`, `phone`, `designation` — matching what
-   `bulkImport()` actually reads today; department/manager resolution by
-   name isn't implemented, only by the columns the API accepts).
-2. Chooses a file → uploads directly (no client-side preview step —
-   simpler than the original target spec, and the per-row result table
-   from step 3 covers the same need).
-3. `POST /api/employees/bulk-import` → server parses with `exceljs`, inserts
-   row-by-row → returns per-row `[{ row, status, message }]`.
-4. Result table: "X created, Y failed"; **Download failed rows** as `.xlsx`
-   to fix and re-upload only those.
+1. HR → **Employees → Bulk import** → downloads the `.csv` template. Columns
+   (headers matched loosely — `Employee Code` = `employeeCode`):
+   `employeeCode`* · `firstName`/`lastName` (required for a new code) ·
+   `personalEmail`, `phone`, `dateOfBirth`, `gender`, `maritalStatus`,
+   `bloodGroup`, `nationality` · `department` (by name — a new name is
+   created; the preview lists them), `designation`, `employmentType`,
+   `dateOfJoining`, `workLocation`, `workState`, `reportingManagerCode` (an
+   existing employee **or** another row in the file), `payGrade`,
+   `costCenter` · `pan`, `aadhaarLast4` (a full 12-digit Aadhaar is rejected,
+   never stored or echoed), `uan`, `pfNumber`, `esicNumber`, `taxRegime` ·
+   `bankAccountHolderName`, `bankAccountNumber`, `bankIfsc`, `bankName`,
+   `bankBranch`, `bankAccountType` · `loginEmail`, `loginRole`.
+   Dates: `YYYY-MM-DD` or `DD-MM-YYYY`. Enums/states accept friendly text
+   ("Full time", "Tamil Nadu").
+2. Uploads `.csv` or `.xlsx` → `POST …?dryRun=true` validates every row and
+   previews creates vs updates, new departments, logins and per-row errors
+   — **writes nothing**.
+3. Confirms → `POST …?dryRun=false` re-validates and imports every valid
+   row. An existing `employeeCode` is an **update**; a blank cell never
+   clears a field. PAN / bank account go through the same encryption +
+   masking as `updateSensitiveFields`. Managers are linked in a second pass
+   (so order in the file doesn't matter); unknown managers, self-managers
+   and reporting cycles fail the row, cascading to rows that report to a
+   failing row. A `loginEmail` creates a Firebase login (random password,
+   tenant/role claims, `users` row) — role capped by RULE-2 — and the INVITE
+   email goes out only after the employee row lands; a failed DB write
+   deletes the Firebase login again. Audited per row (`employee.created` /
+   `employee.updated`, field names only — never PAN/bank/Aadhaar values),
+   per login (`user.created`), and per batch (`employee.bulk_imported`).
+4. The commit streams live progress (`Accept: application/x-ndjson` →
+   `streamImport`: saving → linking managers → sending invites, with counts
+   and elapsed time) and writes up to 4 rows in parallel; each row is one
+   statement (employee + nested `users` create), audit rows are batched
+   (`AuditService.logMany`). Without that `Accept` header the endpoint
+   returns plain JSON as before.
+5. Result table; **Errors (.csv)** download to fix and re-upload only those.
 
 ### 5.3 Employee edits their own contact details — built
 
@@ -382,16 +422,19 @@ lists a bucket or returns a raw key.
    `employee.field_revealed` audit row — actor, field, employeeId, reason,
    timestamp; **the decrypted value is never written to the audit row**.
 
-### 5.7 Org chart — rooted per role (built); focus/search not built
+### 5.7 Org chart — rooted per role, interactive (built)
 
 1. Any persona opens **Org Chart** — `GET /employees/org-chart` roots the
    tree per role: Employee/Line Manager get their own subtree, HR/Admin/
-   Auditor get the whole company from the top.
-2. *(Not built)* Search-to-focus, expand/collapse controls, zoom, and a
-   click-to-drawer quick view — `apps/web/src/pages/org-chart.tsx` today
-   renders a plain nested list with no interactivity beyond what the tree
-   structure itself shows. PNG/PDF export is explicitly deferred (§1), but
-   this interactivity gap is a genuine remaining item (§9).
+   Auditor get the whole company from the top. The root's team is shown
+   expanded; everything deeper is one click away (expanding re-centres).
+2. Hovering (or keyboard-focusing) a person shows a contact card — work
+   email + phone (copy, `mailto:`/`tel:`), location, manager, team size,
+   tenure; clicking opens the quick-view drawer (→ full profile).
+3. Search (name/title/code/email/department) opens the path to the match,
+   pans to it and pulses it; the department filter dims everyone else;
+   double-click (or "Team") focuses a manager's subtree with a breadcrumb
+   back up. PNG/PDF export is explicitly deferred (§1).
 
 ---
 
@@ -410,7 +453,8 @@ lists a bucket or returns a raw key.
 - **RULE-1** — Employee-editable fields are a fixed whitelist (contact +
   emergency); the API ignores anything else on an Employee-actor `PATCH`.
 - **RULE-2** — linked-login role ≤ actor's role; only Company Admin may set
-  `COMPANY_ADMIN`.
+  `COMPANY_ADMIN`. The same ceiling applies to linking an *existing* login
+  (an HR Manager can't link a Company Admin's login).
 - **RULE-3** — bulk import is row-transactional, never batch-transactional.
 - **RULE-4** — lifecycle transitions are restricted to the state machine in
   §4.4; each needs its mandatory date + reason.
@@ -447,6 +491,7 @@ not direct reports only.
 | Edit personal / contact / emergency | own | — | all | all | — |
 | Edit employment / comp / statutory / bank | — | — | ✅ | ✅ | — |
 | Add employee / linked login | — | — | ✅ (role ≤ HR) | ✅ (any role) | — |
+| Link an existing login (create-time or `PATCH /:id/login`) | — | — | ✅ (login role ≤ HR) | ✅ (any role) | — |
 | Lifecycle transitions | — | — | ✅ | ✅ | — |
 | Bulk import | — | — | ✅ | ✅ | — |
 | Reveal masked PAN / Aadhaar / bank (logged) | — | — | ✅ | ✅ | ✅ (read, logged) |
@@ -463,18 +508,13 @@ not direct reports only.
 
 What's left, in priority order:
 
-1. **Org chart interactivity** — search-to-focus, expand/collapse, zoom, a
-   click-to-drawer quick view. The tree is correctly rooted per role
-   (§5.7) but `apps/web/src/pages/org-chart.tsx` renders it as a plain
-   nested list with none of that. PNG/PDF export stays explicitly deferred
-   (§1) and is not counted against this.
-2. **Photo upload** — `photoUrl` is a settable URL string (edit dialog),
-   not an actual image-upload widget wired to Storage (module 09). Low
-   priority; no persona flow depends on it yet.
-3. **Reveal UX polish** — the reveal reason is collected via
-   `window.prompt` (`MaskedRow` in `detail.tsx`), not the target confirm
-   modal with a "this is logged" notice. Functionally complete (the audit
-   row is written correctly either way); this is a frontend-polish item.
+1. ~~**Org chart interactivity**~~ — **closed 2026-10-11** (§5.7).
+   PNG/PDF export stays explicitly deferred (§1).
+2. ~~**Photo upload**~~ — **closed 2026-09-18**: `Employee.photoKey`
+   (private object storage) + `POST /employees/:id/photo`, resolved to a
+   presigned `photoUrl` on read (also on org-chart nodes).
+3. ~~**Reveal UX polish**~~ — **closed 2026-09-18**: a reveal-reason confirm
+   dialog replaced `window.prompt`.
 4. **Generic audit interceptor** (module 12) — lifecycle transitions,
    sensitive-field updates, and reveals each hand-write their own
    `audit_log` row today, same pattern every other module uses; nothing
@@ -522,14 +562,14 @@ Supabase dev DB** via `./scripts/dev.sh migrate`):
   / In Probation / Notice-Separated) plus search + department/lifecycle
   filters. No API changes — same endpoints, different layout. Org chart
   (`org-chart.tsx`) was **not** part of this pass; its interactivity gap
-  (item 1 above) is unchanged.
+  was closed separately (2026-10-11, `pages/org-chart/`).
 
 ---
 
 ## 10. Dependencies
 
 **Upstream:** module 01 (linked-login provisioning, `scopeFor` uses
-`req.user`) · `TENANT_CONFIGURATION.md` (default shift) · KMS · Storage
+`req.user`) · `TENANT_CONFIGURATION.md` (default shift) · Storage
 (module 09).
 
 **Downstream (consumers of `Employee`):**
@@ -557,8 +597,10 @@ Supabase dev DB** via `./scripts/dev.sh migrate`):
       (404 via RLS).
 - [ ] `POST /api/employees` with a duplicate `employeeCode` in the tenant is
       rejected.
-- [ ] Bulk import of a file with 1 bad row in 10 → 9 `ok`, 1 `error`, no
-      rollback of the 9.
+- [x] Bulk import with a bad row → the good rows import, the bad one reports
+      its error — covered by `employee-import.service.spec.ts` (plus
+      validation, manager resolution/cycles, encryption, login + invite
+      ordering, RULE-2 and dry-run-writes-nothing).
 - [x] Uploading a disallowed MIME type or a file over the 10 MB cap is
       rejected server-side — covered by `employees.service.spec.ts`.
 - [x] An Employee can upload only to their own record; a Line Manager cannot
@@ -576,6 +618,13 @@ Supabase dev DB** via `./scripts/dev.sh migrate`):
       403, and an Employee editing anyone but themselves gets a 403 —
       covered by `employees.service.spec.ts`.
 - [ ] HR Manager creating a linked login cannot select `COMPANY_ADMIN`.
+- [x] Linking an existing login (create-time `existingUserId` and
+      `PATCH /:id/login`) rejects: both `existingUserId` and a new-login
+      email/password, a login already linked, a login from another tenant
+      (404), an HR Manager linking a Company Admin's login, an employee that
+      already has a login, a `SEPARATED` employee, and a lost race — and a
+      rejection writes nothing — covered by `employees.service.spec.ts`;
+      cross-tenant link 404s end to end in `tenant-isolation.e2e-spec.ts`.
 - [x] Every lifecycle transition writes one audit row and rejects illegal
       target states — covered by `employees.service.spec.ts`.
 - [x] A transition requiring a date (`CONFIRMED`/`NOTICE_PERIOD`/`SEPARATED`)

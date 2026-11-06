@@ -11,6 +11,8 @@
  * this file re-exports them.
  */
 
+import type { DocumentRef } from '@/lib/documents';
+
 export type LeaveRequestStatus =
   | 'PENDING_L1'
   | 'PENDING_L2'
@@ -19,6 +21,8 @@ export type LeaveRequestStatus =
   | 'CANCELLED';
 
 export type LeaveApprovalLevel = 1 | 2;
+/** Who decides when there's one approval level. */
+export type LeaveSingleApprover = 'HR' | 'MANAGER';
 
 export type AccrualFrequency = 'ANNUAL' | 'MONTHLY' | 'QUARTERLY';
 export type GenderRestriction = 'ANY' | 'FEMALE' | 'MALE';
@@ -43,6 +47,39 @@ export interface LeaveType {
    *  LeaveService.creditCompOff() when someone works a holiday/weekly-off
    *  day, not applied for directly. At most one expected per tenant. */
   isCompOff: boolean;
+  /** Restricted Holiday leave: only takeable on optional holidays — how an
+   *  employee opts in to one (optional holidays are working days otherwise). */
+  isRestrictedHoliday: boolean;
+  /** ACCRUED = a yearly/periodic balance; ON_EVENT = granted per life event
+   *  (maternity, paternity, marriage…) — see apps/api/src/leave/event-leave.ts. */
+  grantMode?: 'ACCRUED' | 'ON_EVENT';
+  daysPerEvent?: number | null;
+  reducedDaysPerEvent?: number | null;
+  reducedAfterEvents?: number | null;
+  countCalendarDays?: boolean;
+  maxEventsPerEmployment?: number | null;
+  eventLabel?: string | null;
+  eventWindowDaysBefore?: number;
+  eventWindowDaysAfter?: number;
+  minServiceDays?: number;
+  requiresDocument?: boolean;
+  statutoryMaternity?: boolean;
+}
+
+/** `GET /api/leave/event-leave/:employeeId` — one row per event-based type the employee can request. */
+export interface EventLeaveAllowance {
+  leaveType: Pick<LeaveType, 'id' | 'name' | 'code' | 'colorToken'>;
+  eventLabel: string | null;
+  countCalendarDays: boolean;
+  requiresDocument: boolean;
+  eventsUsed: number;
+  maxEvents: number | null;
+  nextAllowanceDays: number;
+  windowDaysBefore: number;
+  windowDaysAfter: number;
+  /** The type is gender-restricted and the employee's profile has no gender. */
+  genderMissing: boolean;
+  esiCovered: boolean;
 }
 
 export interface LeaveBalance {
@@ -85,7 +122,13 @@ export interface LeaveRequest {
   halfDay: boolean;
   reason: string | null;
   isLop: boolean;
+  /** Event-based leave: the delivery / birth / marriage date. */
+  eventDate?: string | null;
+  /** Statutory maternity for an ESI member — ESIC pays the benefit. */
+  esiCovered?: boolean;
   attachmentName: string | null;
+  /** Supporting document (module 09) — downloadable only once `scanStatus` is CLEAN. */
+  attachment?: DocumentRef | null;
   createdAt: string;
   approvals: LeaveApprovalStep[];
 }
@@ -96,6 +139,8 @@ export interface CreateLeaveRequestInput {
   endDate: string;
   halfDay?: boolean;
   reason?: string;
+  /** Required for event-based leave. */
+  eventDate?: string;
 }
 
 /** Preview the balance hit + LOP verdict before the employee submits. */
@@ -159,6 +204,8 @@ export interface BalanceAdjustmentInput {
 export interface LeaveSettings {
   /** tenant_settings.leave_approval_levels — 1 or 2 for V1. */
   approvalLevels: LeaveApprovalLevel;
+  /** tenant_settings.leave_single_approver — only read when approvalLevels = 1. */
+  singleApprover: LeaveSingleApprover;
   /** Allow submitting a request that will be LOP. */
   allowLopRequests: boolean;
   /** Financial-year start month (1–12); India default April = 4. */
@@ -187,3 +234,21 @@ export const ACCRUAL_LABELS: Record<AccrualFrequency, string> = {
   MONTHLY: 'Monthly',
   QUARTERLY: 'Quarterly',
 };
+
+/** `POST /api/leave/policy/recalculate` — the before/after of every balance that changes. */
+export interface PolicyRecalcResult {
+  dryRun: boolean;
+  leaveYear: number;
+  goLiveDate: string | null;
+  reversed: number;
+  credited: number;
+  negativeBalances: number;
+  changes: {
+    employeeId: string;
+    employeeCode: string;
+    employeeName: string;
+    leaveTypeCode: string;
+    before: number;
+    after: number;
+  }[];
+}

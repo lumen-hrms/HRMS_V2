@@ -14,6 +14,14 @@ import { EmployeesModule } from './employees/employees.module';
 import { LeaveModule } from './leave/leave.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { TenantConfigModule } from './tenant-config/tenant-config.module';
+import { SetupModule } from './setup/setup.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { AuditModule } from './audit/audit.module';
+import { ContactModule } from './contact/contact.module';
+import { ReportsModule } from './reports/reports.module';
+import { PayrollModule } from './payroll/payroll.module';
+import { BillingModule } from './billing/billing.module';
 
 @Module({
   imports: [
@@ -33,6 +41,14 @@ import { DashboardModule } from './dashboard/dashboard.module';
     LeaveModule,
     AttendanceModule,
     DashboardModule,
+    TenantConfigModule,
+    SetupModule,
+    NotificationsModule,
+    AuditModule,
+    ContactModule,
+    ReportsModule,
+    PayrollModule,
+    BillingModule,
   ],
   controllers: [HealthController],
 })
@@ -41,12 +57,17 @@ export class AppModule implements NestModule {
     // Every tenant-facing route gets a resolved tenant attached to the
     // request BEFORE auth runs (login needs it too). Platform-admin routes
     // have no tenant concept at all; the health probe answers before auth
-    // and has no tenant either — both are excluded.
+    // and has no tenant either; the public contact form is pre-tenant too
+    // (a prospect, not a signed-in user of any tenant); the Razorpay and SES
+    // (SNS) webhooks are signed server-to-server calls — all excluded.
     consumer
       .apply(TenantResolutionMiddleware)
       .exclude(
         { path: 'platform-admin/(.*)', method: RequestMethod.ALL },
         { path: 'health', method: RequestMethod.ALL },
+        { path: 'contact', method: RequestMethod.ALL },
+        { path: 'billing/webhooks/(.*)', method: RequestMethod.ALL },
+        { path: 'notifications/ses-events', method: RequestMethod.ALL },
       )
       .forRoutes('*');
   }

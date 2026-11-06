@@ -118,7 +118,7 @@ export function AdjustPricingDialog({
           </div>
         </div>
 
-        <div className="mb-4 flex items-center gap-2 rounded-lg border border-border bg-muted/40 p-3 text-xs">
+        <div className="mb-4 flex items-center gap-2 rounded-xl border border-border bg-muted/40 p-3 text-xs">
           <span className="text-muted-foreground">
             {inr(curRate)}/seat × {curSeats} = {inr(monthlyTotal(curRate, curSeats))}/mo
           </span>
@@ -130,7 +130,7 @@ export function AdjustPricingDialog({
         </div>
 
         {nextSeats < tenant.employeeCount && valid && (
-          <div className="mb-4 rounded-lg bg-warning/10 p-3 text-xs text-warning">
+          <div className="mb-4 rounded-xl bg-warning/10 p-3 text-xs text-warning">
             {tenant.employeeCount} employees exceed {nextSeats} seats — existing data is kept, new
             logins may be blocked.
           </div>

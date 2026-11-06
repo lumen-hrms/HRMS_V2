@@ -21,8 +21,546 @@
 > spec draft that is no longer maintained — ignore them; this file and the
 > code are the source of truth.)
 >
-> **Last synced to code:** 2026-09-15. Landed since the previous sync
-> (2026-09-11):
+> **Last synced to code:** 2026-11-06. Landed since the previous sync
+> (dated 2026-10-29):
+>
+> - **Documents: scanning switch (module 09 stays ✅ 100%).**
+>   `DOCUMENT_SCANNING_ENABLED=false` turns the ClamAV scan off for
+>   environments with no clamd; uploads are then downloadable and shown as
+>   "Not scanned" (`UNSCANNED`), `INFECTED` stays blocked, downloads are
+>   audited with `scanned:false`, and turning it back on scans the backlog.
+>   Default on — fail-closed behaviour is unchanged. Tests added.
+>
+> - **Payroll: bank advice file groundwork (module 07 stays ✅ 100%).** The
+>   company's own bank (the account salaries are paid FROM — encrypted, masked
+>   on read; table `payroll_bank_config`, migration
+>   `20261206090000_payroll_bank_config`) is set under Payroll › Settings ›
+>   Bank & disbursement. After a run is processed, the run page's **Bank file**
+>   dialog shows a pre-download check — count, total, split by payment mode
+>   (same-bank vs NEFT/IMPS/RTGS, from the IFSC prefix; RTGS < ₹2L and IMPS >
+>   ₹5L fall back to NEFT), and every employee left out by name with the reason
+>   (missing or malformed account/IFSC, bad name, zero pay) — then downloads
+>   it. Formats live in a versioned registry (`BANK_FORMATS`): the generic CSV
+>   works; ICICI, Axis, SBI, HDFC and HSBC are listed as "layout coming soon"
+>   until each bank's real template + an accepted sample are added. Each
+>   download is audited. The app still moves no money; Disburse is bookkeeping.
+>   New API: `GET/PUT /payroll/config/bank`, `GET /payroll/bank-formats`,
+>   `GET /payroll/runs/:id/bank-file[/preview]` (`PayrollBankService`).
+>
+> - **Payroll: screens redesigned (module 07 stays ✅ 100%).** The Payroll page
+>   is now Overview · Runs · People & Pay · Settings (+ My Pay), with the tab
+>   and open run in the URL (`?tab=runs&run=<id>`) so a run can be shared with
+>   the second approver. A run is a stepper (Draft → Review → Approved →
+>   Processed → Disbursed) with a "next step" panel, named approvers, a
+>   pre-run **readiness check** (who'd be left out: no work state/structure;
+>   warnings: no DOB/bank, pending regularizations), totals + month-on-month
+>   change, and a paginated/searchable/filterable per-employee table with a
+>   breakdown drawer. People & Pay merges salary structures, import and Full
+>   & Final with bulk "set work state". Settings is regrouped (statutory,
+>   overtime, F&F, PT, TDS), each group saved on its own with inline range
+>   errors. New API: `GET /payroll/runs` (now with totals), `GET
+>   /payroll/readiness`, `GET /payroll/runs/:id/summary`, `GET
+>   /payroll/runs/:id/line-items[/:employeeId]`, `GET /payroll/people`, `POST
+>   /payroll/people/work-state` (`PayrollInsightsService`). Auditors see run
+>   totals and approvals only, and no People & Pay tab (no per-employee pay).
+>
+> - **Attendance + Dashboard: "Today's attendance" is now a ring.** Time
+>   worked (large, in the middle), time on breaks, and time left to the
+>   shift's target, with the check-in time, break count and each break listed
+>   beside it. It keeps counting while you're clocked in. The dashboard
+>   payload's `todayAttendance` gains `breaks` (an open break has a null end).
+>   Clocking out before the shift's required hours now asks first ("you've
+>   only worked X of the Y required"), from both the dashboard card and the
+>   Attendance page; it is a confirmation only — clocking out early is still
+>   allowed. Attendance and Dashboard stay ✅ 100%.
+>
+> - **Dashboard: chart tiles with drill-down.** The dashboard KPI cards are now
+>   small charts, and each opens `/dashboard/:metric` — the graph on top, the
+>   detail table below (the table also serves as the chart's table view).
+>   Employee: attendance (hours worked per day vs the shift target), punctuality
+>   (check-in time per day, late days marked), overtime, and leave balances (by
+>   type); month-navigable, backed by `GET /attendance/stats`, which now also
+>   returns the month day by day (`daily`) and `targetHours` — no extra
+>   queries. Admin/HR: headcount (6-month trend + by department), present
+>   today (split + who's in, from the existing roster), on leave today and
+>   pending approvals (both by leave type). The admin payload gains
+>   `onLeaveToday.byType` and `pendingByType` (counted over *all* rows, not the
+>   truncated lists), and admin-only `GET /api/dashboard/on-leave` and
+>   `/pending-approvals` return the full lists for the tables. Charts are
+>   hand-built SVG (`components/charts`) on the validated categorical palette
+>   (first four slots, light and dark). The "New joiners" and "On notice" admin
+>   tiles stay plain numbers — there is no series behind them yet. Dashboard
+>   stays ✅ 100%.
+>
+> - **Employee Master (module 03) + Dashboard: view-only company directory
+>   and a richer employee dashboard.** `GET /api/employees` for an Employee
+>   now returns everyone still employed in a limited projection (no
+>   compensation, DOB, personal email, statutory IDs or lifecycle status;
+>   work email and phone as the org chart already shows) with a
+>   `teamRelation` per row — `BOSS` (direct manager), `TEAMMATE` (same
+>   manager), `REPORT` (direct or indirect), `SELF` — that drives the new
+>   **My team** filter (`employees/team.ts`, shared with the dashboard). Other
+>   people's profiles stay unopenable (`get()` still scopes an Employee to
+>   themselves); HR / Admin / Auditor lists are unchanged. **Line Managers
+>   get the same directory**, still opening only their own and their reports'
+>   profiles, and keeping status and employment type for those rows
+>   (including reports who have left). The employee dashboard
+>   (`EmployeeInsightsService`) adds this month's attendance, upcoming
+>   holidays, a My team card, team members on leave (names + dates only,
+>   never type or reason) and recent joiners / anniversaries. Also fixed:
+>   `get()` built `where: { id, ...scope }`, and the Employee / Line Manager
+>   scope has its own `id` key that replaced the requested one — it is now
+>   `AND: [{ id }, scope]`, so opening a profile can never return a different
+>   person. Both modules stay ✅ 100%.
+>
+> - **Identity & Access + Employee Master: one email, set by HR.** The
+>   employee's email (`personalEmail`) is now also the login's sign-in email
+>   and so where every notification goes (they already used `users.email`).
+>   Only Company Admin / HR Manager can set it — it was removed from the
+>   Employee self-edit whitelist. An HR edit moves the login automatically
+>   (Firebase + `users`, before the employee write so a clash rejects the
+>   whole edit); **Sync login email** (`POST
+>   /api/employees/:id/login/sync-email`) does it on demand for drift or a
+>   wrong email at creation. Creating a login also stores its email on the
+>   employee. Audited as `access.user_email_changed`. The detail page shows
+>   the login email to HR and flags a mismatch. Password and sessions are
+>   untouched, so the employee signs in with the new email and the same
+>   password. Both modules stay ✅ 100%.
+> - **Identity & Access: branded password-reset page.** Reset/invite emails
+>   sent through SES now link to the app's own `/auth/action` page (same
+>   shell as sign-in; Firebase's one-time code, completed with the Firebase
+>   SDK) instead of Firebase's unstyled hosted page. The fallback used when
+>   SES isn't configured still sends Firebase's own email and page. Stays
+>   ✅ 100%.
+>
+> - **Employee Master (module 03) + Identity & Access: create a login for an
+>   existing employee.** Skipping the login at Add Employee used to leave no
+>   way to add one later (only *Link login* for an already-existing login).
+>   An unlinked profile now also gets **Create login** (`POST
+>   /api/employees/:id/login`, Company Admin / HR Manager): the server
+>   generates a random 12-char alphanumeric temporary password, creates the
+>   Firebase user + `users` row + employee link, and emails the employee ID,
+>   sign-in email and temp password via SES (`AuthEmailService.
+>   sendLoginCredentials`; never stored, never returned, not written to
+>   `notification_log`). The sign-in "username" is the email — employee-ID
+>   sign-in isn't supported. If SES isn't configured the login is still
+>   created and the response says `emailSent: false` (use the reset email).
+>   A linked profile gets **Send password reset** (existing `POST
+>   /api/access/users/:id/password-reset`). Rules: RULE-2 role ceiling,
+>   not already linked, not `SEPARATED`; Firebase user rolled back if the DB
+>   write fails; audited as `access.user_created`. 14 unit tests. Both
+>   modules stay ✅ 100%.
+>
+> - **Leave (module 04): "reporting manager only" approval.** A third
+>   approval option next to "straight to HR" and "manager, then HR" —
+>   `TenantSettings.leaveSingleApprover` (`HR` | `MANAGER`, read when
+>   `leaveApprovalLevels = 1`); settable in Leave › Settings and company
+>   setup. Needs migration `20261204090000_leave_manager_only_approval`.
+>   Leave stays ✅ 100%.
+> - **Performance (cross-cutting, Identity & Access / Platform Admin):** the
+>   per-request tenant and user/setup lookups are cached ≤ 30 s in-process
+>   (`apps/api/src/common/tenancy/auth-context-cache.ts`; cleared on any
+>   tenant / user / login-link / setup write). Saves ~0.7–1.4 s per request
+>   on the cross-region dev stack. Deactivate and suspend dialogs show the
+>   propagation window as a progress view. The DB move to Mumbai is planned in
+>   `docs/DB_REGION_MOVE.md`. No module % changes.
+> - **Reports (module 11):** switching tabs no longer blanks the page
+>   (stale result rendered with the next tab's layout). Display fix.
+> - **Attendance (module 05):** the "Remaining Leave" card is now "Total
+>   Leave Balance" — the Leave page's available figure summed over all leave
+>   types, with a per-type split. Display fix; Attendance stays ✅ 100%.
+>
+> Previously, as of 2026-10-29 (since 2026-10-28):
+>
+> - **Tenant Configuration (module 13): mandatory full-screen company setup
+>   replaces the skippable wizard.** `apps/api/src/setup` +
+>   `apps/web/src/pages/setup`: 10 steps (company + go-live date,
+>   departments, the admin's own employee profile, work week & shifts,
+>   attendance rules, holidays with CSV/XLSX import, leave policy, employee
+>   file, opening leave balances, review). Encrypted server-side draft
+>   (save & resume), strict submit (one error blocks it) writing everything
+>   in **one transaction**, Firebase logins provisioned after the commit
+>   with retry. Until submitted, `TenantGuard` answers 403
+>   `SETUP_INCOMPLETE` on every business route for every role; every
+>   existing tenant goes through it once, pre-filled, never deleting data.
+>   Payroll is deliberately not a step (dashboard card instead). Company
+>   profile editable afterwards (`/api/tenant-config/company-profile`, web
+>   `/company`). Migration `20261201090000_company_setup` (drops the
+>   `setup_wizard_*` columns). Module stays ✅ 100%.
+> - **Leave (module 04): event-based leave — maternity, paternity, marriage.**
+>   `LeaveType.grantMode = ON_EVENT` (`leave/event-leave.ts`): no yearly
+>   balance; each request names its event date and gets that event's days —
+>   per-event allowance (maternity 182 → 84 from the third child),
+>   per-employment limits, a start window around the event, a service
+>   requirement, calendar vs working days, required proof before final
+>   approval, gender failing closed, never LOP (`EVENT_GRANT` ledger
+>   entry), ESI-covered maternity flagged. Presets: Maternity, Adoption,
+>   Commissioning mother, Miscarriage (statutory), Paternity 5 working days,
+>   Marriage 7 working days once. Part-month / part-year leave credits are
+>   now **whole days** (rounded, half up) instead of decimals like 0.19.
+>   New **Recalculate policy credits** (Leave › Settings, Company Admin):
+>   previews then reverses + re-applies this leave year's policy credits,
+>   optionally with a corrected go-live date (migration
+>   `20261203090000_leave_policy_recalc`).
+>   Leave Types dialog now also sets gender,
+>   notice and paid. Migration `20261202090000_event_based_leave`.
+>   Module stays ✅ 100%.
+> - **Leave (module 04): one entitlement engine.** `leave-entitlement.ts` +
+>   `LeaveEntitlementService`: prorated ANNUAL grants, MONTHLY/QUARTERLY
+>   back-credit, go-live and joining-date clipping, opening balances
+>   (`OPENING_BALANCE` ledger source), quota cap, and the previously
+>   missing **year-end carry-forward**. The daily job, new employees,
+>   setup submit and "Apply now" all use it; the old initialize endpoint
+>   no longer grants a full quota with no ledger entry. **Optional
+>   holidays are now working days** everywhere (leave, attendance,
+>   finalization, payroll, F&F) and are taken through a Restricted Holiday
+>   leave type (`LeaveType.isRestrictedHoliday`, enforced in `apply()`).
+>   Holidays list by leave year; new `POST /api/leave/holidays/import`.
+>   Module stays ✅ 100%.
+> - **Attendance (module 05):** finalization skips tenants still in setup
+>   and never marks a day before go-live (no phantom LOP in the first
+>   payroll). Module stays ✅ 100%.
+> - **Employee Master (module 03): link an existing login to an employee.**
+>   The first Company Admin is created at tenant onboarding with a `users`
+>   row but no employee record, so self-service Leave had nowhere to read
+>   from. Add Employee now offers *No login / Create a new login / Link an
+>   existing login* (`existingUserId` on `POST /api/employees`), and an
+>   unlinked profile gets a **Link login** action (`PATCH
+>   /api/employees/:id/login`). Rules: same tenant (RLS + explicit check,
+>   cross-tenant reads as 404), neither side already linked, not a
+>   `SEPARATED` employee, RULE-2 ceiling (HR can't link a Company Admin's
+>   login), role never changes; audited as `access.user_linked`. 16 unit
+>   tests + 1 adversarial e2e case. Both modules stay ✅ 100%.
+> - **Leave (module 04): self-service tabs for an unlinked login.** The web
+>   app used to send the mock fixture id `me` as the employee id when the
+>   signed-in user had no employee record, which 500'd
+>   `GET /leave/balances/:employeeId` and `/leave/requests/employee/:employeeId`
+>   for Company Admin/HR/Auditor (they skip the per-employee check, so `'me'`
+>   reached a `uuid` column). Both routes now use `ParseUUIDPipe` (400, not
+>   500), and Overview/Apply/My Requests show a "not linked to an employee
+>   profile" state instead of calling the API. e2e case added.
+> - **Bulk import — Employee Master (module 03) + Payroll (module 07).**
+>   The employee import now takes the full field set (department by name,
+>   manager by code, work state, statutory IDs, encrypted PAN/bank, logins
+>   with invites), creates *or* updates by `employeeCode`, reads CSV as well
+>   as XLSX (the old `.csv` template couldn't be uploaded), and previews
+>   with a dry run before committing. New `POST
+>   /api/payroll/structures/bulk-import` imports salaries on the standard
+>   template through `SalaryStructureService.create()`/`update()`. Shared
+>   reader/report in `apps/api/src/common/bulk-import.ts` and UI in
+>   `apps/web/src/components/bulk-import.tsx`. Commits stream live progress
+>   (NDJSON) and write 4 rows in parallel — a 30-row import with 10 logins
+>   took ~2m20s row-by-row against the shared DB. Both modules stay ✅ 100%.
+> - **Platform Admin: tenant onboarding no longer strands rows.** The admin
+>   `users` row and every tenant default are seeded in one transaction, and
+>   the invite email goes out only after provisioning fully succeeds.
+>
+> - **Payroll Engine (module 07) Phase 9 follow-up: `update()`/`revise()`
+>   convergence + a best-effort public-source statutory review.**
+>   `SalaryStructureService.update()` now auto-detects when the new
+>   `effectiveFrom` would affect an already-processed period and
+>   transparently routes through the same supersede-and-arrears path
+>   `revise()` uses, instead of silently losing arrears on a plain edit
+>   (shared `applyRevision`/`findAffectedLineItems` helpers; 3 new tests).
+>   Separately, cross-checked every shipped statutory default/formula
+>   against public sources and fixed four gaps (§12 decision 29 in
+>   `docs/modules/07_PAYROLL_ENGINE.md`): the EPF wage-ceiling default
+>   (15,000 → 25,000, migration `20261124090000_statutory_rate_review`,
+>   backfills existing rows still on the old default), the NEW tax
+>   regime's seeded defaults (Budget 2025 FY2025-26/26-27 figures), a
+>   statutory ₹20L gratuity payout cap, the Payment of Gratuity Act's
+>   >6-month rounding rule, and Section 87A marginal relief in
+>   `projectAnnualTax`. This is **not** decision 11's independent human
+>   domain review — still open, still environment/people-blocked.
+> - **Employee Master — org chart rebuilt as a Teams-style canvas.**
+>   `apps/web/src/pages/org-chart/` replaces the searchable nested list
+>   (`org-chart.tsx`, removed): pan/zoom canvas with connector lines,
+>   all-IC teams stacked compactly, expand/collapse (+ all, re-centres on
+>   expand), a hover contact card (work email/phone with copy +
+>   `mailto:`/`tel:`, location, manager, tenure), click-to-drawer quick
+>   view, double-click/"Team" subtree focus with a breadcrumb, people
+>   search that reveals + pans, and a department highlight filter.
+>   `GET /employees/org-chart` nodes now carry `employeeCode`, `photoUrl`
+>   (presigned from `photoKey`, only for people with a photo), `phone`,
+>   `workEmail` (the linked login's email — never `personalEmail`),
+>   `workLocation`, `lifecycleState`, `dateOfJoining`, `department`,
+>   `manager` and direct/total report counts; SEPARATED employees are
+>   excluded and a `reportingManagerId` cycle is pruned (7 `orgChart` unit
+>   tests). Role rooting unchanged. Also `prisma/seed-demo-org.ts` (+
+>   `demo-org-roster.ts`): a separate 40-person "demo" tenant for client
+>   demos (`npm run prisma:seed-demo`, touches no other tenant).
+> - **Payroll Engine (module 07) → code-complete, 100%.** Built on a
+>   separate branch and merged in two parts: Phases 1–9 (salary structures
+>   with a restricted-grammar formula evaluator, the EPF/ESI/PT/LOP
+>   calculation engine, the run lifecycle with the two-person approval and
+>   payroll-gate invariants, overtime claims, DOB-locked payslips + a
+>   dummy-CSV bank file, per-FY TDS slabs/regime choice, backdated salary
+>   revisions with arrears, Full & Final settlement, and the full frontend
+>   at `apps/web/src/pages/payroll`), then a "Payroll to 100%" follow-up
+>   adding the adversarial cross-tenant e2e suite
+>   (`test/payroll-isolation.e2e-spec.ts`), performance guards
+>   (`payroll-performance.spec.ts`, bounded-concurrency `process()` via
+>   `concurrency.util.ts`), and Reports' payroll-cost/statutory-register
+>   slice. The follow-up's own e2e run caught and fixed a real cross-tenant
+>   bug along the way: `TdsService.setEmployeeRegime`/`getEmployeeRegime`
+>   didn't verify `employeeId` belonged to the caller's tenant, so a
+>   cross-tenant write silently upserted a phantom row rather than
+>   404ing — fixed with the same `assertEmployeeExists` guard every other
+>   write path in the module already had. Remaining items need a person or
+>   a live environment, not more code — tracked in `docs/PAYROLL_SIGNOFF.md`
+>   (statutory-rate domain-expert review, an e2e run with a working Firebase
+>   key, the 500/5,000-employee run against the real stack, and a browser
+>   pass) — so they don't count against the module's percentage, same
+>   convention as other modules' live-only checks. See
+>   `docs/modules/07_PAYROLL_ENGINE.md` §9 for the full phase-by-phase
+>   build log and every decision made along the way.
+> - **Tenant-facing workspace banner.** `GET /api/auth/workspace-status`
+>   (any signed-in role) feeds a banner above every page: trial countdown,
+>   failed-payment grace date, or "read-only" with who to contact. No status
+>   change — presentation of the trial/billing states below.
+> - **Billing & Payments (module 14) built → 100% (code).** Razorpay
+>   subscriptions, signature-verified idempotent webhook, payments ledger,
+>   grace → read-only enforcement, console Billing card. Needs migration
+>   `20261006120000_billing_payments` + `RAZORPAY_*` secrets. See §14.
+> - **Platform Admin: trial lifecycle + tenant guide.** A tenant's chosen plan is
+>   now stored from day one; its trial length is set by the operator at onboarding
+>   (default 7 days, `trialEndsAt` on the subscription). A daily `expire-trials`
+>   job moves expired trials to the new `READ_ONLY` status: sign-in and reads
+>   still work, every write is refused by `TenantResolutionMiddleware`.
+>   Operator actions: `PATCH tenants/:id/trial` (set or reopen the end date) and
+>   `POST tenants/:id/convert` (confirm the paid plan → Active, one-year term).
+>   Tenant list shows the plan with its status. New **Tenant guide** tab documents
+>   what each setting does to a tenant. **Needs migration
+>   `20261006090000_trial_read_only` applied to the shared DB** (schema owner).
+>   Trial-ending reminder emails are not built yet.
+>
+> - **Reports & Analytics (module 11): Payroll-independent slice built.**
+>   New `apps/api/src/reports` — `GET /api/reports/{headcount|movement|attrition}`
+>   and `…/export?format=csv|xlsx`, COMPANY_ADMIN + HR_MANAGER only. Adds
+>   `Employee.separationReason` (migration `20260929090000_reports_separation_reason`),
+>   captured on the SEPARATED lifecycle transition. Web: `/reports` screen.
+>   Payroll-cost and statutory registers remain blocked on Payroll.
+>
+>
+> - **Platform Admin (module 2): public contact form + Leads + Settings.**
+>   New `apps/api/src/contact` module — `POST /api/contact` (unauthenticated,
+>   no tenant, excluded from `TenantResolutionMiddleware`, rate-limited)
+>   writes an append-only `platform.contact_submissions` row, then
+>   best-effort emails whichever addresses are in the new
+>   `platform.platform_settings` singleton row via the existing SES sender.
+>   New console screens: **Leads** (every submission, regardless of whether
+>   the notify email sent) and **Settings** (manage the recipient list,
+>   `GET`/`PATCH /api/platform-admin/settings`, audited
+>   `platform_settings.updated`). Landing page gets a matching `#contact`
+>   section. See `docs/modules/02_PLATFORM_ADMIN.md`.
+> - **Audit Log (module 12) → 100%.** A shared `apps/api/src/audit` module
+>   (`AuditService`) is now the one write path for `public.audit_log` —
+>   Identity & Access, Employee Master and Attendance were migrated onto it
+>   instead of each hand-rolling its own try/catch write, closing the
+>   "generic audit interceptor" gap. Employee field/compensation edits
+>   (`PATCH /api/employees/:id`) are now audited with before/after values —
+>   the last uncovered must-cover write point (attendance decisions and
+>   manual marking were already covered, contrary to this file's prior
+>   status). New `GET /api/audit` + `GET /api/audit/modules` give the
+>   cross-module aggregation read the gap list asked for, surfaced in the
+>   web app as a third "All activity" sub-tab on Access › Audit. See
+>   `docs/modules/12_AUDIT_LOG.md`.
+> - **Auth emails now go through SES too** (module 10 + Identity & Access /
+>   Platform Admin). Tenant-onboarding invites, admin-triggered resets and
+>   self-service "Forgot password?" are sent by `AuthEmailService` — a
+>   Firebase Admin-generated reset link in a branded email from the
+>   workspace's domain — instead of Firebase's generic email. New public
+>   `POST /api/auth/password-reset` (non-enumerating, rate-limited) replaces
+>   the browser calling Firebase directly. Falls back to Firebase's email
+>   when SES isn't configured. Also: a public landing page at `/` for
+>   signed-out visitors (signed-in users still get the dashboard there).
+> - **Notifications (module 10) → 95%.** New `apps/api/src/notifications`:
+>   `NotificationDispatcher.notify()` (singleton, explicit `tenantId`, never
+>   throws into the caller) resolves recipients (users / employees / roles →
+>   active users with an email, actor excluded), writes one `QUEUED`
+>   `notification_log` row per recipient (unique dedupe key — no double
+>   emails), and enqueues a BullMQ `notifications` job; the worker renders an
+>   HTML-escaped template and sends via **AWS SES v2**, marking `SENT` with
+>   the SES message id or retrying (5×, exponential) to `FAILED`; a 10-minute
+>   sweep re-enqueues stuck rows. Wired into Leave (apply, L1/L2 approve,
+>   reject, cancel, both escalation steps), Attendance (regularization
+>   submit, approve/reject, payroll-cut-off auto-resolve) and Documents
+>   (malware-blocked upload). New Email log screen (`/notifications`, Company
+>   Admin / HR Manager retry, Auditor read-only). Migration
+>   `20260923120000_notifications` (`hrms_app` has no `DELETE` on the log).
+>   The remaining 5% is a first real delivery through SES, which needs the
+>   owner's SES setup (verified sender + credentials) — until then every send
+>   is recorded as `FAILED` with "SES_FROM_ADDRESS is unset", never dropped.
+>   New deep spec `docs/modules/10_NOTIFICATIONS.md`.
+> - **Documents (module 09) reaches 100%.** A shared `apps/api/src/documents`
+>   module now owns every user upload: MIME allow-list + magic-byte sniffing
+>   + 10 MB cap before storage, owner-typed rows (`EMPLOYEE_PROFILE` /
+>   `LEAVE_REQUEST` / `REGULARIZATION`), a ClamAV scan (BullMQ `documents`
+>   queue, clamd `zINSTREAM`, no npm dep) that must pass before any
+>   presigned URL is issued, a 15-minute sweep that re-enqueues stale/failed
+>   scans, `Content-Disposition: attachment` downloads, one visibility rule
+>   (subject employee's `scopeFor` scope), soft delete (`hrms_app` lost
+>   `DELETE` on `documents`), and `documents.*` events in `audit_log`.
+>   Leave's `attachment_*` columns migrated into `documents`
+>   (`20260923090000_documents_module`); approvers can now actually download
+>   the proof, the apply form uploads it, and regularization requests take
+>   evidence (`POST /attendance/regularization/:id/evidence`). New deep spec
+>   `docs/modules/09_DOCUMENTS.md`. Retention purge is a deliberate V1 scope
+>   cut (soft delete only), not a gap. API: 214 unit tests + 44 e2e (new
+>   `test/documents.e2e-spec.ts`) green; real clamd verified to flag EICAR;
+>   web `tsc -b`/`vite build`/lint clean. Not browser-verified.
+>
+> Previous sync — 2026-09-22 (landed since 2026-09-18):
+>
+> - **Dashboard reaches 100%.** `GET /api/dashboard` now returns a
+>   `todayAttendance` snapshot (own status/check-in/check-out/worked-hours,
+>   sourced from `AttendanceService.today()`) for every role with a linked
+>   employee record — including admins, on their own admin-view response —
+>   gated on the tenant's `ATTENDANCE` plan entitlement (checked inline
+>   against `platform.subscriptions`, mirroring `EntitlementGuard`, since
+>   the route itself has no single `@RequiresModule` — its shape already
+>   varies by role). Rendered on the web dashboard as a shared card above
+>   the role-specific grid. The upcoming-payslip date and admin
+>   payroll/attrition tiles stay blocked on Payroll (module 07, not built)
+>   — not counted against 100%, same treatment `MODULE_SPECS.md` already
+>   gives Attendance's own Payroll-blocked items. New deep spec
+>   `docs/modules/06_DASHBOARD.md` and UI build prompt
+>   `docs/ui-build-prompts/06-dashboard.md`. 4 new unit tests
+>   (`dashboard.controller.spec.ts`); `tsc`/`vite build`/lint clean on both
+>   apps; full API suite (156 tests) green. Not e2e/browser-verified — no
+>   test credentials for a live session in this environment.
+> - **Dashboard gains quick actions (same day, frontend-only follow-up).**
+>   The attendance card now has working Clock In / Take Break / End Break /
+>   Clock Out buttons, and each pending-approval row (Line Manager's own
+>   view — the admin view only ever had a count, not a list, so this isn't
+>   reachable there) gets inline Approve/Reject buttons. Both call
+>   Attendance's and Leave's own existing endpoints directly
+>   (`/attendance/clock-in`/`/clock-out`/`/break/start`/`/break/end`,
+>   `/leave/requests/:id/approve`/`/reject`) — no new backend route, no new
+>   authorization or validation logic, matching the existing no-confirm
+>   row-level precedent in Leave's own Approvals tab. Every action re-runs
+>   `GET /api/dashboard` on completion so the whole screen — not just the
+>   row that changed — reflects the new server state; failures surface via
+>   `useToast()`. Backend unchanged (156 tests still green); `tsc`/
+>   `vite build`/lint clean on the web app.
+>
+> Landed 2026-09-18 (including two later passes the same day):
+>
+> - **Attendance & Time Tracking reaches 100%.** Every item on §5's
+>   Known-gaps list is closed: web clock-in/out now write `Punch` rows
+>   (source `WEB`) as the source-of-truth capture the nightly job reads;
+>   `AttendanceFinalizationProcessor` (new BullMQ `attendance` queue, same
+>   `upsertJobScheduler` daily-cron pattern as the other processors) runs
+>   two jobs — `finalize` (02:00 UTC, per tenant per employee, resolves
+>   *yesterday*: holiday → weekly-off → punches → genuine unexplained
+>   `ABSENT`, skipping any day that already has a real outcome) and
+>   `resolve-cutoff` (03:00 UTC, auto-approves/rejects still-`PENDING`
+>   regularization requests on each tenant's own `payrollCutoffDay`, per
+>   `unactionedBehavior`). Regularization requests now enforce
+>   `regularizationWindowDays`/`regularizationMonthlyCap` at request time
+>   and flag the day `PENDING_REGULARIZATION`; a full approve/reject/
+>   bulk-approve flow exists for Line Manager (recursive subtree, mirroring
+>   Leave's `recursiveReportIds` pattern) and HR/Admin, audited via
+>   `audit_log`. New manager/HR views: `GET /attendance/team/roster` (team
+>   tab) and `POST /attendance/mark` (manual marking, FR-ATT-001) on the
+>   web app's new **Team** and **Approvals** tabs (visible to Line Manager
+>   and HR/Admin; Settings stays Admin/HR-only). `today()`/`stats()` now
+>   report overtime hours (time beyond `Shift.minHoursFullDay` — converting
+>   to statutory per-state overtime pay stays Payroll's job, not built).
+>   `getLopDays(employeeId, month)` + `GET /attendance/lop-days` is the
+>   defined Payroll export contract. GPS/biometric/selfie-QR capture and
+>   `POST /attendance/ingest` remain explicitly deferred (CLAUDE.md), not
+>   counted against 100%. 152 API unit tests pass (40 in
+>   `attendance.service.spec.ts`, 10 new in
+>   `attendance-finalization.processor.spec.ts`); `tsc`/`vite build`/lint
+>   clean on both apps. Not e2e/browser-verified — no test credentials for
+>   a Line Manager/HR session in this environment.
+>
+> - **Tenant Configuration reaches 100%.** The last piece — a skippable,
+>   resumable first-run setup wizard
+>   (`apps/web/src/components/setup-wizard/setup-wizard.tsx`, mounted in
+>   `AppLayout`, Company Admin only) — is live. Five steps (work week +
+>   timezone, default shift, holidays, leave types, payroll cut-off day),
+>   each orchestrating existing endpoints (Attendance's general settings +
+>   shifts, Leave's holidays + types) rather than introducing new business
+>   logic. Progress is tracked on `TenantSettings.setupWizardStatus`
+>   (`PENDING`/`IN_PROGRESS`/`DISMISSED`/`COMPLETED`) +
+>   `setupWizardStep`, via a new minimal `apps/api/src/tenant-config` module
+>   (`GET`/`PATCH /api/tenant-config/wizard`, migration
+>   `20260919090000_tenant_setup_wizard`). A step only PATCHes its endpoint
+>   when the wizard actually advances (Next/Back/Skip), not on every
+>   keystroke — each step registers a "commit" callback the wizard calls
+>   once before transitioning. Not e2e/browser-verified this pass (no test
+>   Company Admin credentials in this environment) — verified by `tsc`,
+>   `vite build`, lint, and the new `tenant-config.service.spec.ts` only.
+>
+> Landed earlier the same day:
+>
+> - **Identity & Access reaches 100%.** `LoginAuditRetentionProcessor` (new
+>   BullMQ `access` queue, same `upsertJobScheduler` daily-cron pattern as
+>   `LeaveAccrualProcessor`) purges `login_audit_entries` older than the
+>   2-year retention window, per tenant. `BAD_CREDENTIALS`/`TENANT_SUSPENDED`
+>   staying unlogged is the pre-existing owner-approved scope decision
+>   (§1 "Known gaps"), not an open gap.
+> - **Platform Admin reaches 99%.** Closed: `GET /tenants/:id` (detail
+>   endpoint), `POST /tenants/:id/refresh-headcount` (audited), a scheduled
+>   renewal job (`PlatformScheduledJobsProcessor`, daily, drives
+>   `renewSubscription()` off `Subscription.renewsAt` instead of manual-only),
+>   and `platform_audit_log` tightened to true append-only (`REVOKE UPDATE,
+>   DELETE ... FROM hrms_platform`). Break-glass gained its auditable
+>   control-plane lifecycle — `platform.break_glass_grants`
+>   (request/track/expire/revoke, one-active-grant-per-tenant, hourly
+>   auto-expiry job, full console wiring replacing the old TODO(api) stub) —
+>   but this is the logged request/approval trail only; it does **not** yet
+>   grant an operator any actual elevated read against a tenant's data
+>   during the window (that's a separate connection-pool escalation
+>   mechanism, deliberately still unbuilt — same category as the dedicated
+>   DB-per-tenant tier). Kept at 99%, not 100%, until that's addressed.
+> - **Employee Master + Org Structure reaches 100%.** Org chart
+>   (`apps/web/src/pages/org-chart.tsx`) gained search (auto-expands
+>   ancestors of a match), expand/collapse (per-node + all), zoom, and a
+>   click-to-drawer quick view. The PAN/bank reveal reason is now a proper
+>   confirm dialog, not `window.prompt`. `photoUrl` is a real upload now, not
+>   a hand-typed URL: `Employee.photoKey` (renamed from `photoUrl`, migration
+>   `20260918110000_employee_photo_key`) stores a private object-storage key,
+>   resolved to a short-lived (1h) presigned URL only on `GET /employees/:id`
+>   (not in list views, which never render an avatar); `POST
+>   /employees/:id/photo` uploads (JPEG/PNG/WebP, ≤5MB, self or Admin/HR,
+>   deletes the previous object). The Line-Manager recursive-subtree
+>   scoping decision is now mirrored into Leave (`teamBalances`,
+>   `teamCalendar`, `assertCanViewEmployee` all walk the full reporting
+>   subtree via a new shared `recursiveReportIds()` helper in
+>   `apps/api/src/common/reporting-hierarchy.ts`, reused instead of
+>   duplicating `EmployeesService`'s private BFS to avoid a circular module
+>   dependency) — L1-approval-specific checks (`approve()`/`reject()`'s
+>   "only the direct reporting manager" gate, `pendingApprovals()`) stay
+>   direct-only on purpose, since L1 approval is specifically the direct
+>   manager's job. Attendance has no manager-facing views at all yet to
+>   mirror into — that's module 05's own pre-existing, separately-tracked
+>   gap (§5 "Known gaps" #5), not something this pass touched.
+> - **Tenant Configuration reaches 80%.** `EntitlementGuard` +
+>   `@RequiresModule`/`@RequiresFeature` (`apps/api/src/common/guards/
+>   entitlement.guard.ts`) enforce Layer-1 plan entitlements — wired onto
+>   `LeaveController` (`@RequiresModule('LEAVE')`) and `AttendanceController`
+>   (`@RequiresModule('ATTENDANCE')`); a tenant whose plan excludes a module
+>   now gets a 403 instead of a page that quietly half-works.
+>   `attendance.service.ts` no longer hardcodes `SHIFT_START_HOUR`/
+>   `GRACE_MINUTES`/`TARGET_HOURS` — `resolveShift()` reads
+>   `Employee.shiftId` (falls back to the tenant's `isDefault` `Shift`) for
+>   both the late/on-time call and the progress-ring target. New Settings UI
+>   (`apps/web/src/pages/attendance/settings-tab.tsx`, a tab on the
+>   Attendance page for Company Admin/HR Manager only): shift catalogue CRUD,
+>   attendance mode/capture-methods/regularization guardrails, and the
+>   general (non-Leave) slice of `tenant_settings` (timezone, weekly-off
+>   days, payroll cut-off day). The e2e tenant fixture
+>   (`apps/api/test/utils/fixtures.ts`) had to be updated to set
+>   `enabledModules` — it previously left the subscription's module list
+>   empty, which `EntitlementGuard` would now correctly 403 before the
+>   tenant-isolation checks those suites exist to run ever executed. Still
+>   open: a first-run setup wizard (UX nicety, defaults already apply) —
+>   see `docs/TENANT_CONFIGURATION.md`.
+>
+> Landed in the 2026-09-15 sync (2026-09-11):
 >
 > - **Platform Admin — audit read API.** `GET /api/platform-admin/audit`
 >   (`tenantId`/`action`/`from`/`to`/`q` filters) closes the last open item
@@ -51,9 +589,8 @@
 >   field set: identity/personal extras, employment extras,
 >   compensation-adjacent, statutory + bank. PAN
 >   and the bank account number are AES-256-GCM field-encrypted
->   (`FieldEncryptionService`, `apps/api/src/crypto` — the app-layer half of
->   CLAUDE.md's KMS non-negotiable; a real AWS KMS-wrapped key is a later
->   swap) with a dedicated `PATCH .../sensitive-fields` write path and a
+>   (`FieldEncryptionService`, `apps/api/src/crypto` — the app-layer PII
+>   encryption non-negotiable in CLAUDE.md; AWS KMS is deliberately not used) with a dedicated `PATCH .../sensitive-fields` write path and a
 >   logged `POST .../reveal`. New: emergency-contact CRUD; document MIME/size
 >   enforcement moved server-side plus `category` + delete; department
 >   `PATCH`/`DELETE` (RULE-6 reassign guard); the org chart now roots per
@@ -139,19 +676,20 @@
 
 | Module | Status | Progress |
 |---|---|---|
-| 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ | `███████████████████░` 97% — auth/RBAC/tenancy live; `access` module wired (Users, role/status/reset, login+access audit, My Account) with e2e RBAC + append-only tests; `LoginAuditEntry` table written on every session outcome. Remaining: `BAD_CREDENTIALS`/`TENANT_SUSPENDED` not server-observable (§1 gaps) |
-| 2. Platform Admin | ✅ | `███████████████████░` 97% — full operator console UI (tenants list, new-tenant wizard, tenant detail tabs, **Plans catalog**, audit screen); onboarding emails a hosted reset link; **operator-editable `platform.plans`** (per-seat list price / default seats / modules / features / isolation tier) with snapshot-at-assign + re-snapshot-on-renewal; **per-tenant negotiated per-seat rate** (`PATCH .../pricing`; monthly = rate × seats, computed); `PATCH .../plan` + `POST .../renew` live; `PlatformAuditLog` written for create / status / plan-change / renewal / price-adjust / plan-edit AND now readable — `GET .../audit`. Pending: `GET tenants/:id`, refresh-headcount route, scheduled renewal job, break-glass |
-| 3. Employee Master + Org Structure | 🟡 | `███████████████████░` 97% — lifecycle state machine, the full field set (statutory/bank via KMS-style AES-256-GCM encryption, emergency contacts, comp-adjacent fields), bulk-import UI, document hardening, and department edit/delete-with-reassign are all live. Only org-chart search/expand/zoom polish and the deliberately-deferred BU→Team hierarchy remain |
-| 4. Leave Management | ✅ | `████████████████████` 100% — backend fully wired & tested; FE live path built and running against the real API by default (`client.ts`'s `USE_MOCK` now defaults to **off**, matching `access/client.ts` — set `VITE_LEAVE_MOCK=true` to force the fixture store); `allowLopRequests`/`minNoticeDays`/`fyStartMonth`/`genderRestriction`/`requiresApproval` all enforced/settable; mid-year-joiner proration; comp-off credit on holiday/weekly-off clock-in; approved leave reconciles into `AttendanceRecord.ON_LEAVE` |
-| 5. Attendance & Time Tracking | 🟡 | `███████████░░░░░░░░░░` 55% |
-| 6. Dashboard | ✅ | `█████████████████░░░` 85% |
-| 7. Payroll Engine | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
+| 1. Identity & Access (Auth + RBAC + Tenancy) | ✅ | `████████████████████` 100% — auth/RBAC/tenancy live; `access` module wired (Users, role/status/reset, login+access audit, My Account) with e2e RBAC + append-only tests; `LoginAuditEntry` table written on every session outcome, with a daily BullMQ job purging entries past the 2-year retention window. `BAD_CREDENTIALS`/`TENANT_SUSPENDED` staying server-unobserved is an owner-approved scope decision (§1), not a gap |
+| 2. Platform Admin | ✅ | `███████████████████░` 99% — full operator console UI (tenants list, new-tenant wizard, tenant detail tabs, **Plans catalog**, **Leads**, **Settings**, audit screen); onboarding emails a hosted reset link; **operator-editable `platform.plans`** (per-seat list price / default seats / modules / features / isolation tier) with snapshot-at-assign + re-snapshot-on-renewal; **per-tenant negotiated per-seat rate** (`PATCH .../pricing`; monthly = rate × seats, computed); **trial lifecycle** (`trialEndsAt`, daily `expire-trials` → `READ_ONLY`, `PATCH .../trial`, `POST .../convert`, Tenant guide tab); `PATCH .../plan` + `POST .../renew` live (renewal now also runs on a daily scheduled job off `renewsAt`); `PlatformAuditLog` written for every operator action and readable (`GET .../audit`), now true append-only at the DB grant level; `GET tenants/:id` and `POST .../refresh-headcount` live. The public landing-page contact form (`POST /api/contact`, no tenant, rate-limited) writes an append-only lead + best-effort notifies the operator-configured recipient list (`GET`/`PATCH .../settings`). Break-glass has a full audited request/track/expire/revoke lifecycle but does not yet grant an operator actual elevated tenant-data access during the window — that escalation mechanism is a deliberate follow-on |
+| 3. Employee Master + Org Structure | ✅ | `████████████████████` 100% — lifecycle state machine, the full field set (statutory/bank via AES-256-GCM encryption, emergency contacts, comp-adjacent fields), bulk-import UI, document hardening, department edit/delete-with-reassign, an interactive org chart (pan/zoom canvas, search, expand/collapse, subtree focus, hover contact card, quick-view), a real photo-upload widget, a proper reveal-reason dialog, and Leave's recursive Line-Manager scoping mirror are all live. Only the deliberately-deferred BU→Team hierarchy remains |
+| 4. Leave Management | ✅ | `████████████████████` 100% — backend fully wired & tested; FE live path built and running against the real API by default (`client.ts`'s `USE_MOCK` now defaults to **off**, matching `access/client.ts` — set `VITE_LEAVE_MOCK=true` to force the fixture store); `allowLopRequests`/`minNoticeDays`/`fyStartMonth`/`genderRestriction`/`requiresApproval` all enforced/settable; one entitlement engine (prorated annual grants, monthly/quarterly back-credit, go-live/joining-date clipping, opening balances, year-end carry-forward); event-based maternity/paternity/marriage leave (per-event allowance, limits, windows, proof); optional holidays are working days, taken via Restricted Holiday leave; holiday CSV/XLSX import; comp-off credit on holiday/weekly-off clock-in; approved leave reconciles into `AttendanceRecord.ON_LEAVE` |
+| 5. Attendance & Time Tracking | ✅ | `████████████████████` 100% — reads the tenant's `Shift`/`tenant_settings` config, gated behind the `ATTENDANCE` plan entitlement; punches write-path, a nightly finalization job (holiday → weekly-off → punches → genuine absence; skips tenants in setup and days before go-live), full regularization approval (window/cap enforcement, approve/reject/bulk-approve, audited, auto-resolved at payroll cut-off), manager/HR team roster + manual marking, overtime hours, and a `getLopDays()` export contract for Payroll are all live. GPS/biometric/selfie-QR capture and `POST /attendance/ingest` stay explicitly deferred (CLAUDE.md) |
+| 6. Dashboard | ✅ | `████████████████████` 100% — role-branched `GET /api/dashboard` (admin aggregates vs. personal view) includes an own-attendance "today" snapshot for every role with a linked employee record, gated on the tenant's `ATTENDANCE` entitlement, plus quick actions (clock in/out/break, approve/reject a pending request) that call Attendance's/Leave's own existing endpoints directly and re-fetch the dashboard afterward — no new mutation surface. Admin payroll-cost/attrition tiles and an upcoming-payslip date stay explicitly blocked on Payroll (module 07, not built) — same "not counted against 100%" treatment as Attendance's own Payroll-blocked items. Deep spec: `docs/modules/06_DASHBOARD.md` |
+| 7. Payroll Engine | ✅ | `████████████████████` 100% — code-complete: Phases 1–8 backend, full frontend, RLS/grant audit, cross-tenant e2e suite (its first run caught and fixed a real cross-tenant bug in `TdsService.setEmployeeRegime`/`getEmployeeRegime`), performance guards, concurrent payslip generation, `SalaryStructureService.update()` auto-upgrading to a revision when it would affect an already-processed period, and a best-effort public-source statutory review (decision 29 — EPF wage ceiling 15,000→25,000, NEW tax regime defaults + marginal relief updated to Budget 2025 figures, ₹20L gratuity cap + >6-month rounding). Live/human items (an independent *human* domain review of statutory rates — decision 11, not satisfied by the public-source pass above — e2e run with working Firebase, real-stack scale run, browser pass) in `docs/PAYROLL_SIGNOFF.md` |
 | 8. Statutory Compliance | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
-| 9. Documents | 🟡 | `████████████░░░░░░░░` 60% (lives inside Employee Master today) |
-| 10. Notifications | 🔴 | `░░░░░░░░░░░░░░░░░░░░` 0% |
-| 11. Reports & Analytics | 🔴 | `██░░░░░░░░░░░░░░░░░░` 10% (only the Dashboard aggregates exist) |
-| 12. Audit Log | 🟡 | `██████░░░░░░░░░░░░░░` 30% — three append-only trails live: `login_audit_entries` (sign-in outcomes), `public.audit_log` (`access.*` change events — role/status/reset/login-created), `platform.platform_audit_log` (tenant create/status/plan/renewal/price-adjust/plan-edit). `login_audit_entries` + `audit_log` have no `UPDATE`/`DELETE` grant. Missing: a generic audit interceptor, employee field/salary + attendance-decision coverage, an aggregation/query UI, retention-purge job |
-| 13. Tenant Configuration | 🟡 | `██████░░░░░░░░░░░░░░` 30% — schema + onboarding defaults landed; guard, Settings UI, engine wiring next. See `docs/TENANT_CONFIGURATION.md` |
+| 9. Documents | ✅ | `████████████████████` 100% — shared `documents` module owns every user upload (employee profile docs, leave attachments, regularization evidence): type/magic-byte/size validation, ClamAV scan before download (fail-closed, self-healing sweep), 5-min attachment-disposition presigned URLs, subject-employee visibility, audited soft delete (no `DELETE` grant). Retention purge deliberately out of V1 scope. Deep spec: `docs/modules/09_DOCUMENTS.md` |
+| 10. Notifications | 🟡 | `███████████████████░` 95% — queued, deduped, audited-retry email pipeline on AWS SES v2 (`notification_log`, BullMQ `notifications` queue, 10-min self-healing sweep, Email log screen) wired into every Leave / Attendance-regularization / Documents workflow event, plus SES bounce/complaint handling (SNS webhook → suppression list, failed rows in the Email log, operator lift). Remaining: first live SES delivery, blocked on the owner's SES setup (verified sender + IAM credentials). Deep spec: `docs/modules/10_NOTIFICATIONS.md` |
+| 11. Reports & Analytics | ✅ | `████████████████████` 100% — headcount, joiners/leavers, attrition, payroll cost and Salary/PF/ESI/Gratuity registers (from processed payroll runs only), CSV/XLSX export. Custom report builder and PDF export stay `[SHOULD]`/later. Deep spec: `docs/modules/11_REPORTS_AND_ANALYTICS.md` |
+| 12. Audit Log | ✅ | `████████████████████` 100% — three append-only trails live: `login_audit_entries` (sign-in outcomes, with a daily retention-purge job), `public.audit_log` (Identity & Access, Employee Master and Attendance events, all now written through the shared `AuditService`), `platform.platform_audit_log` (tenant create/status/plan/renewal/price-adjust/plan-edit/breakglass). All three tables have no `UPDATE`/`DELETE` grant (true append-only). Employee field/compensation edits are now audited with before/after values; `GET /api/audit` + `/audit/modules` give the cross-module aggregation/query view (web: Access › Audit's "All activity" sub-tab). Deep spec: `docs/modules/12_AUDIT_LOG.md` |
+| 13. Tenant Configuration | ✅ | `████████████████████` 100% — schema, onboarding defaults, `EntitlementGuard` (+ `@RequiresModule`/`@RequiresFeature`, wired onto Leave + Attendance), `attendance.service.ts` reading tenant `Shift`/`tenant_settings` instead of hardcoded constants, Settings screens (shift CRUD + attendance/general settings), a **mandatory full-screen company setup** (`apps/api/src/setup`, `apps/web/src/pages/setup` — encrypted draft, strict one-transaction submit, `SETUP_INCOMPLETE` gate, opening balances + holiday import, mid-year go-live handling) and an editable company profile are all live. See `docs/TENANT_CONFIGURATION.md` |
+| 14. Billing & Payments (Razorpay) | ✅ | `████████████████████` 100% — code-complete: per-tenant monthly Razorpay subscription (negotiated rate × seats, created from the console, returns the customer's payment link); public `POST /api/billing/webhooks/razorpay` verifying `X-Razorpay-Signature` over the raw body, idempotent per event id (ledger + state change in one transaction); append-only `platform.payments` ledger (NUMERIC rupees); charge → Active + trial/grace cleared + renewal advanced, failed charge → 7-day grace, halted/cancelled/grace-expired → `READ_ONLY` (daily `enforce-grace` job); a payment never overrides `SUSPENDED`; Billing card + Tenant-guide rows in the console; unit + raw-body-over-HTTP tests. Live checks (test-mode payment end to end, HTTPS webhook URL) are in the separate testing tracker. Deep spec: §14 below |
 
 Deferred to a later phase — **do not build without a scope discussion**
 (`CLAUDE.md` → "Explicitly deferred"): Onboarding, Recruitment/ATS,
@@ -176,7 +714,7 @@ live e-filing APIs, SSO.
   set on the same connection/transaction. New tables must carry `tenant_id`,
   an `@@index([tenantId])`, and an RLS policy in the roles/RLS migration.
 - **Money:** `NUMERIC`, never float. **Timestamps:** `TIMESTAMPTZ`, stored
-  UTC, displayed IST. **PII (PAN, bank a/c):** app-layer KMS encryption on
+  UTC, displayed IST. **PII (PAN, bank a/c):** app-layer AES-256-GCM encryption on
   top of at-rest. **Aadhaar:** last 4 digits only.
 - **DTOs / enums shared with the frontend** go in `packages/shared-types`.
 - **OpenAPI** (`@nestjs/swagger`) is the API contract — annotate new
@@ -191,9 +729,10 @@ live e-filing APIs, SSO.
 
 **Deep spec:** `docs/modules/01_IDENTITY_AND_ACCESS.md` ·
 **UI prompt:** `docs/ui-build-prompts/01-identity-access.md`
-**Status:** ✅ auth/RBAC/tenancy · ✅ `access` module wired
+**Status:** ✅ 100% — auth/RBAC/tenancy · ✅ `access` module wired
 (`/api/access/*`) with e2e RBAC + append-only tests · ✅ `LoginAuditEntry`
-written on every session outcome · `VITE_ACCESS_MOCK` defaults off
+written on every session outcome, with a daily BullMQ retention-purge job ·
+`VITE_ACCESS_MOCK` defaults off
 **Code:** `apps/api/src/auth`, `apps/api/src/access`, `apps/api/src/firebase`,
 `apps/api/src/common/{guards,decorators,tenancy}`, `apps/api/src/prisma`,
 `apps/web/src/pages/access`, `apps/web/src/lib/access`
@@ -221,7 +760,7 @@ and a **P0 gate**, not a nice-to-have.
 | JWT access + refresh rotation | FR-AUTH-004 | ➖ replaced — the Firebase ID token *is* the session, SDK-refreshed client-side; no server-minted tokens (see `CLAUDE.md`) |
 | MFA (TOTP) for admin roles | FR-AUTH-002 | ➖ **cut for V1** — no MFA (documented decision) |
 | Google / Azure AD SSO | FR-AUTH-003 | 🔴 deferred |
-| Login audit log (IP, device, timestamp, outcome), 2-yr retention | FR-AUTH-008 | ✅ `LoginAuditEntry` (append-only) written on every `POST /api/auth/session` outcome the server can see (`SUCCESS`, `USER_INACTIVE`, `CLAIM_MISMATCH`, `TOKEN_EXPIRED`); read via `GET /api/access/audit?feed=login`. Retention purge job still TODO |
+| Login audit log (IP, device, timestamp, outcome), 2-yr retention | FR-AUTH-008 | ✅ `LoginAuditEntry` (append-only) written on every `POST /api/auth/session` outcome the server can see (`SUCCESS`, `USER_INACTIVE`, `CLAIM_MISMATCH`, `TOKEN_EXPIRED`); read via `GET /api/access/audit?feed=login`. `LoginAuditRetentionProcessor` (daily BullMQ job, `access` queue) purges entries older than 2 years, per tenant |
 | Access-change trail (role change, activate/deactivate, reset, login created) | — | ✅ written to append-only `audit_log` (`access.*` actions, `metadata.module = "identity-access"`); read via `GET /api/access/audit?feed=access` |
 | User administration (list logins, change role, activate/deactivate, send reset) | FR-RBAC-004 | ✅ `access` module — `@Roles`-gated + service-layer invariants (RULE-2 ceiling, keep ≥1 active Company Admin, no self-deactivation); Firebase claim + `disabled` flag kept in sync |
 | Custom role builder / granular per-module permissions | FR-RBAC-002 | 🔴 deferred — roles are fixed for V1 |
@@ -272,9 +811,8 @@ creation) and on every role change. Never trust a claim the client could set.
   `TenantResolutionMiddleware` before the session handler. Instead, one
   `tenant.status_changed` row is written to `platform_audit_log` on the
   operator's suspend/resume action (module 02).
-- **Retention purge** — `LoginAuditEntry` has a 2-year retention
-  requirement; the scheduled purge job is not built yet.
-- Decide if/when SSO (FR-AUTH-003) re-enters scope for the hospital pilot.
+- Decide if/when SSO (FR-AUTH-003) re-enters scope for the hospital pilot
+  (explicitly deferred — see `CLAUDE.md`).
 
 ---
 
@@ -282,20 +820,27 @@ creation) and on every role change. Never trust a claim the client could set.
 
 **Deep spec:** `docs/modules/02_PLATFORM_ADMIN.md` ·
 **UI prompt:** `docs/ui-build-prompts/02-platform-admin.md`
-**Status:** ✅ core live · full operator console UI (`/platform-admin/*` —
+**Status:** ✅ 99% — full operator console UI (`/platform-admin/*` —
 login, tenants list, new-tenant wizard, tenant detail w/ 4 tabs, **Plans
-catalog**, audit screen) · ✅ operator-editable `platform.plans` (per-seat
+catalog**, **Leads**, **Settings**, audit screen) · ✅ public landing-page
+contact form (`POST /api/contact`, no tenant, rate-limited) writes an
+append-only lead + best-effort notifies the operator-configured recipient
+list · ✅ operator-editable `platform.plans` (per-seat
 list price / default seats / modules / features / isolation tier) with
 **snapshot-at-assign + re-snapshot-on-renewal** · ✅ **per-tenant
 negotiated per-seat rate** (`PATCH .../pricing`; monthly = rate × seats,
 computed) · ✅ `PATCH .../plan` + `POST .../renew` (renewal keeps the
-negotiated rate, refreshes modules) · `PlatformAuditLog` written for
-create / status / plan-change / renewal / price-adjust / plan-catalog-edit
-· 🔴 audit-read API / refresh-headcount route / break-glass pending
+negotiated rate, refreshes modules) + a daily scheduled job driving renewal
+off `renewsAt` · `PlatformAuditLog` written for every operator action,
+readable (`GET .../audit`), and now true append-only at the DB grant level
+· ✅ `GET tenants/:id` + `POST .../refresh-headcount` · 🟡 break-glass has
+a full audited request/track/expire/revoke lifecycle but no underlying
+elevated-read mechanism yet (see "Known gaps")
 **Code:** `apps/api/src/platform-admin` (`+ plans.service.ts`),
-`apps/web/src/pages/platform-admin` (`console.tsx` gate → `shell.tsx` +
-`tenants` / `tenant-new` / `tenant-detail` / `plans` / `audit` +
-`components/`, `lib/{types,plan-catalog,format,platform-auth}`)
+`apps/api/src/contact` (the public form), `apps/web/src/pages/platform-admin`
+(`console.tsx` gate → `shell.tsx` + `tenants` / `tenant-new` /
+`tenant-detail` / `plans` / `leads` / `settings` / `audit` + `components/`,
+`lib/{types,plan-catalog,format,platform-auth}`)
 
 ### Expectation
 
@@ -315,14 +860,15 @@ future logged, time-boxed break-glass flow, not a standing grant.
 | Create tenant (name, subdomain, plan, seats, negotiated per-seat rate, first admin name+email) | ✅ `createTenant()` — creates `Tenant` + `Subscription` (seat count + per-seat rate per plan default or deal override), seeds the Company Admin via the `hrms_app` connection with a **random password + a hosted password-reset email** (no operator-typed password); rolls back the tenant row if seeding fails. The reset-email send is non-fatal (the tenant is still created if it fails) and the response now carries `adminResetEmailSent: boolean` so the wizard doesn't lie about the outcome — a resend action exists (`POST .../resend-admin-reset`) for when it's `false` |
 | List tenants with subscription info | ✅ |
 | Enable / suspend / set trial | ✅ `PATCH .../status` — `SUSPENDED` locks out every user of that tenant immediately at the resolution layer; carries an audit `reason` |
-| Denormalized employee headcount per tenant | ✅ `refreshHeadcount()` writes `platform.tenants.employeeCount` (on-demand internal call; the `POST .../refresh-headcount` route is TODO) |
-| Platform audit log | 🟡 written for `tenant.created` / `tenant.status_changed` / `tenant.plan_changed` / `subscription.renewed` / `subscription.price_adjusted` / `plan.updated` (actor email, before/after, reason in `metadata`); `headcount.refreshed` + break-glass events + the **read API** pending |
+| Denormalized employee headcount per tenant | ✅ `refreshHeadcount()` writes `platform.tenants.employeeCount`; `POST /api/platform-admin/tenants/:id/refresh-headcount` exposes it as an audited operator route (`headcount.refreshed`, written only when the count actually changed) |
+| Platform audit log | ✅ written for `tenant.created` / `tenant.status_changed` / `tenant.plan_changed` / `subscription.renewed` / `subscription.price_adjusted` / `plan.updated` / `headcount.refreshed` / `breakglass.requested` / `breakglass.revoked` / `breakglass.expired` (actor email, before/after, reason in `metadata`); readable via `GET .../audit`; `hrms_platform` has no `UPDATE`/`DELETE` grant on the table (true append-only) |
 | Operator-editable plan catalog | ✅ `platform.plans` (**list price per seat / month**, default seat count, modules / features / isolation tier) — `GET`/`PATCH /api/platform-admin/plans[/:key]`, **Plans** screen. Editing a plan never mutates a live `Subscription` (each carries a snapshot); new tenants snapshot the current plan, and **renewal re-snapshots** (`POST .../:id/renew`) — adds modules the plan gained, removes ones it dropped, **keeps the tenant's negotiated per-seat rate + seat count**. `entitlements.ts` stays as the seed + code fallback. Pricing is a stored reference figure — no billing integration. |
 | Per-seat pricing + per-tenant negotiation | ✅ `Subscription.pricePerSeat` is the **negotiated** rate for that one tenant (defaults to the plan's list price at assign-time, operator tunes it). **Effective monthly = `pricePerSeat × seats`**, computed at display, never stored. `PATCH /api/platform-admin/tenants/:id/pricing` `{pricePerSeat?, seats?, reason}` adjusts commercials without a plan change (`subscription.price_adjusted` audit). A plan change resets the rate to the new plan's list price. |
 | Change a tenant's plan | ✅ `PATCH /api/platform-admin/tenants/:id/plan` — re-snapshots the new plan's current definition onto the `Subscription` and **resets the per-seat rate to the new plan's list price**; `tenant.plan_changed` audit. |
 | Operator console UI | ✅ full multi-screen console — see Status line |
+| Public "Contact us" form + notification + leads record | ✅ `POST /api/contact` (unauthenticated, no tenant, excluded from `TenantResolutionMiddleware`, rate-limited 3/email + 10/IP per 15 min) writes an append-only `platform.contact_submissions` row, then best-effort emails every address in `platform.platform_settings.contactNotifyEmails` (SES, same sender module 10 uses). **Leads** screen lists every submission; **Settings** screen manages the recipient list (`GET`/`PATCH /api/platform-admin/settings`, audited `platform_settings.updated`) |
 | Billing / plan enforcement (seat limits, dunning) | 🔴 not started |
-| Break-glass support access to tenant data | 🔴 not started (deliberate — design before building) |
+| Break-glass support access to tenant data | 🟡 `platform.break_glass_grants` gives the full audited control-plane lifecycle — request (`POST .../breakglass`, one active grant per tenant, TTL 15/30/60/120 min), status (`GET .../breakglass`), revoke (`POST .../breakglass/:grantId/revoke`), and an hourly job auto-expiring overdue grants — console fully wired (request dialog + live status sheet with countdown + revoke). Does **not** yet grant an operator any actual elevated read against the tenant's data during the window — that's a separate connection-pool escalation mechanism, deliberately still unbuilt |
 
 ### Happy path
 
@@ -351,29 +897,29 @@ future logged, time-boxed break-glass flow, not a standing grant.
 | `POST` | `/api/platform-admin/tenants/:id/renew` | `PlatformJwtAuthGuard` | ✅ re-snapshots current plan modules/features, **keeps negotiated rate + seats**, bumps `renewsAt` +1y; writes `subscription.renewed` |
 | `GET` | `/api/platform-admin/plans` | `PlatformJwtAuthGuard` | ✅ catalog + per-plan tenant counts |
 | `PATCH` | `/api/platform-admin/plans/:key` | `PlatformJwtAuthGuard` | ✅ edit list price per seat / default seats / modules / features / isolation tier; writes `plan.updated` |
-| `GET` | `/api/platform-admin/tenants/:id` | `PlatformJwtAuthGuard` | 🔴 TODO(api) |
-| `POST` | `/api/platform-admin/tenants/:id/refresh-headcount` | `PlatformJwtAuthGuard` | 🔴 TODO(api) |
-| `GET` | `/api/platform-admin/audit` | `PlatformJwtAuthGuard` | 🔴 TODO(api) |
-| `POST` | `/api/platform-admin/tenants/:id/breakglass` | `PlatformJwtAuthGuard` | 🔴 TODO(api) — design first |
+| `GET` | `/api/platform-admin/tenants/:id` | `PlatformJwtAuthGuard` | ✅ tenant detail — subscription, `firstAdminEmail`, `headcountHistory` (one data point today — no time-series table yet), `recentAudit` |
+| `POST` | `/api/platform-admin/tenants/:id/refresh-headcount` | `PlatformJwtAuthGuard` | ✅ audited (`headcount.refreshed`, only when the count changed) |
+| `GET` | `/api/platform-admin/audit` | `PlatformJwtAuthGuard` | ✅ |
+| `POST` | `/api/platform-admin/tenants/:id/breakglass` | `PlatformJwtAuthGuard` | ✅ `{reason (≥10 chars), ttlMinutes (15\|30\|60\|120)}` → `{id, expiresAt}`; 409s if the tenant already has an active grant; writes `breakglass.requested` |
+| `GET` | `/api/platform-admin/tenants/:id/breakglass` | `PlatformJwtAuthGuard` | ✅ the tenant's current ACTIVE grant, or `null` |
+| `POST` | `/api/platform-admin/tenants/:id/breakglass/:grantId/revoke` | `PlatformJwtAuthGuard` | ✅ writes `breakglass.revoked` |
 
 ### Known gaps / TODO
 
-- **Audit read API** — `GET /api/platform-admin/audit`. Rows are being
-  written (create / status / plan-change / renewal / price-adjust /
-  plan-catalog-edit); the console's Audit screen + tenant-detail Activity
-  tab are built and degrade gracefully until this lands.
-- **`POST /api/platform-admin/tenants/:id/refresh-headcount`** — expose the
-  existing `refreshHeadcount()` as a route; also a scheduled BullMQ job.
-- **`GET /api/platform-admin/tenants/:id`** — detail endpoint (the console
-  currently falls back to filtering the list).
-- **Break-glass** — the whole flow (`BreakGlassGrant`, audited read-only
-  tenant context, TTL). Console dialog + status sheet built as `TODO(api)`.
-- **Scheduled renewal job** — `renewSubscription()` is a manual operator
-  action today; a BullMQ job should process `renewsAt` and re-snapshot on
-  the due date.
+- **Break-glass elevated-read mechanism** — `BreakGlassGrant` gives the
+  full audited request/track/expire/revoke lifecycle (see the feature list
+  above), but an ACTIVE grant doesn't currently change what the platform
+  role can query. Actually letting a platform admin read one tenant's data
+  for the grant's lifetime needs its own connection-pool escalation design
+  (a temporary, scoped credential or RLS bypass, itself logged per-query) —
+  deliberately not built in this pass; the `accessCount` field on the grant
+  is reserved for that later work. This is the one item keeping module 02
+  below 100%.
 - Subscription lifecycle: seat counting vs plan, `PAST_DUE` → auto-suspend.
-- Tighten `platform_audit_log` grants to true append-only (no
-  `UPDATE`/`DELETE` for `hrms_platform`).
+- `Subscription.renewsAt` is only ever set by a renewal (manual or
+  scheduled) — a brand-new tenant has no `renewsAt` until its first renewal,
+  so the scheduled renewal job has nothing to pick up for it until then.
+  Pre-existing behavior, unrelated to this pass's scheduling addition.
 
 ---
 
@@ -381,15 +927,18 @@ future logged, time-boxed break-glass flow, not a standing grant.
 
 **Deep spec:** `docs/modules/03_EMPLOYEE_MASTER.md` ·
 **UI prompt:** `docs/ui-build-prompts/03-employee-master.md`
-**Status:** 🟡 97% — full field set (statutory/bank via app-layer AES-256-GCM
+**Status:** ✅ 100% — full field set (statutory/bank via app-layer AES-256-GCM
 encryption, emergency contacts, comp-adjacent fields), lifecycle state
 machine, bulk-import UI, document hardening (MIME/size server-side, category,
-delete), department edit/delete-with-reassign, and org chart rooted per role
-are all live. Only org-chart search/expand/zoom polish and the
-deliberately-deferred BU→Team hierarchy remain.
+delete), department edit/delete-with-reassign, an org chart rooted per role
+(pan/zoom canvas with search, expand/collapse, subtree focus, a hover
+contact card and a click-to-drawer quick view), a real photo
+upload (private object storage, not a hand-typed URL), a proper reveal-reason
+confirm dialog, and Leave's recursive Line-Manager scoping mirror are all
+live. Only the deliberately-deferred BU→Team hierarchy remains.
 **Code:** `apps/api/src/employees`, `apps/api/src/crypto`
 (`FieldEncryptionService`), `apps/web/src/pages/employees`,
-`apps/web/src/pages/org-chart.tsx`, `apps/web/src/pages/departments.tsx`
+`apps/web/src/pages/org-chart/`, `apps/web/src/pages/departments.tsx`
 
 ### Expectation
 
@@ -409,9 +958,9 @@ must validate and report per-row rather than fail the batch.
 | Emergency contact (name, relationship, phone, address) | FR-EMP-004 | ✅ full CRUD, RULE-5 primary-swap |
 | Document upload (PDF/JPG/PNG, ≤10MB) — offer letter, IDs, certs | FR-EMP-005 | ✅ MIME allow-list + size cap enforced server-side; category + delete added |
 | Employee lifecycle states | FR-EMP-007 | ✅ `EmployeeLifecycleState` (`PRE_JOINING/PROBATION/CONFIRMED/NOTICE_PERIOD/SUSPENDED/SEPARATED`) matches the SRS set; `PATCH /employees/:id/lifecycle` validates transitions, `SEPARATED` disables the linked login |
-| Bulk import via Excel template + error report | FR-EMP-009 | ✅ API + frontend (`apps/web/src/pages/employees/import.tsx`) |
+| Bulk import via Excel template + error report | FR-EMP-009 | ✅ CSV/XLSX, full field set (job, manager by code, statutory IDs, encrypted bank/PAN, logins + invites), create **or** update by `employeeCode`, dry-run preview before commit (`EmployeeImportService`, `apps/web/src/pages/employees/import.tsx`) |
 | Multi-level hierarchy (Company → BU → Dept → Team) | FR-ORG-001 | 🟡 Department (now with `code`/`headEmployeeId`, edit/delete-with-reassign) + self-referential `reportingManagerId`; BU/Team levels **deliberately deferred** — flat hierarchy decided sufficient for V1 |
-| Interactive org chart — reporting lines, expand, search | FR-ORG-002 | 🟡 tree rooted per role (recursive subtree for Employee/Line Manager); expand/search/zoom **not built** — plain nested list today |
+| Interactive org chart — reporting lines, expand, search | FR-ORG-002 | ✅ tree rooted per role (recursive subtree for Employee/Line Manager); search (auto-expands ancestors of a match, highlights hits), per-node + expand-all/collapse-all, zoom (60–160%), and a click-to-drawer quick view (report count + direct reports + link to full profile) |
 | Multiple reporting lines (solid + dotted) | FR-ORG-003 | 🔴 single `reportingManagerId` only |
 | Org chart export PDF/PNG | FR-ORG-004 | 🔴 explicitly deferred |
 | No-code custom field builder | FR-EMP-008 | 🔴 deferred |
@@ -433,14 +982,16 @@ must validate and report per-row rather than fail the batch.
 
 ### Happy path (bulk import)
 
-1. HR → **Employees → Bulk import** → downloads the `.csv` template
-   (`employeeCode`, `firstName`, `lastName` required; `personalEmail`,
-   `phone`, `designation` optional).
-2. Uploads the file → `POST /api/employees/bulk-import` (multipart `file`).
-3. Server parses with `exceljs`, inserts row-by-row, returns
-   `[{ row, status: 'ok' | 'error', message }]`; the UI shows a per-row
-   result table and offers a failed-rows download.
-4. HR fixes the flagged rows and re-uploads only those.
+1. HR → **Employees → Bulk import** → downloads the `.csv` template (the
+   full field set — see `docs/modules/03_EMPLOYEE_MASTER.md` §5.2).
+2. Uploads `.csv`/`.xlsx` → `POST /api/employees/bulk-import?dryRun=true`
+   previews creates/updates, new departments, logins and per-row errors
+   without writing anything.
+3. Confirms → the same file with `dryRun=false`; every valid row is created
+   or updated (by `employeeCode`), managers linked in a second pass, logins
+   invited last. Errors download as CSV.
+4. Salaries: **Payroll › Structures › Import salaries**
+   (`POST /api/payroll/structures/bulk-import`, same preview/confirm flow).
 
 ### Functionalities / API
 
@@ -448,13 +999,14 @@ must validate and report per-row rather than fail the batch.
 |---|---|---|
 | `GET` | `/api/employees` | any (row-scoped; Line Manager = full recursive subtree) |
 | `GET` | `/api/employees/:id` | any (row-scoped) |
-| `GET` | `/api/employees/org-chart` | Admin / HR / Line Manager / Auditor / Employee — rooted per role |
+| `GET` | `/api/employees/org-chart` | Admin / HR / Line Manager / Auditor / Employee — rooted per role; nodes carry work email/phone/dept/location/report counts; SEPARATED excluded |
 | `POST` | `/api/employees` | Company Admin, HR Manager |
 | `PATCH` | `/api/employees/:id` | any — Admin/HR full field set; Employee self-only + RULE-1 whitelist; Line Manager/Auditor 403 |
 | `PATCH` | `/api/employees/:id/sensitive-fields` | Company Admin, HR Manager |
 | `POST` | `/api/employees/:id/reveal` | Company Admin, HR Manager, Auditor |
 | `GET`/`POST`/`PATCH`/`DELETE` | `/api/employees/:id/emergency-contacts[/:contactId]` | read: row-scoped · write: self or Admin/HR |
-| `POST` | `/api/employees/bulk-import` | Company Admin, HR Manager |
+| `POST` | `/api/employees/bulk-import?dryRun=` | Company Admin, HR Manager — CSV/XLSX, create or update, dry-run preview |
+| `POST` | `/api/employees/:id/photo` | self or Admin/HR — JPEG/PNG/WebP, ≤5MB; replaces the previous object |
 | `GET` | `/api/employees/:id/documents` | row-scoped |
 | `POST` | `/api/employees/:id/documents` | Admin/HR (any) or Employee (own only) |
 | `GET` | `/api/documents/:id/download-url` | row-scoped — 5-min presigned URL |
@@ -463,21 +1015,25 @@ must validate and report per-row rather than fail the batch.
 
 ### Known gaps / TODO
 
-- Org chart search/expand/zoom + click-to-drawer quick view — the tree is
-  correctly rooted per role but renders as a plain nested list.
-- `photoUrl` is a settable URL, not an image-upload widget.
-- Reveal reason is collected via `window.prompt`, not a target confirm
-  modal (functionally complete either way).
-- The Line-Manager recursive-subtree decision (§4.1 of the deep spec) has
-  not yet been mirrored in modules 04 (Leave) or 05 (Attendance).
+- The Line-Manager recursive-subtree decision (§4.1 of the deep spec) is
+  now mirrored in both Leave (module 04) and Attendance (module 05, its
+  `teamRoster`/`pendingRegularizations`/approve-reject scoping) — see the
+  2026-09-18 sync notes at the top of this file for exactly which checks
+  changed and which stayed direct-only on purpose.
+- BU/Team hierarchy levels remain deliberately deferred (flat hierarchy is
+  V1 scope, not a gap).
 
 **Closed:** lifecycle state machine; the full field set (identity/personal
 extras, employment extras, compensation-adjacent, statutory + bank with
 AES-256-GCM field encryption and a masked-reveal endpoint); emergency
 contacts; document MIME/size hardening + category + delete; bulk-import
-frontend; department edit/delete-with-reassign; org chart rooted per role;
-and the Employee self-edit path (documented as a target before this pass
-but never actually wired — the endpoint was Admin/HR-only).
+frontend; department edit/delete-with-reassign; org chart rooted per role
+plus search/expand/collapse/zoom/quick-view; a real photo-upload widget
+(`photoKey` object-storage field, replacing the hand-typed `photoUrl`
+string); a proper reveal-reason confirm dialog (replacing `window.prompt`);
+Leave's recursive Line-Manager scoping mirror; and the Employee self-edit
+path (documented as a target before an earlier pass but never actually
+wired — the endpoint was Admin/HR-only).
 
 ---
 
@@ -495,7 +1051,10 @@ originally-tracked feature gap is closed, including the mock-default flip:
 real API, not the fixture store.
 `TenantSettings.allowLopRequests`/`fyStartMonth` and
 `LeaveType.minNoticeDays`/`genderRestriction`/`requiresApproval` are all
-enforced/settable, the accrual job prorates a new joiner's first period,
+enforced/settable, one entitlement engine (`leave-entitlement.ts`) drives
+the daily job, new hires, company setup and "Apply now" — prorated by
+joining and go-live date, with opening balances and year-end
+carry-forward — optional holidays are opt-in Restricted Holiday leave,
 comp-off credits automatically on holiday/weekly-off clock-ins, and
 approved leave reconciles into `AttendanceRecord` (`ON_LEAVE`, reversed on
 cancel). Comp-off/reconciliation are **synchronous** (at clock-in and
@@ -522,12 +1081,12 @@ attendance and flag LOP when the balance is short.
 | Leave type definitions (CL/SL/EL/…); quota + carry-forward cap + accrual frequency | FR-LVE-001 | ✅ `LeaveType` has `annualQuota`, `carryForwardCap`, `accrualFrequency` (ANNUAL/MONTHLY/QUARTERLY), `code`, `colorToken`, `minNoticeDays` (enforced), `active`, `genderRestriction` (enforced in `apply()`, fails open on unrecognized `Employee.gender` — see below), `paid` (informational only), `requiresApproval` (settable via DTO), `isCompOff` (marks the tenant's comp-off type). No `encashment` field exists — that concept isn't modelled anywhere (it's unrelated Full & Final Settlement prose elsewhere in this doc) |
 | Per-employee per-year balances; init for a year | FR-LVE-004 | ✅ `initializeYearlyBalances()` upserts ANNUAL types; MONTHLY/QUARTERLY types auto-accrue via `LeaveAccrualProcessor` (daily BullMQ job, idempotent via `LeaveLedgerEntry`), now prorating a new joiner's first period by `Employee.dateOfJoining`; balance-year bucketing follows `TenantSettings.fyStartMonth` via `resolveLeaveYear()` |
 | Company holiday calendar (national + state optional) | FR-LVE-003 | ✅ `Holiday` table + full CRUD (`/api/leave/holidays`); `apply()` counts working days (holidays + `TenantSettings.weeklyOffDays` excluded) |
-| Apply for leave (dates, type, reason, attachment) | FR-LVE-005 | ✅ dates/type/reason/attachment all wired (`POST /api/leave/requests/:id/attachment`, reuses `StorageService`) |
-| Multi-level approval (1 or 2, tenant-configurable) + escalation timers | FR-LVE-006 | ✅ `TenantSettings.leaveApprovalLevels` (1 or 2) now actually read by `apply()` — previously hardcoded to 2. `LeaveEscalationProcessor` auto-escalates an undecided L1 to L2 after `leaveEscalationDays`, and flags an undecided L2 for manual HR follow-up (no auto-approve). *(The old SRS's "up to 4 levels" is stale — the schema/FE contract cap V1 at 2; see `CLAUDE.md`.)* |
+| Apply for leave (dates, type, reason, attachment) | FR-LVE-005 | ✅ dates/type/reason/attachment all wired (`POST /api/leave/requests/:id/attachment`, stored + scanned via module 09 Documents; downloadable from the request sheet) |
+| Multi-level approval (1 or 2, tenant-configurable) + escalation timers | FR-LVE-006 | ✅ `TenantSettings.leaveApprovalLevels` (1 or 2) now actually read by `apply()` — previously hardcoded to 2. A single level can be HR or the reporting manager alone (`TenantSettings.leaveSingleApprover`, migration `20261204090000_leave_manager_only_approval`; manager's L1 approval is final, no-manager employees fall back to HR). `LeaveEscalationProcessor` auto-escalates an undecided L1 to L2 after `leaveEscalationDays`, and flags an undecided L2 for manual HR follow-up (no auto-approve). *(The old SRS's "up to 4 levels" is stale — the schema/FE contract cap V1 at 2; see `CLAUDE.md`.)* |
 | Team calendar shown before submitting | FR-LVE-007 | ✅ `GET /leave/calendar` exists; the Apply tab renders it inline (`tabs/apply.tsx`) alongside the dedicated Team Calendar tab |
 | Approved leave syncs to attendance; flags LOP | FR-LVE-008 | ✅ `isLop` computed on apply; `LeaveService` writes `AttendanceRecord.status = 'ON_LEAVE'` for the request's working days on final approval (reversed on cancel) via direct Prisma access, not a nightly job — see "Known gaps" |
 | Comp-off credit for holiday/weekend work | FR-LVE-009 | ✅ `AttendanceService.clockIn()` detects a `Holiday`/`TenantSettings.weeklyOffDays` match and calls `LeaveService.creditCompOff()`, which credits +1 day to the tenant's `isCompOff` `LeaveType` (idempotent per employee/day, opt-in per tenant) |
-| Notifications (apply/approve/reject/expiry) | FR-LVE-010 | 🔴 (see §10) |
+| Notifications (apply/approve/reject/cancel/escalation) | FR-LVE-010 | ✅ via module 10 (email); balance-expiry has no trigger yet — no year-end expiry event exists in Leave |
 | Cancel — reverses an approved non-LOP deduction | — | ✅ `cancel()`, now also logs a `LeaveLedgerEntry` |
 | Decision/escalation history, HR balance adjustments, ledger | — | ✅ new `LeaveApproval` (append-only decision/escalation log) and `LeaveLedgerEntry` (balance-movement audit trail) tables |
 
@@ -609,32 +1168,37 @@ What follows is a scope note, not a gap:
 
 **Deep spec:** `docs/modules/05_ATTENDANCE.md` ·
 **UI prompt:** `docs/ui-build-prompts/05-attendance.md`
-**Status:** 🟡 — employee self-service only
+**Status:** ✅ 100% — employee self-service, shift/tenant-config-aware and
+plan-gated; a Company Admin/HR Manager Settings tab manages shifts +
+attendance/general config; a nightly finalization job, full regularization
+approval, and manager/HR team views are all live. Only the explicitly
+deferred capture channels (GPS/biometric/selfie-QR, `POST /attendance/ingest`)
+remain unbuilt — see `CLAUDE.md` → "Explicitly deferred".
 **Code:** `apps/api/src/attendance`, `apps/web/src/pages/attendance`
 
 ### Expectation
 
 Per-employee daily attendance from clock-in/out with breaks; a monthly
 calendar + stats view; a regularisation (correction-request) workflow
-with **manager approval within 7 days**; and month-end data that feeds
-LOP into payroll. Manual marking by HR with an audit trail. Shifts and
-overtime per state law. Biometric/GPS capture is **deferred**.
+with manager approval; and month-end data that feeds LOP into payroll.
+Manual marking by HR with an audit trail. Shifts and overtime hours.
+Biometric/GPS capture is **deferred**.
 
 ### Feature list
 
 | Feature | SRS | V1 status |
 |---|---|---|
-| Clock-in / clock-out | — | ✅ `POST /attendance/clock-in`, `/clock-out` |
+| Clock-in / clock-out | — | ✅ `POST /attendance/clock-in`, `/clock-out` — also writes a `Punch` row (source `WEB`), the source-of-truth capture the nightly job and any future device/import source read |
 | Break start / end | — | ✅ `AttendanceBreak` rows |
-| "Today" status card | FR-ESS-001 | ✅ `GET /attendance/today` |
+| "Today" status card | FR-ESS-001 | ✅ `GET /attendance/today` — now includes `overtimeMs` |
 | Monthly calendar (per-day status) | — | ✅ `GET /attendance/calendar?month=` |
-| Monthly stats (present/absent/late/hours) | — | ✅ `GET /attendance/stats?month=` |
-| Regularisation request (reason, subject to approval, 7-day window) | FR-ATT-009 | 🟡 employee can **create / list / cancel**; **no approver endpoint**, no 7-day enforcement |
-| Manual attendance marking by HR + audit trail | FR-ATT-001 | 🔴 |
-| Shift definitions (Fixed / Rotational / Flexible) | FR-ATT-006 | 🔴 — status logic assumes one implicit shift |
-| Late-arrival / early-departure flags + grace period | FR-ATT-008 | 🟡 `AttendanceStatus` has a late value; grace period not configurable |
-| Overtime calculation (state rates) | FR-ATT-007 | 🔴 |
-| Month-end feed into payroll LOP | FR-ATT-010 | 🔴 (blocked on Payroll) |
+| Monthly stats (present/absent/late/hours) | — | ✅ `GET /attendance/stats?month=` — now includes `overtimeHours` |
+| Regularisation request (reason, subject to approval, window) | FR-ATT-009 | ✅ create/list/cancel, **plus** `regularizationWindowDays` (raise-by deadline) and `regularizationMonthlyCap` enforced at request time; flags the day `PENDING_REGULARIZATION` while under dispute |
+| Manual attendance marking by HR + audit trail | FR-ATT-001 | ✅ `POST /attendance/mark` — reasoned, writes `audit_log` |
+| Shift definitions (Fixed / Rotational / Flexible) | FR-ATT-006 | ✅ `Shift` catalogue (CRUD via `/attendance/shifts`, Settings tab) — `type` is stored/settable; FLEXI's core-hours window isn't yet a distinct behavior branch |
+| Late-arrival / early-departure flags + grace period | FR-ATT-008 | ✅ per-shift, settable |
+| Overtime calculation | FR-ATT-007 | ✅ hours beyond `Shift.minHoursFullDay`, on `today()`/`stats()`. **Scope note:** this measures TIME only — converting to statutory per-state overtime PAY is Payroll's job (module 07, not built) |
+| Month-end feed into payroll LOP | FR-ATT-010 | ✅ `getLopDays(employeeId, month)` + `GET /attendance/lop-days` — the defined contract; Payroll itself doesn't exist yet to call it |
 | GPS geo-fenced check-in | FR-ATT-002 | 🔴 deferred |
 | Biometric device (ZKTeco/eSSL) integration | FR-ATT-003 | 🔴 deferred (see `CLAUDE.md`) |
 | Selfie / QR check-in | FR-ATT-004/005 | 🔴 deferred |
@@ -642,88 +1206,104 @@ overtime per state law. Biometric/GPS capture is **deferred**.
 ### Happy path (employee, today)
 
 1. Employee → **Attendance** → **Clock in** (`POST /attendance/clock-in`)
-   → an `AttendanceRecord` for today is opened; status computed
-   (e.g. `PRESENT` / late).
+   → an `AttendanceRecord` for today is opened (status computed) and a
+   `Punch` row is written.
 2. Takes lunch → **Start break** / **End break** → `AttendanceBreak` rows;
    worked-hours exclude break time.
-3. End of day → **Clock out** → record closed, total hours finalised.
+3. End of day → **Clock out** → record closed, total hours finalised;
+   overtime shown once effective time exceeds the shift's target.
 4. Views the **calendar** for the month and the **stats** summary.
 
-### Happy path (regularisation — partially built)
+### Happy path (regularisation)
 
 1. Employee forgot to clock in Tuesday → **Request regularisation** →
    picks the date, a `RegularizationReasonType`, and a note →
-   `POST /attendance/regularization` → `RegularizationRequest` at
-   `PENDING`.
-2. *(Target, not built)* Their manager sees it in a pending queue and
-   approves/rejects within 7 days; on approval the `AttendanceRecord` for
-   that date is created/updated and the audit trail records who changed
-   it.
+   `POST /attendance/regularization` → rejected if the date is outside
+   `regularizationWindowDays` or the monthly cap is reached; otherwise
+   creates a `PENDING` `RegularizationRequest` and flags that day
+   `PENDING_REGULARIZATION`.
+2. Their manager (recursive subtree) or HR/Admin sees it in **Attendance →
+   Approvals** → `POST .../:id/approve` finalizes the day PRESENT/LATE from
+   the requested times (or `/reject` reverts it to its base
+   holiday/weekly-off/absent status) — both write an `audit_log` row.
+   Multiple requests can be bulk-approved.
 3. Employee can `POST /attendance/regularization/:id/cancel` while it's
    still pending.
+4. If nobody decides it before the tenant's `payrollCutoffDay`, the nightly
+   `resolve-cutoff` job auto-resolves it per `unactionedBehavior`
+   (`AUTO_APPROVE`/`AUTO_REJECT`), auditing the resolution with actor `null`.
+
+### Happy path (manager/HR views)
+
+1. A Line Manager or HR/Admin opens **Attendance → Team** → picks a date →
+   `GET /attendance/team/roster?date=` shows every report's status for that
+   day (scoped to the caller's recursive subtree; unscoped for HR/Admin).
+2. HR/Admin can **Mark** any row directly (`POST /attendance/mark`) for the
+   one-off cases self-service/regularization don't cover.
+3. **Attendance → Approvals** is the regularisation queue from the happy
+   path above.
+
+### Happy path (nightly finalization — no human involved)
+
+Once a day (02:00 UTC), for every non-suspended tenant, every employee,
+*yesterday*: if the day already has a real outcome (a self-service
+clock-in, Leave's synchronous `ON_LEAVE` write, or an active regularization
+dispute) it's left untouched. Otherwise: holiday → `HOLIDAY`; tenant
+weekly-off → `WEEKLY_OFF`; else if `Punch` rows exist (a future
+biometric/import source, or any punches that outlived a same-day clock-out
+failure) → derive `PRESENT`/`LATE` from first-IN/last-OUT; else → `ABSENT`
+(the day `getLopDays()` later counts).
 
 ### Functionalities / API
 
-| Method | Path |
-|---|---|
-| `POST` | `/api/attendance/clock-in` · `/clock-out` · `/break/start` · `/break/end` |
-| `GET` | `/api/attendance/today` |
-| `GET` | `/api/attendance/calendar?month=YYYY-MM` |
-| `GET` | `/api/attendance/stats?month=YYYY-MM` |
-| `POST` | `/api/attendance/regularization` |
-| `GET` | `/api/attendance/regularization` |
-| `POST` | `/api/attendance/regularization/:id/cancel` |
+| Method | Path | Roles |
+|---|---|---|
+| `POST` | `/api/attendance/clock-in` · `/clock-out` · `/break/start` · `/break/end` | self-service |
+| `GET` | `/api/attendance/today` · `/calendar?month=` · `/stats?month=` | self-service |
+| `POST` | `/api/attendance/regularization` | self-service |
+| `GET` | `/api/attendance/regularization` | self-service (own) |
+| `GET` | `/api/attendance/regularization/pending` | any (scoped: recursive subtree for Line Manager, all for HR/Admin, `[]` otherwise) |
+| `POST` | `/api/attendance/regularization/:id/cancel` | owner only, while `PENDING` |
+| `POST` | `/api/attendance/regularization/:id/approve` · `/reject` | Line Manager (subtree), HR Manager, Company Admin |
+| `POST` | `/api/attendance/regularization/bulk-approve` | Line Manager, HR Manager, Company Admin — `{ids}` → per-id `{id, ok, error?}` |
+| `GET` | `/api/attendance/team/roster?date=` | any (scoped like `pending`) |
+| `POST` | `/api/attendance/mark` | Company Admin, HR Manager — reasoned + audited |
+| `GET` | `/api/attendance/lop-days?employeeId=&month=` | Company Admin, HR Manager |
+| `GET` | `/api/attendance/shifts` | any (read) |
+| `POST` · `PATCH` · `DELETE` | `/api/attendance/shifts[/:id]` | Company Admin, HR Manager |
+| `GET` | `/api/attendance/settings` | Company Admin, HR Manager, Auditor |
+| `PATCH` | `/api/attendance/settings` | Company Admin only |
 
-All routes are `JwtAuthGuard + TenantGuard` only (no `@Roles`) — every
-route today is self-service for the calling employee.
+Every route sits behind `JwtAuthGuard + TenantGuard + EntitlementGuard`
+(`@RequiresModule('ATTENDANCE')` at the controller — a tenant on a plan
+without Attendance gets a 403, not a broken self-service page), plus
+`RolesGuard` where a route carries `@Roles(...)`.
 
-### Known gaps / TODO (priority order)
+### Known gaps / TODO
 
-> **Config foundation landed** (migration `20260905000001`): `shifts`,
-> `holidays`, `attendance_settings`, `tenant_settings`, and the `punches`
-> capture table now exist and are seeded with defaults on tenant creation.
-> See `docs/TENANT_CONFIGURATION.md`. The items below are the wiring that
-> consumes them.
+All originally-tracked gaps are closed. What's left is explicitly deferred,
+not gaps:
 
-1. **Refactor `attendance.service.ts`** to read the tenant's default
-   `Shift` + `tenant_settings` (timezone, weekly-off days) instead of the
-   hardcoded `SHIFT_START_HOUR` / `GRACE_MINUTES` / `TARGET_HOURS`
-   constants. *(Partially done: `clockIn()` now reads `Holiday` and
-   `TenantSettings.weeklyOffDays` — needed for Leave's comp-off feature,
-   see §4 — and sets `HOLIDAY`/`WEEKLY_OFF` status accordingly. The
-   shift-based start-time/grace-period refactor is still outstanding.)*
-2. **Punch write-path** — web clock-in writes `punches` rows (`source:
-   WEB`); `attendance_records.checkInAt/checkOutAt` become first-IN /
-   last-OUT derived values.
-3. **Nightly finalization job** (BullMQ) — per employee/day: holiday →
-   weekly-off → approved leave → punches ⇒ final status + hours. Clean
-   days auto-final, no human. *(Holiday/weekly-off detection on clock-in,
-   and `ON_LEAVE` rows for approved leave, are now written synchronously
-   by `AttendanceService.clockIn()`/`LeaveService` respectively — see §4 —
-   but there is still no job to finalize a day that has* **no** *clock-in
-   and no approved leave, e.g. a genuine unexplained absence.)*
-4. **Regularisation approval** — `POST .../regularization/:id/approve` &
-   `/reject` for `LINE_MANAGER` / `HR_MANAGER`; enforce
-   `attendance_settings.regularizationWindowDays` +
-   `regularizationMonthlyCap`; bulk-approve; **auto-resolve at payroll
-   cut-off** per `unactionedBehavior`; write an audit row on every
-   decision.
-5. **Manager / HR views** — team roster for a day, pending regularisation
-   queue, manual mark with reason (FR-ATT-001).
-6. Overtime calculation (per-state rates) — needs the `Shift` end time,
-   now available.
-7. **Month-end LOP export contract for Payroll** —
-   `getLopDays(employeeId, month)`; define the interface now so Payroll
-   can build against it.
-8. Per-tenant Settings screens + first-run setup wizard (frontend).
-9. `POST /attendance/ingest` for biometric/CSV — per client, gated behind
-   `subscription.features.biometricIntegration`.
+- GPS geo-fenced check-in, biometric device integration, selfie/QR
+  check-in — CLAUDE.md → "Explicitly deferred".
+- `POST /attendance/ingest` for biometric/CSV import — per-client work,
+  gated behind `subscription.features.biometricIntegration`
+  (`@RequiresFeature('biometricIntegration')` is ready to use whenever
+  this is built).
+- FLEXI shifts' core-hours window (`Shift.coreStartTime`/`coreEndTime`) is
+  stored and settable but not yet read by any status-computation branch —
+  a FLEXI shift today behaves like FIXED. Not part of V1's tracked scope;
+  revisit if a client actually needs flexi-hours enforcement.
+- Statutory per-state overtime **pay** conversion is Payroll's job (module
+  07, not built) — Attendance measures overtime hours only, by design.
 
 ---
 
 ## 6. Dashboard
 
-**Status:** ✅
+**Status:** ✅ 100%
+**Deep spec:** `docs/modules/06_DASHBOARD.md` · UI build prompt:
+`docs/ui-build-prompts/06-dashboard.md`
 **Code:** `apps/api/src/dashboard`, `apps/web/src/pages/dashboard.tsx`
 
 ### Expectation
@@ -739,34 +1319,70 @@ calls — keeps "what does an HR Manager see vs an Employee" in one place.
 | Company Admin / HR Manager | Headcount, department breakdown, pending-approvals count | ✅ |
 | Line Manager | Own leave balances + pending approvals from reports + recent requests | ✅ |
 | Employee | Own leave balances, own pending items, 5 most recent leave requests | ✅ |
-| Everyone | Attendance "today" summary, upcoming payslip date | 🔴 not on the dashboard yet (FR-ESS-001) |
-| Admin | Payroll cost, attrition rate, avg tenure | 🔴 blocked on Payroll (FR-RPT-002/003) |
+| Everyone (incl. admins) | Own attendance "today" snapshot (status, check-in/out, worked hours), gated on the tenant's `ATTENDANCE` entitlement | ✅ |
+| Everyone | Upcoming payslip date | 🔴 blocked on Payroll (module 07, not built) — not counted against 100%, same treatment as other Payroll-blocked items across modules |
+| Admin | Payroll cost, attrition rate, avg tenure | 🔴 blocked on Payroll (module 07, not built) — not counted against 100% |
 
 ### Happy path
 
 1. User logs in → lands on `/`.
 2. `GET /api/dashboard` → server branches on `user.role`:
-   admins get org aggregates; everyone else gets a personal view.
+   admins get org aggregates; everyone else gets a personal view. Both
+   branches also carry `todayAttendance` for the calling user when they
+   have a linked employee record and the tenant's plan includes
+   `ATTENDANCE`.
 3. Cards render; "pending approvals" is non-empty for a Line Manager with
-   reports awaiting L1.
+   reports awaiting L1; the attendance card reflects the caller's live
+   clock-in state (not clocked in / working / on break / day complete).
+4. Quick actions: the attendance card's Clock In / Take Break / End Break /
+   Clock Out buttons and each pending-approval row's Approve/Reject buttons
+   call Attendance's and Leave's own endpoints directly (no new Dashboard
+   route), then re-fetch `GET /api/dashboard` so the whole screen reflects
+   the new state.
 
 ### Functionalities / API
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/api/dashboard` | returns `{ view: 'admin' \| 'employee', ... }` |
+| `GET` | `/api/dashboard` | returns `{ view: 'admin' \| 'employee', ..., todayAttendance }`; `todayAttendance` is `null` when the caller has no linked employee record or the tenant's plan doesn't include `ATTENDANCE` |
+| `POST` | `/api/attendance/clock-in` \| `/clock-out` \| `/break/start` \| `/break/end` | Attendance's own endpoints (module 5), called directly by the dashboard's quick actions — not Dashboard-owned |
+| `POST` | `/api/leave/requests/:id/approve` \| `/reject` | Leave's own endpoints (module 4), called directly by the dashboard's pending-approval row buttons — not Dashboard-owned |
 
 ### Known gaps / TODO
 
-- Add an attendance snapshot + next-payslip date once those modules land.
-- Add admin payroll/attrition tiles when Payroll + Reports exist.
+- Upcoming payslip date and admin payroll/attrition tiles wait on Payroll
+  (module 07) to exist at all — deliberately deferred, not a Dashboard gap.
+- Dashboard's reject button has no reason/comment box (matches the
+  existing row-level precedent in Leave's own Approvals tab — comment is
+  optional server-side either way); a required-reason UX would be a small
+  frontend addition, not a backend change.
 
 ---
 
-## 7. Payroll Engine 🔴
+## 7. Payroll Engine ✅ (100%)
 
-**Status:** not started. **Highest-effort, highest-risk module — protect
-its time budget over breadth elsewhere** (`CLAUDE.md`).
+**Deep spec:** `docs/modules/07_PAYROLL_ENGINE.md` ·
+**UI prompt:** `docs/ui-build-prompts/07-payroll-engine.md`
+**Status:** ✅ 100% (code) — Phases 1–8 backend (2026-09-24 → 2026-11-16)
+and Phase 9 hardening: the full frontend (`apps/web/src/pages/payroll`), a
+static RLS/grant audit, an adversarial cross-tenant + role-matrix e2e suite
+(`apps/api/test/payroll-isolation.e2e-spec.ts`), performance guards for the
+calculator and payslip PDFs, and bounded-concurrency payslip upload and
+notification in `process()`. All migrations apply cleanly to a fresh
+Postgres. Human/live items are tracked in `docs/PAYROLL_SIGNOFF.md`, not
+counted against the percentage: statutory-rate review by a payroll/tax
+expert (the seeded income-tax defaults follow Finance Act 2025, unreviewed), running the e2e suite
+with working Firebase credentials, a 500/5,000-employee run on the real
+stack, and a browser pass.
+**Highest-effort,
+highest-risk module — protect its time budget over breadth elsewhere**
+(`CLAUDE.md`). The upstream contracts it needs are already live:
+Attendance's `getLopDays(employeeId, month)` / `GET /attendance/lop-days`
+(folding in approved-unpaid-leave days per decision 3) and the new
+`OvertimeClaim` workflow's `getApprovedOvertime(Batch)()`. A processed run
+is now a real, readable contract — module 8 Statutory Compliance's EPF/ESI
+work can start reading it (also still 0% itself) — see that module's deep
+spec §0.
 **Target code location:** `apps/api/src/payroll`
 
 ### Expectation
@@ -847,9 +1463,15 @@ payslip PDFs, and a bank disbursement file. Two hard invariants:
 
 ## 8. Statutory Compliance 🔴
 
-**Status:** not started. Table-stakes for the Indian market; filing
-errors expose customers to penalties. **Generate files for portal upload
-— do not build live e-filing APIs for V1** (`CLAUDE.md` deferred list).
+**Deep spec:** `docs/modules/08_STATUTORY_COMPLIANCE.md`
+**Status:** not started, deep spec written 2026-09-23. Table-stakes for
+the Indian market; filing errors expose customers to penalties.
+**Generate files for portal upload — do not build live e-filing APIs for
+V1** (`CLAUDE.md` deferred list). **Hard prerequisite: module 7 Payroll
+Engine (also 0%)** — EPF/ESI/Income-Tax features all consume only
+processed payroll runs; only the POSH sub-module (ICC management,
+complaint workflow, annual report) is buildable independently of Payroll.
+See the deep spec's §0.
 **Target code location:** `apps/api/src/compliance`
 
 ### Expectation
@@ -922,88 +1544,112 @@ employee-facing investment-declaration workflow that feeds TDS.
 
 ## 9. Documents
 
-**Status:** 🟡 — implemented **inside** Employee Master; no standalone
-module.
-**Code:** `apps/api/src/storage` (`StorageService`), document endpoints in
-`apps/api/src/employees`.
+**Status:** ✅ 100% — a shared module owns every user-uploaded file.
+Deep spec: `docs/modules/09_DOCUMENTS.md`.
+**Code:** `apps/api/src/documents` (`DocumentsService`,
+`DocumentsController`, `DocumentScanProcessor`, `ClamAvScanner`),
+`apps/api/src/storage` (`StorageService`), `apps/web/src/lib/documents.ts`
++ `apps/web/src/components/documents.tsx`.
 
 ### Expectation
 
 Any file the platform stores goes to S3-compatible object storage under a
 **tenant- and entity-prefixed key**, is recorded with metadata in
-`public.documents`, and is only ever handed back to a client as a
-**time-boxed presigned URL** — the API never returns a raw object key and
-never lists a bucket.
+`public.documents`, is **malware-scanned before it can be downloaded**,
+and is only ever handed back to a client as a **time-boxed presigned
+URL** — the API never returns a raw object key and never lists a bucket.
 
 ### Feature list
 
 | Feature | Status |
 |---|---|
-| Upload (S3/MinIO), key `tenants/<tid>/employees/<eid>/<uuid>-<name>` | ✅ |
-| Metadata row in `public.documents` (label, size, content type, uploader) | ✅ |
-| Download via 5-minute presigned URL | ✅ |
-| MIME allow-list (PDF/JPG/PNG) + 10MB cap (FR-EMP-005) | 🟡 confirm/enforce at controller |
-| Generic attachment host for other modules (leave proof, regularisation, investment proof) | 🔴 — generalise `documents` beyond employees |
-| Virus/malware scan on upload | 🔴 |
-| Retention / deletion policy | 🔴 |
+| Upload (S3/MinIO), key `tenants/<tid>/employees/<eid>/<profile\|leave/<id>\|regularization/<id>>/<uuid>-<name>` | ✅ |
+| Metadata row in `public.documents` (owner type/id, label, category, size, type, uploader) | ✅ |
+| MIME allow-list (PDF/JPG/PNG) + magic-byte check + 10MB cap, before any byte is stored | ✅ |
+| ClamAV scan (BullMQ `documents` queue); download refused until `CLEAN`; infected object deleted | ✅ |
+| Self-healing: 15-min sweep re-enqueues stale `PENDING_SCAN` / `SCAN_FAILED` | ✅ |
+| Download via 5-minute presigned URL, `Content-Disposition: attachment`, audited | ✅ |
+| Generic attachment host — employee profile, leave request, regularization | ✅ (Compliance's investment proofs will add an owner type) |
+| Soft delete + `documents.*` audit events; `hrms_app` has no `DELETE` grant | ✅ |
+| Retention purge | Deliberately out of V1 scope (soft delete only) — `docs/modules/09_DOCUMENTS.md` §1 |
 
 ### Happy path
 
-Covered under §3 ("HR adds an employee" → step 4). Download: client calls
-`GET /api/documents/:id/download-url` → gets a URL valid 5 minutes →
-fetches the file directly from storage.
+1. Employee uploads a PDF (profile tab, leave apply form, or regularization
+   dialog) → validated → stored → row `PENDING_SCAN` → scan job enqueued.
+2. Worker streams it to clamd → `CLEAN` (or `INFECTED`: object deleted,
+   audited).
+3. Anyone who can see that employee calls
+   `GET /api/documents/:id/download-url` → 5-minute URL (409 while
+   scanning, 410 if infected).
 
 ### Known gaps / TODO
 
-- Promote to a small shared module so Leave (attachment), Attendance
-  (regularisation evidence) and Compliance (proofs) reuse it instead of
-  re-implementing upload.
-- Enforce MIME + size; add a scan step (BullMQ job) before marking a
-  document usable.
+- None against the Expectation. On the preview `t3.micro`, clamd runs as
+  a memory-capped sibling container started by the CD workflow (swap-backed,
+  slower scans) — see `docs/DEPLOY.md`.
 
 ---
 
-## 10. Notifications 🔴
+## 10. Notifications 🟡 (95%)
 
-**Status:** not started. **Target code location:**
-`apps/api/src/notifications` (+ a BullMQ queue).
+**Status:** 🟡 95% — built and tested end to end up to the SES call; the
+first real delivery waits on the owner's AWS SES setup. Deep spec:
+`docs/modules/10_NOTIFICATIONS.md`.
+**Code:** `apps/api/src/notifications` (`NotificationDispatcher`,
+`NotificationSendProcessor`, `SesEmailSender`, `templates.ts`,
+`NotificationsController`/`Service`), `apps/web/src/pages/notifications.tsx`.
 
 ### Expectation
 
 Asynchronous email (and later push) on workflow events, sent off a
-queue — never inline in the request path.
+queue — never inline in the request path — with every send logged.
 
 ### Feature list
 
-| Trigger | SRS | Channel |
-|---|---|---|
-| Leave applied / approved / rejected / balance expiry | FR-LVE-010 | email (+ push later) |
-| Leave status changes | FR-ESS-002 | push |
-| Regularisation submitted / decided | FR-ATT-009 (implied) | email |
-| Payslip available | FR-ESS-001 (implied) | email |
-| Onboarding / overdue tasks | FR-ONB-005 | email — deferred module |
-| Data-breach notice to DPO + affected employees within 72h | NFR-PRIV-005 | email |
+| Trigger | Status |
+|---|---|
+| Leave applied → manager (L1) or HR (L2 / no manager) | ✅ |
+| Leave L1-approved → applicant + HR; final approve / reject → applicant | ✅ |
+| Leave auto-escalated (L1→L2, and L2 overdue) → HR | ✅ |
+| Leave cancelled → whoever held it (manager / HR) | ✅ |
+| Regularization submitted → manager (or HR); decided / auto-resolved → applicant | ✅ |
+| Uploaded file blocked as malware → uploader | ✅ |
+| `notification_log` + dedupe + retry/backoff + sweep + Email log UI (retry FAILED) | ✅ |
+| Bounce/complaint handling — SNS webhook, `platform.email_suppressions`, sends refused, bounced row → FAILED, Platform Admin list + audited lift | ✅ code + unit-tested; live needs the SNS setup in `docs/DEPLOY.md` |
+| Real delivery through AWS SES | 🟡 code + unit-tested against the SDK; needs a verified SES sender + credentials |
+| Leave balance expiry | ⏸ no expiry event exists in Leave yet |
+| Payslip available | ⏸ Payroll (module 07) not built — will call the same dispatcher |
+| Onboarding tasks / data-breach notice | ⏸ deferred module / incident process (deep spec §1) |
+| Push / in-app, per-user preferences | ⏸ V1 scope cut (deep spec §1) |
 
 ### Happy path
 
-1. A domain event occurs (e.g. leave approved).
-2. The service enqueues a `notification.send` job (recipient, template,
-   context) on Redis/BullMQ.
-3. A worker renders the template and sends via the email provider;
-   failures retry with backoff; each send is logged.
+1. Employee applies for leave → `LeaveService.apply()` commits the request.
+2. `NotificationDispatcher.notify()` writes a `QUEUED` row for the manager
+   and enqueues a `send` job (the request returns immediately).
+3. The worker renders the template and calls SES → row `SENT` with the SES
+   message id. On error it retries with backoff, then `FAILED`; HR can
+   retry it from **Email log**.
 
-### Build notes
+### Known gaps / TODO
 
-- Templates + a `notification_log` table from day one.
-- Respect per-user preferences later; start with "always send" for the
-  short list above.
+- First live SES send (owner action — deep spec §8), and a first real
+  bounce through SES → SNS → the webhook (same setup + `docs/DEPLOY.md`).
 
 ---
 
-## 11. Reports & Analytics 🔴 (10%)
+## 11. Reports & Analytics ✅ (100%)
 
-**Status:** only the Dashboard aggregates exist. **Target code location:**
-`apps/api/src/reports`.
+**Status:** done (code). Headcount, joiners/leavers, attrition, **payroll
+cost** (monthly employer cost vs planned CTC, department split) and the
+**Salary / PF / ESI / Gratuity registers** are live, each exportable as CSV
+or XLSX. Payroll-backed reports read only the latest `PROCESSED`/`DISBURSED`
+run per period and reformat stored figures (never recompute). **Code:**
+`apps/api/src/reports` (built), `apps/web/src/pages/reports`. **Deep spec:**
+`docs/modules/11_REPORTS_AND_ANALYTICS.md`. Not counted against 100%: the
+custom report builder + scheduled email (FR-RPT-005, `[SHOULD]`), PDF export
+and a generic "export anywhere" (FR-RPT-006 partial).
 
 ### Expectation
 
@@ -1014,12 +1660,12 @@ dashboards; later a custom report builder.
 
 | Feature | SRS | Status |
 |---|---|---|
-| Headcount: active vs separated, joiners/leavers, dept-wise | FR-RPT-001 | 🟡 partial (Dashboard headcount + dept breakdown) |
+| Headcount: active vs separated, joiners/leavers, dept-wise | FR-RPT-001 | ✅ as-of headcount + dept/employment-type breakdown; monthly joiners/leavers and net change |
 | Payroll cost: monthly cost, CTC vs actual, dept-wise salary | FR-RPT-002 | 🔴 (needs Payroll) |
-| Attrition: monthly rate, avg tenure, voluntary vs involuntary | FR-RPT-003 | 🔴 |
-| Statutory registers: Salary, PF, ESI, Gratuity | FR-RPT-004 | 🔴 |
+| Attrition: monthly rate, avg tenure, voluntary vs involuntary | FR-RPT-003 | ✅ monthly + period rate, annualised rate, avg leaver/active tenure, voluntary/involuntary/other/unspecified split (split is only as good as the reason captured on exit) |
+| Statutory registers: Salary, PF, ESI, Gratuity | FR-RPT-004 | 🔴 (needs Payroll) |
 | `[SHOULD]` drag-drop custom report builder + scheduled email | FR-RPT-005 | 🔴 |
-| `[SHOULD]` export PDF / XLSX / CSV everywhere | FR-RPT-006 | 🔴 |
+| `[SHOULD]` export PDF / XLSX / CSV everywhere | FR-RPT-006 | 🟡 CSV + XLSX per report for headcount, joiners/leavers and attrition; PDF and generic "export any view" not built |
 
 ### Happy path
 
@@ -1030,30 +1676,49 @@ dashboards; later a custom report builder.
 
 ---
 
-## 12. Audit Log 🟡 (30%)
+## 12. Audit Log ✅ (100%)
 
-**Status:** three append-only trails are **live and written** — the generic
-cross-module interceptor is still the missing piece.
+**Status:** three append-only trails are **live and written**, all with no
+`UPDATE`/`DELETE` grant, and every tenant-scoped write now goes through one
+shared service instead of hand-rolled call sites. **Deep spec:**
+`docs/modules/12_AUDIT_LOG.md`.
 - `public.login_audit_entries` — one row per server-observed
   `POST /api/auth/session` outcome (Identity & Access, §1).
-- `public.audit_log` — access-change events (`access.*` actions,
-  `metadata.module = "identity-access"`): role change, activate/deactivate,
-  password-reset, login created. Written by `AccessService` **and**
-  `EmployeesService` via the shared `buildAccessAuditData()` helper
-  (`apps/api/src/access/access.support.ts`); read via
-  `GET /api/access/audit?feed=access`.
+- `public.audit_log` — the generic tenant-scoped trail, `metadata.module`
+  namespaced per writer: `identity-access` (role change, activate/
+  deactivate, password-reset, login created), `employee-master` (sensitive-
+  field update, field reveal, lifecycle change, and now general field /
+  compensation edits with before/after values), `attendance`
+  (regularization approve/reject, manual mark). Written through
+  `AuditService.log()` (`apps/api/src/audit/audit.service.ts`) by
+  `AccessService`, `EmployeesService` and `AttendanceService` alike — one
+  write path, one error-handling contract (log and swallow, never fail the
+  business operation), instead of each service owning its own
+  `tenantPrisma.client.auditLog.create().catch(...)`. Read two ways:
+  the narrow `GET /api/access/audit?feed=login|access` (Identity & Access
+  only, unchanged) and the new cross-module `GET /api/audit` +
+  `GET /api/audit/modules` (`apps/api/src/audit/audit.controller.ts`),
+  `@Roles(COMPANY_ADMIN, AUDITOR)`.
 - `platform.platform_audit_log` — tenant `created` / `status_changed` /
   `plan_changed` / `subscription.renewed` / `subscription.price_adjusted` /
-  `plan.updated` (Platform Admin, §2).
+  `plan.updated` (Platform Admin, §2). Deliberately a separate
+  schema/table/service (`PlatformAdminService`), not folded into
+  `AuditService` — Platform Admin has zero grants on tenant business
+  tables by design (`CLAUDE.md`), and this trail is platform-schema, not
+  tenant-schema.
 
 Leave keeps its own `LeaveApproval` (decision/escalation, append-only) and
 `LeaveLedgerEntry` (balance-movement) trails rather than writing the generic
 `audit_log`.
 
-**Code:** `apps/api/src/access/access.support.ts`
-(`buildAccessAuditData`), `apps/api/src/auth/auth.service.ts`,
-`apps/api/src/platform-admin/*`. A shared `apps/api/src/audit` module +
-interceptor is still the target for uniform coverage.
+**Code:** `apps/api/src/audit/{audit.service.ts,audit.controller.ts,
+audit.module.ts}` (the shared write/query path, `@Global()` so every
+module injects `AuditService` directly), `apps/api/src/access/
+access.support.ts` (`buildAccessAuditData` — still the Identity & Access
+row-shape builder, now feeding `AuditService.log()` instead of writing
+directly), `apps/api/src/auth/auth.service.ts`, `apps/api/src/platform-
+admin/*`. Frontend: `apps/web/src/lib/audit/{client.ts,types.ts}` +
+the "All activity" sub-tab in `apps/web/src/pages/access/tabs/audit.tsx`.
 
 ### Expectation
 
@@ -1065,9 +1730,11 @@ action, target, before/after metadata, IP, timestamp.
 
 `login_audit_entries` and `public.audit_log` have **no `UPDATE`/`DELETE`**
 grant for `hrms_app` (`20260908074457_identity_access_audit` also revoked
-them from the pre-existing `audit_log`). `platform_audit_log` still carries
-full CRUD for `hrms_platform` — tightening it to `INSERT`/`SELECT` only is a
-tracked gap (§2).
+them from the pre-existing `audit_log`). `platform_audit_log` is now the
+same: migration `20260918100000_break_glass_and_audit_grants` revoked
+`UPDATE`/`DELETE` from `hrms_platform`, leaving `SELECT`/`INSERT` only.
+`AuditService.log()` doesn't change any of this — it's the same
+`tenantPrisma.client.auditLog.create()` call, just centralized.
 
 ### Must-cover write points
 
@@ -1077,30 +1744,96 @@ tracked gap (§2).
 | Access change: role / status / reset / login-created (→ `audit_log`) | ✅ |
 | Tenant create / status / plan / pricing (→ `platform_audit_log`) | ✅ |
 | Leave approve / reject / cancel / escalate | ✅ via `LeaveApproval` (separate from `audit_log`) |
-| Employee create / update / status / **salary** change | 🟡 login-creation only; field & compensation edits **not** logged |
-| Attendance regularisation decision; manual mark | 🔴 |
-| Payroll run state transitions; compliance file generation | 🔴 (modules not built) |
+| Employee create / update / status / **salary** change | ✅ sensitive fields, lifecycle and field/compensation edits (designation, department, reporting manager, employment type, CTC, pay grade, cost center — before/after) all audited |
+| Attendance regularisation decision; manual mark | ✅ |
+| Document upload / delete / download-URL issue / malware detection (`documents.*`) | ✅ |
+| Payroll run state transitions; compliance file generation | 🔴 (modules not built — out of scope until Payroll lands) |
 
 ### Happy path
 
 An HR Manager changes a user's role → `AccessService` writes the row via
-`buildAccessAuditData` (`action: 'access.role_changed'`, actor, target,
-before/after role) → an Auditor lists it through
-`GET /api/access/audit?feed=access`; the missing `UPDATE`/`DELETE` grant
-means no one can alter it.
+`buildAccessAuditData` + `AuditService.log()` (`action:
+'access.role_changed'`, actor, target, before/after role) → an Auditor
+lists it through `GET /api/access/audit?feed=access` **or** the
+cross-module `GET /api/audit`; the missing `UPDATE`/`DELETE` grant means
+no one can alter it. An HR Manager editing an employee's designation and
+CTC → `EmployeesService.update()` diffs the changed compensation/org
+fields against the pre-update record and calls `AuditService.log()` with
+an `employee.updated` row carrying `{field, before, after}` for each
+changed field — visible in the same `GET /api/audit?module=employee-master`
+view, or the web app's Access › Audit → "All activity" tab.
 
 ### Known gaps / TODO
 
-- **Generic audit interceptor** so every mutating service records uniformly
-  (a `@nestjs` interceptor + `apps/api/src/audit` service), instead of the
-  current hand-wired call sites.
-- **Employee field/salary edits** and **attendance decisions** into
-  `audit_log`.
-- **Aggregation / query UI** beyond the Identity & Access audit feed.
-- **Retention-purge job** (`LoginAuditEntry` 2-yr requirement, §1).
-- Tighten `platform_audit_log` grants to true append-only.
+- None against the Expectation. Payroll/Compliance write points are
+  tracked against those modules, not this one — they don't exist yet.
 
 ---
+
+## 14. Billing & Payments ✅ (100%)
+
+**Status:** code-complete (2026-10-06). Decided 2026-10-06: **Razorpay** for payment
+collection, driven by **webhooks**. Needs migration
+`20261006120000_billing_payments` applied to the shared DB, and the
+`RAZORPAY_*` secrets set (see `docs/DEPLOY.md`).
+**Target code location:** `apps/api/src/billing`
+
+### Expectation
+
+Every paid tenant's subscription state is kept in step with Razorpay
+without manual data entry, and the app enforces that state (Active →
+past-due → read-only → suspended).
+
+### Planned scope
+
+1. **Razorpay subscription per tenant** — created when a tenant is converted
+   to a paid plan. Tenant ID goes in the subscription notes so the webhook can
+   find the tenant. Razorpay plan IDs map to our sold plans and billing cycle.
+2. **Webhook receiver** — `POST /api/billing/webhooks/razorpay`, public, excluded
+   from tenant resolution. Verifies `X-Razorpay-Signature` (HMAC-SHA256 of the
+   raw body with the webhook secret) before reading the body; rejects bad
+   signatures. Records each event ID once so a redelivered event is never applied
+   twice.
+3. **Event handling**
+
+   | Razorpay event | Effect |
+   |---|---|
+   | `subscription.activated`, `subscription.charged` | Ledger row marked paid; tenant Active; renewal date advanced |
+   | `payment.failed` | Period marked overdue; grace period starts |
+   | `subscription.halted` | Tenant moves to read-only once the grace period has passed |
+   | `subscription.cancelled` | Billing stops; tenant follows the cancellation rules |
+
+4. **Payments ledger** — one row per charge: tenant, amount, period, Razorpay
+   payment ID, status, timestamps. Append-only (no `UPDATE`/`DELETE` grant),
+   same discipline as `platform_audit_log`.
+5. **Grace period and enforcement** — overdue tenants go read-only after the
+   grace period, reusing the trial read-only rule (`TenantResolutionMiddleware`).
+   Suspension stays an operator action.
+6. **Operator fallback** — offline payments (bank transfer) keep the existing
+   "Convert to paid" action in Platform Admin, audited with a payment reference.
+
+### Decisions taken (owner can change)
+
+- **Billing cycle:** monthly, priced as negotiated rate × seats. The plan is
+  created in Razorpay per tenant at subscribe time, so no pre-made Razorpay
+  plan IDs are needed.
+- **Grace period:** 7 days from the first failed charge (`GRACE_DAYS`);
+  `subscription.halted` (Razorpay's retries exhausted) is read-only immediately.
+- **Offline payment:** "Convert to paid" in Platform Admin stays as the
+  fallback for bank-transfer customers.
+
+### Code
+
+`apps/api/src/billing` — `RazorpayClient` (REST, no SDK), `BillingService`
+(subscribe, webhook, ledger read, grace enforcement), webhook + operator
+controllers. Web: `pages/platform-admin/components/billing-card.tsx`.
+
+### Known gaps / TODO
+
+None in code. Not counted against 100% (live verification): a test-mode
+payment end to end, an HTTPS webhook URL (the preview box is HTTP-only), live
+keys, and a seat-count/price change after subscribing (it does not update the
+existing Razorpay subscription — cancel and re-create the link for now).
 
 ## Cross-module dependency map
 

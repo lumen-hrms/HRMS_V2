@@ -25,7 +25,9 @@
 > this module writes into `AttendanceRecord`) · module `12_AUDIT_LOG.md`
 > (`LeaveApproval`/`LeaveLedgerEntry` are Leave's own append-only trails,
 > separate from the generic `audit_log`).
-> **Last synced to code:** 2026-09-11.
+> **Last synced to code:** 2026-10-29 — entitlement engine (§4.4), year-end
+> carry-forward, opening balances via company setup, optional holidays as
+> opt-in Restricted Holiday leave, holiday import, leave-year holiday list.
 
 ---
 
@@ -46,8 +48,8 @@ escalation; team calendar; LOP flagging and Attendance sync; comp-off
 credit; cancel with balance reversal; decision/escalation history; HR
 balance adjustments; a balance-movement ledger.
 
-**Out of scope / deferred:** notifications on apply/approve/reject/expiry
-(module 10, not built); a nightly attendance finalization job consuming
+**Out of scope / deferred:** a balance-expiry email (no expiry event
+exists — see §9); a nightly attendance finalization job consuming
 `ON_LEAVE` rows as authoritative input (module 05's own much larger gap,
 unaffected by anything here); leave encashment (no field models it — that's
 unrelated Full & Final Settlement prose that lives in Payroll's scope, not
@@ -87,8 +89,10 @@ the schema/FE contract cap V1 at 2, per `CLAUDE.md`).
    requested duration excluding `Holiday` rows and
    `TenantSettings.weeklyOffDays`.
 2. **Approval routing is tenant-configurable.** 1 or 2 levels per
-   `TenantSettings.leaveApprovalLevels`; an employee with no
-   `reportingManagerId` routes straight to L2 (HR).
+   `TenantSettings.leaveApprovalLevels`; at 1 level,
+   `TenantSettings.leaveSingleApprover` picks HR (default) or the reporting
+   manager alone. An employee with no `reportingManagerId` routes straight
+   to L2 (HR) either way.
 3. **Balance deduction happens only on final approval**, and only if the
    request is not flagged LOP — never at apply time, never speculatively.
 4. **A short balance never blocks a request** — it's still created, but
@@ -190,24 +194,130 @@ balances correctly; used by `apply()` / `getBalances()` / `teamBalances()`
 / the accrual job. A calendar-year tenant (`fyStartMonth = 1`) gets ordinary
 Jan–Dec buckets.
 
-### 4.4 Accrual
+### 4.4 Entitlement (accrual, grants, carry-forward)
 
-`LeaveAccrualProcessor` — a **daily BullMQ job** on the `leave` queue.
-`ANNUAL` types are seeded via `POST /leave/types/:id/initialize/:year`
-(one-time, not the daily job's concern); `MONTHLY`/`QUARTERLY` types
-auto-accrue via the job, **idempotent** (keyed off `LeaveLedgerEntry`, so a
-re-run doesn't double-credit) and **prorated** for a new joiner's first
-period against `Employee.dateOfJoining`.
+One engine decides what an employee is owed: the pure
+`leave-entitlement.ts` (every rule unit-tested on its own) driven by
+`LeaveEntitlementService` (`leave-entitlement.module.ts`, no queue
+dependencies). Four callers: the **daily** `LeaveAccrualProcessor` job
+(every set-up tenant), a newly created employee (single or bulk import),
+company setup's submit (inside its transaction), and the "Apply now"
+button on Leave Types (`POST /leave/types/:id/initialize/:year`, current
+leave year only).
+
+- **Effective start** = latest of the leave-year start, the employee's
+  joining date and the tenant's go-live date (`tenant_settings.go_live_date`).
+  Nothing is ever credited before it — a future joiner gets nothing until
+  they join.
+- **Whole days only** (owner decision): a part-month or part-year credit is
+  the prorated share rounded to the nearest day, half up — with 2 days a
+  month, a start on the 1st gets 2, mid-month 1, the last few days 0 (the
+  next month is still credited in full). Full periods are never rounded, so
+  an uneven monthly quota (15/year = 1.25/month) still adds up.
+- **ANNUAL** types: one grant per leave year, the quota × the share of the
+  year left after the effective start, in whole days.
+  Skipped for an employee/type that has an imported `OPENING_BALANCE`.
+- **MONTHLY / QUARTERLY** types: one credit per period at the period's
+  start, the first prorated by days if the effective start is mid-period.
+  Periods align to the leave year (April year → quarters Apr/Jul/Oct/Jan).
+  The first period's share is in whole days (above).
+- **Cap:** `ACCRUAL` credits in a leave year never exceed the annual
+  quota; carried-forward and opening-balance days sit outside the cap.
+- **Carry-forward:** in the first week of a new leave year, unused balance
+  (`accrued − used`, never negative) rolls over capped by
+  `carryForwardCap` as a `CARRY_FORWARD` entry dated the year start.
+- **Idempotent:** a period/year/type that already has the ledger entry is
+  never credited again, so a re-run, a missed day or two callers racing
+  the same day change nothing.
+- Comp-off types and separated employees are skipped.
+
+**Recalculate policy credits** (Leave › Settings, Company Admin —
+`POST /leave/policy/recalculate`, `LeavePolicyRecalcService`): for the
+current leave year, reverses every policy credit (`ACCRUAL_REVERSAL` ledger
+entries, dated in the same period so the engine nets them out), optionally
+corrects `tenant_settings.go_live_date`, and re-applies the policy — one
+transaction. The preview (`dryRun`, the default) runs the same writes and
+rolls back, so it shows exactly what Apply will do, including balances that
+go negative because leave was already taken. Never touches opening
+balances, carry-forward, HR adjustments, comp-off or event-based leave;
+repeatable (a second run changes nothing); audited as
+`leave.policy_recalculated`.
+
+The old "initialize" endpoint used to grant the full quota with no ledger
+entry (and no proration); it now goes through the same engine, so it can't
+double-credit against the job.
+
+### 4.4b Event-based leave (maternity, paternity, marriage)
+
+`LeaveType.grantMode = ON_EVENT` (`event-leave.ts`, rules unit-tested on
+their own). No yearly balance and the entitlement engine skips these types:
+each request names an **event date** and is granted that event's days.
+
+- **Allowance:** `daysPerEvent`, dropping to `reducedDaysPerEvent` from the
+  (`reducedAfterEvents` + 1)-th event (maternity: 182 → 84 from the third child).
+  Requests with the same event date share one allowance, so maternity can be a
+  pre- and a post-delivery request; twins are one paternity event.
+- **Limits:** `maxEventsPerEmployment` (marriage 1, paternity 2, maternity
+  none); an event counts once any request for it is pending or approved.
+- **Window:** start date within [event − `eventWindowDaysBefore`, event +
+  `eventWindowDaysAfter`] (maternity: up to 56 days before the expected
+  delivery date).
+- **Eligibility:** `minServiceDays` = calendar days employed in the 12
+  months before the event (maternity 80 — an approximation of the Act's
+  "days actually worked"). Gender **fails closed** for these types: a blank
+  or unrecognised `Employee.gender` is refused with "ask HR to add it".
+- **Days:** `countCalendarDays` (maternity family) or working days
+  (paternity, marriage); calendar-day types can't be half days.
+- **Proof:** `requiresDocument` blocks final approval until the request has
+  an attachment.
+- **Money:** never LOP. At final approval the days are granted
+  (`EVENT_GRANT` ledger entry) and recorded as used, so the balance row
+  nets to zero; cancel reverses both. `statutoryMaternity` + an
+  `esicNumber` flags the request "ESI-covered — ESIC usually pays the
+  benefit" for HR/payroll (payroll treatment itself is unchanged).
+- `GET /leave/event-leave/:employeeId` lists what an employee can still
+  take (other-gender types hidden); balances lists only ACCRUED types.
+
+Presets (setup's suggested policy and Leave Types → Add; all editable):
+Maternity 182 calendar days (84 from the 3rd child, 56 days before, 80
+days' service, document), Adoption and Commissioning mother 84 days,
+Miscarriage 42 days (within 7 days after) — per the Maternity Benefit Act
+1961 as amended in 2017, from the build's own reading, **not yet reviewed by
+a payroll/legal expert**; Paternity 5 working days within 90 days of the
+birth, twice; Marriage 7 working days, once, from 15 days before to 30 days
+after (owner decisions).
+
+Known limits: earlier children from a previous HRMS can't be imported, so
+the "third child" reduction only counts events recorded in Lumen; Leave
+Types → Add/Edit now also exposes who can take a type, notice days and paid.
+
+### 4.4a Holidays
+
+Optional holidays (`Holiday.isOptional`) are **working days** for every
+company-wide calculation — leave day counts, attendance status,
+finalization, payroll and F&F working days all filter `isOptional: false`.
+An employee opts in to one through a leave type with
+`isRestrictedHoliday` — `apply()` refuses it unless every working day in
+the range is an optional holiday. `GET /holidays?year=` is a **leave** year
+(an April year spans two calendar years); `?from=&to=` serves month
+calendars. `POST /holidays/import` takes `date, name, type` (CSV/XLSX,
+`holiday-import.ts`): matched on date + name (re-import updates), never
+deletes, rejects ambiguous slash dates, dates outside the current/next
+leave year, and new holidays in a payroll-processed month; warns on
+weekly-offs, two holidays on one date, and a list that stops early.
 
 ### 4.5 Approval routing + escalation
 
 ```
 apply() → working-day count vs balance → isLop set if short
         → PENDING_L1 (or straight to PENDING_L2 if
-          leaveApprovalLevels = 1, or employee has no reportingManagerId)
+          leaveApprovalLevels = 1 with leaveSingleApprover = HR,
+          or employee has no reportingManagerId)
         → schedule an L1 escalation job for +leaveEscalationDays
 
 L1 approve → PENDING_L2 → schedule a fresh L2 escalation job
+           (reporting-manager-only tenants: L1 approve is final — same
+            effects as L2 approve below, recorded as a level-1 decision)
 L1 reject  → REJECTED (terminal)
 
 L1 escalation fires (undecided) → auto-advance to PENDING_L2,
@@ -232,7 +342,8 @@ BullMQ in this repo, per `CLAUDE.md`).
   `isCompOff` `LeaveType` — idempotent per employee/day, opt-in per tenant
   (no-op if no type has `isCompOff = true`).
 - **`ON_LEAVE` sync** (Attendance called from Leave): approving a request at
-  L2 (or the sole level, if `leaveApprovalLevels = 1`) writes
+  L2 (or the sole level, if `leaveApprovalLevels = 1`, whether HR or the
+  reporting manager) writes
   `AttendanceRecord.status = 'ON_LEAVE'` for the request's working days —
   via **direct Prisma access from `LeaveService`**, deliberately **not** an
   `AttendanceService` import, to avoid a circular module dependency.
@@ -250,8 +361,9 @@ BullMQ in this repo, per `CLAUDE.md`).
 | `GET` | `/api/leave/types` | any (tenant) |
 | `POST` | `/api/leave/types` | Company Admin, HR Manager |
 | `PATCH` | `/api/leave/types/:id` | Company Admin, HR Manager |
-| `POST` | `/api/leave/types/:id/initialize/:year` | Company Admin, HR Manager |
-| `GET` | `/api/leave/holidays?year=` | any |
+| `POST` | `/api/leave/types/:id/initialize/:year` ("apply policy now", current leave year only) | Company Admin, HR Manager |
+| `GET` | `/api/leave/holidays?year=` (leave year) \| `?from=&to=` | any |
+| `POST` | `/api/leave/holidays/import?dryRun=` | Company Admin, HR Manager |
 | `POST` | `/api/leave/holidays` | Company Admin, HR Manager |
 | `PATCH` / `DELETE` | `/api/leave/holidays/:id` | Company Admin, HR Manager |
 | `GET` | `/api/leave/settings` | any |
@@ -259,7 +371,9 @@ BullMQ in this repo, per `CLAUDE.md`).
 | `GET` | `/api/leave/team/balances?year=` | any (scoped: reports for Line Manager, all for HR/Admin) |
 | `POST` | `/api/leave/balances/adjust` | Company Admin, HR Manager |
 | `GET` | `/api/leave/balances/ledger?employeeId=&leaveTypeCode=` | Company Admin, HR Manager, Auditor |
-| `GET` | `/api/leave/balances/:employeeId?year=` | any (row-scoped); `year` defaults to the tenant's current leave year |
+| `GET` | `/api/leave/balances/:employeeId?year=` | any (row-scoped); `year` defaults to the tenant's current leave year; accrued types only |
+| `GET` | `/api/leave/event-leave/:employeeId` | any (row-scoped) — event-based types still available |
+| `POST` | `/api/leave/policy/recalculate` `{ goLiveDate?, dryRun? }` | Company Admin — preview by default |
 | `POST` | `/api/leave/requests` | any (tenant) |
 | `GET` | `/api/leave/requests?status=&leaveTypeId=&department=&from=&to=` | Company Admin, HR Manager, Auditor |
 | `GET` | `/api/leave/requests/employee/:employeeId` | any (row-scoped) |
@@ -306,10 +420,8 @@ ordering if the controller is ever refactored.
 1. HR Manager → **Leave Types** → **New type** → name, code, quota,
    carry-forward cap, accrual frequency, gender restriction, notice period,
    comp-off flag.
-2. `POST /leave/types` → for `ANNUAL` types, HR separately runs
-   `POST /types/:id/initialize/:year` to seed balances for the current year;
-   `MONTHLY`/`QUARTERLY` types pick up automatically in the next accrual
-   job run.
+2. `POST /leave/types` → the nightly job credits every employee what the
+   new type's policy owes (§4.4); **Apply now** does the same immediately.
 
 ### 5.3 Comp-off credit (cross-module, driven from Attendance)
 
@@ -363,6 +475,11 @@ ordering if the controller is ever refactored.
   the amount originally deducted, symmetric with §5.1 step 5.
 - **RULE-5** — escalation at L2 never auto-approves — a human must decide;
   only L1→L2 auto-advances.
+- **RULE-7** — entitlement is ledger-idempotent and never credits before
+  an employee's effective start (§4.4); annual accrual is capped at the
+  quota, carry-forward/opening balances are not.
+- **RULE-8** — Restricted Holiday leave is only valid on optional
+  holidays; optional holidays are working days for everything else.
 - **RULE-6** — `TenantSettings.leaveApprovalLevels` changes apply to
   **new** requests only; in-flight requests keep the routing decided at
   apply time (confirm this is actually true in `apply()` — flagged in §12
@@ -419,8 +536,12 @@ What follows is scope notes, not gaps:
 - `genderRestriction` fails open on non-normalized `Employee.gender` (§6
   RULE-2) — a data-quality gap, not a bug, and deliberately not
   fail-closed.
-- No notifications on apply/approve/reject/expiry — module 10 (Notifications)
-  isn't built yet; this module's job stops at writing state + the ledger.
+- Emails on apply / approve / reject / cancel / escalation are sent via
+  module 10 (Notifications); there's no email when the year-end
+  carry-forward runs (it's silent, visible in the ledger).
+- Restricted Holiday and opening-balance support landed with company setup
+  (module 13); opening balances are only importable during setup — later
+  corrections go through Balance Adjustments.
 
 ---
 
@@ -443,8 +564,9 @@ queue — first use of BullMQ in this repo).
 - Module 07 Payroll (future) — approved-leave days feed LOP computation
   alongside Attendance's own LOP contract (not built yet; the two data
   sources need reconciling when Payroll starts).
-- Module 10 Notifications (future) — apply/approve/reject/expiry triggers,
-  not built yet.
+- Module 10 Notifications — `LeaveService` / `LeaveEscalationProcessor`
+  call `NotificationDispatcher.notify()` on apply, L1/L2 approve, reject,
+  cancel and both escalation steps (dedupe keys `leave:<id>:…`).
 - Module 11 Reports — leave-derived registers (not built).
 - Module 12 Audit — Leave keeps its **own** append-only trails
   (`LeaveApproval`, `LeaveLedgerEntry`) rather than writing the generic
@@ -459,7 +581,9 @@ queue — first use of BullMQ in this repo).
 - [ ] A request from an employee with no `reportingManagerId` routes
       straight to `PENDING_L2`.
 - [ ] `TenantSettings.leaveApprovalLevels = 1` routes every new request
-      straight to `PENDING_L2` (single-level approval).
+      straight to `PENDING_L2` (single-level approval) — or, with
+      `leaveSingleApprover = MANAGER`, to `PENDING_L1`, where the manager's
+      approval is final.
 - [ ] Balance is **not** deducted at apply time; **is** deducted exactly
       once, at final (L2, or sole-level) approval, only if `!isLop`.
 - [ ] An undecided L1 auto-escalates to `PENDING_L2` after
@@ -481,6 +605,34 @@ queue — first use of BullMQ in this repo).
 - [ ] A Line Manager cannot approve a request currently at `PENDING_L2`.
 - [ ] `GET /balances/ledger` route resolves correctly (not shadowed by the
       dynamic `/balances/:employeeId` route).
+- [x] Entitlement: full-year grant, go-live and joining-date proration,
+      future joiner, opening balance skips the ANNUAL grant, monthly
+      back-credit, mid-month first period, leave-year-aligned quarters,
+      quota cap, idempotent re-run, carry-forward capped and once only
+      (`leave-entitlement.spec.ts`, `leave-entitlement.service.spec.ts`).
+- [x] Daily job skips tenants still in company setup and keeps going when
+      one tenant fails (`leave-accrual.processor.spec.ts`).
+- [x] Optional holidays don't reduce leave day counts; Restricted Holiday
+      leave is allowed on an optional holiday and refused on a working day;
+      holidays list by leave year; "apply now" refuses other years;
+      holiday import previews without writing and commits valid rows only
+      (`leave.service.spec.ts`, `holiday-import.spec.ts`).
+- [x] Event-based leave: maternity window/182→84/split requests/service/
+      gender fail-closed/no half day; adoption, commissioning mother,
+      miscarriage; paternity 5 days within 90 days, 2 events, twins one
+      event; marriage 7 working days once; config validation
+      (`event-leave.spec.ts`); apply stores the event date and never LOPs,
+      calendar-day counting, a missing document blocks approval, approval
+      grants then uses, cancel reverses the grant, allowances hide
+      other-gender types, balances exclude event types
+      (`leave.service.spec.ts`); setup presets + opening balances refused
+      for event types (`setup-validation.spec.ts`, `opening-balances.spec.ts`).
+- [x] Policy recalculation: re-applies under the whole-day rule, corrects
+      go-live, preview changes nothing and isn't audited, repeatable, flags
+      negative balances, never touches opening balances, audits an apply,
+      rejects a bad go-live (`leave-policy-recalc.service.spec.ts`).
+- [x] `GET /balances/me` and `/requests/employee/me` answer 400, not 500
+      (`ParseUUIDPipe`; e2e case in `tenant-isolation.e2e-spec.ts`).
 
 ---
 

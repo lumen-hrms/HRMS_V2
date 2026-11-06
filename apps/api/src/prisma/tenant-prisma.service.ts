@@ -1,6 +1,7 @@
 import { ForbiddenException, Inject, Injectable, Scope } from '@nestjs/common';
 import { REQUEST } from '@nestjs/core';
 import type { Request } from 'express';
+import type { Prisma } from '@prisma/client';
 import { TenantPrismaClientProvider } from './tenant-prisma-client.provider';
 import { withTenantContext } from './with-tenant-context';
 
@@ -45,5 +46,18 @@ export class TenantPrismaService {
    */
   get client() {
     return withTenantContext(this.raw, this.tenantId);
+  }
+
+  /**
+   * Runs several writes as ONE atomic batch on a single connection, with the
+   * RLS session variable set first. `.client` wraps every operation in its
+   * own transaction, so use this when multiple statements must all succeed
+   * or none (e.g. replace-a-set: delete + createMany).
+   */
+  transaction(build: (tx: TenantPrismaClientProvider) => Prisma.PrismaPromise<unknown>[]) {
+    return this.raw.$transaction([
+      this.raw.$executeRaw`SELECT set_config('app.current_tenant_id', ${this.tenantId}, TRUE)`,
+      ...build(this.raw),
+    ]);
   }
 }

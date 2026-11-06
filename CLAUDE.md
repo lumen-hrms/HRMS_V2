@@ -142,14 +142,14 @@ only" (Employee) — those can't be expressed as a static role check alone.
   not in this app.
 - Audit log (`audit_log` table) is append-only from day one — the app's
   DB role has no `UPDATE`/`DELETE` grant on it.
-- PII fields (PAN, bank account) get application-layer encryption via a
-  KMS data key on top of RDS/S3 encryption-at-rest — a raw DB dump alone
+- PII fields (PAN, bank account) get application-layer encryption via an
+  AES-256-GCM key on top of RDS/S3 encryption-at-rest — a raw DB dump alone
   should not be enough to read them. **Built** (module 03):
   `FieldEncryptionService` (`apps/api/src/crypto`) does AES-256-GCM with a
   key from `FIELD_ENCRYPTION_KEY`; only ciphertext + a masked form are
-  stored, reveal is permissioned + logged. The key today is a static team-
-  vault secret, not yet a real AWS KMS-wrapped data key — that swap lands
-  with the production AWS migration and only touches that one file.
+  stored, reveal is permissioned + logged. The key is a static team-
+  vault secret (`FIELD_ENCRYPTION_KEY`); AWS KMS is deliberately not used.
+  Ciphertext is versioned (`v1:`), so rotation can be added without KMS.
 - No blanket "PII must stay in India" legal claim — DPDP Act 2023 doesn't
   currently mandate that; hosting in Mumbai is a trust/latency choice, not
   a compliance requirement. Don't market it as the latter.
@@ -173,7 +173,10 @@ RBAC + tenant isolation (RLS), the Identity & Access *management* surface
 table and append-only login-audit writes on every server-observed
 `POST /api/auth/session` outcome; e2e-tested in `test/access.e2e-spec.ts`;
 `VITE_ACCESS_MOCK` defaults **off**), Platform Admin console (tenant
-onboarding/enable-disable/metadata only), Employee Master, role-aware
+onboarding/enable-disable/metadata, plus tenant detail, audited headcount
+refresh, scheduled renewal, and break-glass request tracking), Employee
+Master (interactive org chart, a real photo-upload widget, and Leave's
+recursive Line-Manager scoping mirror all landed 2026-09-18), role-aware
 Dashboard — backend and frontend both. See `docs/BACKEND_ARCHITECTURE.md`
 for the full traced reference and its §8 for known gaps within these
 modules (the generic `audit_log` is now written to for access-change
@@ -182,11 +185,19 @@ events but has no aggregation/UI yet).
 **Leave Management — done, 100% of its originally-scoped gaps closed,
 running live:** the line-manager leave-visibility placeholder is a real
 `reportingManagerId` check, holiday-aware working-day counts, request
-attachments, a tenant-configurable 1-or-2-level approval chain with
+attachments, a tenant-configurable 1-or-2-level approval chain (one level = HR or the reporting manager alone) with
 escalation timers (BullMQ `leave` queue / Redis — first use of BullMQ in
-this repo), a monthly/quarterly accrual job (proration-aware for mid-year
-joiners), and every endpoint (team balances, balance adjustments, ledger,
-settings). Every cell of the frontend's role×tab matrix is wired to
+this repo), one entitlement engine (`leave/leave-entitlement.ts` +
+`LeaveEntitlementService` — prorated annual grants, monthly/quarterly
+credits, clipped to joining date and the tenant's go-live date, opening
+balances, year-end carry-forward; ledger-idempotent; driven by the daily
+job, new hires, company setup and "Apply now"), optional holidays as
+working days taken via a Restricted Holiday leave type
+(`LeaveType.isRestrictedHoliday`), holiday CSV/XLSX import, event-based
+leave (`LeaveType.grantMode = ON_EVENT` — maternity incl. the statutory edge
+cases, paternity, marriage: per-event allowance, limits, start window,
+service check, proof, never LOP), and every
+endpoint (team balances, balance adjustments, ledger, settings). Every cell of the frontend's role×tab matrix is wired to
 `apps/web/src/lib/leave`, whose `client.ts` defaults `USE_MOCK` to **off**
 (`VITE_LEAVE_MOCK === 'true'` forces the fixture store — same inverted-default
 pattern as `access/client.ts`; `LeaveService` maps every response into the
@@ -206,15 +217,167 @@ Attendance's own much bigger "nightly finalization" gap (§5 of
 `docs/MODULE_SPECS.md`) stays exactly as deferred as it was. See
 `docs/MODULE_SPECS.md` §4 and `docs/LEAVE_UI_SPECS.md`.
 
-**Identity & Access — remaining gaps** (`docs/modules/01_IDENTITY_AND_ACCESS.md`
-§9): `BAD_CREDENTIALS` and `TENANT_SUSPENDED` sign-in failures aren't
-server-observable so aren't in the login trail (suspend/resume is logged
-once in `platform_audit_log` instead); no 2-year retention purge job yet.
+**Identity & Access — done, 100%.** `BAD_CREDENTIALS` and `TENANT_SUSPENDED`
+sign-in failures staying out of the server-side login trail is an
+owner-approved scope decision (`docs/modules/01_IDENTITY_AND_ACCESS.md` §9),
+not an open gap — suspend/resume is logged once in `platform_audit_log`
+instead. A daily BullMQ job (`LoginAuditRetentionProcessor`) purges
+`login_audit_entries` past the 2-year retention window, per tenant.
 
-**Not started:** Payroll, Attendance, Compliance exports are the next
-slice — see the blueprint's 12-week plan for sequencing (payroll is the
+**Platform Admin — done, 99%.** Tenant detail (`GET tenants/:id`), an
+audited headcount-refresh route, and a scheduled renewal job (driving
+`renewSubscription()` off `Subscription.renewsAt` instead of manual-only)
+are all live; `platform_audit_log` is now true append-only at the DB grant
+level. Break-glass has a full audited request/track/expire/revoke lifecycle
+(`platform.break_glass_grants`) but doesn't yet grant an operator actual
+elevated read access to a tenant's data during the grant window — that
+escalation mechanism (a temporary, scoped credential or RLS bypass, itself
+logged per-query) is a deliberate follow-on, the one thing keeping this
+module below 100%. The landing page's public "Contact us" form
+(`POST /api/contact`, unauthenticated, no tenant, rate-limited) now writes
+an append-only lead to `platform.contact_submissions` and best-effort
+emails whichever addresses an operator has set on the new **Settings**
+screen (`platform.platform_settings`); a **Leads** screen lists every
+submission regardless of whether the notify email sent.
+
+**Tenant Configuration — done, 100%.** Layer 1 (plan entitlements) is now
+enforced, not just stored: `EntitlementGuard` + `@RequiresModule`/
+`@RequiresFeature` block a route when the tenant's plan doesn't include it,
+wired onto Leave and Attendance. Layer 2 (tenant business config) has both
+its engine wiring (`attendance.service.ts` reads the tenant's `Shift` +
+`tenant_settings` instead of hardcoded constants) and its UI (a Settings
+tab for shifts + attendance/general config). **Company setup is
+mandatory** (`apps/api/src/setup`, `apps/web/src/pages/setup`, replaced the
+old skippable wizard 2026-10-29): a full-screen 10-step first run —
+company profile + go-live date, departments, the admin's own employee
+profile, work week & shifts, attendance rules, holidays (import), leave
+policy, employee file, opening leave balances, review — saved as an
+encrypted draft and submitted strictly in one transaction. Until then
+`TenantGuard` answers 403 `SETUP_INCOMPLETE` on every business route for
+every role (exempt: `/api/setup/*`, `/api/auth/*`, `/api/access/me`), and
+the nightly accrual/finalization jobs skip the tenant. Payroll isn't a
+setup step. See `docs/TENANT_CONFIGURATION.md` "Company setup".
+
+**Documents — done, 100%.** A shared `apps/api/src/documents` module owns
+every user upload — employee profile documents, leave attachments (moved
+out of `leave_requests.attachment_*`), regularization evidence: MIME
+allow-list + magic-byte check + 10 MB cap before storage, a ClamAV scan
+(BullMQ `documents` queue → clamd; docker-compose runs it) that must pass
+before any presigned URL is issued (fail closed, self-healing sweep;
+`DOCUMENT_SCANNING_ENABLED=false` turns scanning off for a box with no clamd — files then
+download as "Not scanned", and re-enabling it scans the backlog),
+visibility = the subject employee's `scopeFor` scope, and audited *soft*
+delete (`hrms_app` has no `DELETE` on `documents`). Retention purge is an
+owner-approved V1 scope cut. See `docs/modules/09_DOCUMENTS.md`.
+
+**Notifications — 95%.** `apps/api/src/notifications`: a singleton
+`NotificationDispatcher.notify()` (explicit `tenantId`, never throws into
+the caller) writes deduped `notification_log` rows and enqueues a BullMQ
+`notifications` job; the worker sends via **AWS SES v2** (`SES_FROM_ADDRESS`
++ SDK default-chain credentials), retries to `FAILED`, and a sweep heals
+stuck rows. Wired into Leave, Attendance regularization and Documents; an
+Email log screen lets HR retry failures. Auth emails (tenant invite, admin
+reset, self-service "Forgot password?" via public `POST /auth/password-reset`)
+also go out through SES via `AuthEmailService` — Firebase still generates the
+reset link and hosts the reset page; only the sender changed. SES bounces/complaints
+come back via SNS to a signature-verified public webhook (`POST
+/api/notifications/ses-events`): hard bounces + complaints land in
+`platform.email_suppressions`, `SesEmailSender` refuses those addresses, the
+bounced `notification_log` row goes FAILED, and Platform Admin › Settings
+can lift one (audited). The last 5% is a first real SES
+delivery (owner's SES setup). See `docs/modules/10_NOTIFICATIONS.md`.
+
+**Attendance — done, 100%.** Self-service clock-in/out/breaks/calendar/
+stats, shift-aware late/grace/target-hours/overtime logic, a nightly
+finalization job (holiday → weekly-off → punches → genuine absence,
+BullMQ; never marks a day before go-live), full regularization approval (window/cap enforcement, approve/
+reject/bulk-approve, audited, auto-resolved at the tenant's payroll
+cut-off), and manager/HR team views (roster + manual marking) are all live
+and plan-gated. GPS/biometric/selfie-QR capture and `POST
+/attendance/ingest` stay explicitly deferred (see above), not counted
+against 100%; converting overtime hours to statutory per-state pay is
+Payroll's job, and the `OvertimeClaim` manager-then-HR approval workflow
+(employee claims the month's tracked hours, CASH/COMP_OFF payout) now
+lives here too, built as part of Payroll's Phase 4 — still counted under
+Payroll's progress, not Attendance's, since it was explicitly out of
+Attendance's own V1 scope. **Payroll is code-complete (100%; live/human sign-off in `docs/PAYROLL_SIGNOFF.md`)** (Phase 1 — salary
+structures, statutory settings, Professional Tax slabs,
+`Employee.workState` — Phase 2 — the pure `PayrollCalculator`
+(EPF/ESI/PT/LOP/proration), `Employee.weeklyOffDaysOverride` — Phase 3 —
+the `PayrollRun` lifecycle (create/approve/process/disburse,
+INV-1/INV-2/INV-4 enforced) — Phase 4 — overtime claims + the
+calculator's overtime earning line — Phase 5 — DOB-locked payslip
+PDFs generated on `process()`, employee/HR self-service download, and an
+on-demand dummy-CSV bank file behind a `BankFileGenerator` interface —
+Phase 6 — per-FY `TaxSlab`/`TaxRegimeConfig`, a per-employee
+`TdsRegimeChoice` (default NEW, audited HR override), and an
+annual-projection TDS figure now folded into `tdsDeducted`/`netPay` —
+Phase 7 — `SalaryStructureService.revise()` generating a per-period
+`ArrearsLineItem` on a backdated revision (old-vs-new structure delta),
+folded into the next `createDraft`; the Phase 3 re-process guardrails
+already covered this phase's own requirements — and Phase 8 —
+`FullAndFinalSettlement` (unpaid salary, leave encashment via Leave's
+new `getEncashableBalance()` contract, gratuity, advance recovery) for a
+`SEPARATED` employee, one-approval lifecycle, never folded into a
+regular run — are all built; see
+`docs/modules/07_PAYROLL_ENGINE.md` §9). **Phase 9 (hardening) is
+built:** the full frontend (`apps/web/src/pages/payroll`), a static RLS/grant
+audit of all migrations, an adversarial cross-tenant e2e suite
+(`apps/api/test/payroll-isolation.e2e-spec.ts` — its own first run caught a
+real cross-tenant bug in `TdsService.setEmployeeRegime`/`getEmployeeRegime`,
+since fixed), calculator/PDF performance guards, concurrent payslip
+generation in `process()`, the `SalaryStructureService.update()`
+auto-upgrade-to-revision fix, and a best-effort public-source statutory
+review (§12 decision 29 — raised the EPF wage ceiling default 15,000 →
+25,000 per the Sept 2026 notification, updated the NEW tax regime's seeded
+defaults and marginal-relief handling to the Budget 2025 figures, and added
+the ₹20L gratuity cap and the Act's >6-month rounding rule). Still needing a
+human or live stack (see `docs/PAYROLL_SIGNOFF.md`): the statutory-rate
+review by an actual payroll/tax expert (a web search is not that), running
+the e2e suite with working Firebase credentials, a real-stack 500/5,000-
+employee run, and a browser pass. Compliance exports remain **not started** — see
+the blueprint's 12-week plan for sequencing (payroll is the
 highest-effort, highest-risk module; protect its time budget over breadth
 elsewhere).
+
+**Audit Log — done, 100%.** A shared `apps/api/src/audit` module
+(`AuditService`) is now the one write path every tenant-scoped module goes
+through for `public.audit_log` — Identity & Access, Employee Master and
+Attendance all route through it instead of hand-rolling their own
+try/catch write, closing the "generic interceptor" gap. Employee field and
+compensation edits (`PATCH /api/employees/:id` — designation, department,
+reporting manager, employment type, CTC, pay grade, cost center) are now
+audited with before/after values, closing the last uncovered write point
+from the must-cover list (attendance regularization decisions and manual
+marking were already covered). `GET /api/audit` (+ `/audit/modules`) is
+the new cross-module aggregation read side — a superset of the existing
+`GET /api/access/audit?feed=login|access` feeds — surfaced in the web app
+as a third "All activity" sub-tab on Access › Audit. Platform Admin's
+`platform_audit_log` stays a separate schema/table by design (module 02)
+and isn't part of this aggregation. See `docs/modules/12_AUDIT_LOG.md`.
+
+**Reports & Analytics — done, 100% (code).** `apps/api/src/reports` serves
+headcount, joiners/leavers, attrition, payroll cost (monthly employer cost vs
+planned CTC) and the Salary / PF / ESI / Gratuity registers to COMPANY_ADMIN
+and HR_MANAGER only, each exportable as CSV/XLSX; the web app has a `/reports`
+screen. Payroll-backed reports read only the latest PROCESSED/DISBURSED run
+per period and reformat Payroll's stored figures — no recomputation. The
+custom report builder and PDF export stay `[SHOULD]`/later. See
+`docs/modules/11_REPORTS_AND_ANALYTICS.md`.
+
+**Billing & Payments — done, 100% (code).** `apps/api/src/billing`: a monthly
+Razorpay subscription per paid tenant (negotiated rate × seats, created from
+the console, which returns the customer's payment link) and a public,
+signature-verified, idempotent webhook (`POST /api/billing/webhooks/razorpay`,
+raw-body `X-Razorpay-Signature` check). Charges land in the append-only
+`platform.payments` ledger; a successful charge activates the tenant (never
+overriding `SUSPENDED`), a failed one starts a 7-day grace window, and
+halted/cancelled/grace-expired moves it to `READ_ONLY` — the same status a
+lapsed trial gets (sign-in and reads work, every write is refused in
+`TenantResolutionMiddleware`). Operator "Convert to paid" remains the offline
+fallback. Needs migration `20261006120000_billing_payments` and the
+`RAZORPAY_*` secrets; live verification needs an HTTPS webhook URL. See
+`docs/MODULE_SPECS.md` §14.
 
 ## Keeping module status in sync — MANDATORY, no reminder needed
 
@@ -319,6 +482,11 @@ docs/
   owned centrally: the migration owner runs `./scripts/dev.sh migrate`;
   everyone else pulls + `prisma generate`. The three-role RLS isolation
   model is unchanged (created there by `20260101000002_roles_and_rls`).
+  Background workers (BullMQ: emails, document scans, scheduled jobs) are
+  **off on laptops** (`NODE_ENV=development`, override with
+  `WORKERS_ENABLED`) and run only on the preview box — they scan the shared
+  DB, so a half-configured laptop would otherwise mark the preview's rows
+  failed (`apps/api/src/common/background-workers.ts`).
   Local Docker Postgres is now used **only** by the e2e suite (it
   creates/drops tenants — never point it at the shared DB). Connection
   strings live in the team vault, not git. This is a dev-infra choice; prod

@@ -87,7 +87,7 @@ export function ChangeRoleDialog({
           onClose={() => onOpenChange(false)}
         />
         <form onSubmit={submit} className="flex flex-col gap-4">
-          <div className="flex items-center justify-between rounded-md bg-muted px-3 py-2 text-sm">
+          <div className="flex items-center justify-between rounded-xl bg-muted px-3 py-2 text-sm">
             <span className="text-muted-foreground">Current role</span>
             <RoleBadge role={user.role} />
           </div>
@@ -121,7 +121,7 @@ export function ChangeRoleDialog({
             />
           </Field>
 
-          <div className="flex items-start gap-2 rounded-md bg-accent px-3 py-2 text-xs text-muted-foreground">
+          <div className="flex items-start gap-2 rounded-xl bg-accent px-3 py-2 text-xs text-muted-foreground">
             <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>
               Takes effect on {user.email.split('@')[0]}’s next sign-in, or within ~1 hour when their

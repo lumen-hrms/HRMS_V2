@@ -5,7 +5,9 @@ import { ToastProvider } from '@/components/ui/toast';
 import { ProtectedRoute } from '@/components/protected-route';
 import { AppLayout } from '@/components/app-layout';
 import { LoginPage } from '@/pages/login';
+import { ResetPasswordPage } from '@/pages/reset-password';
 import { DashboardPage } from '@/pages/dashboard';
+import { DashboardDetailPage } from '@/pages/dashboard-detail';
 import { EmployeeListPage } from '@/pages/employees/list';
 import { EmployeeDetailPage } from '@/pages/employees/detail';
 import { EmployeeCreatePage } from '@/pages/employees/create';
@@ -13,10 +15,20 @@ import { EmployeeBulkImportPage } from '@/pages/employees/import';
 import { OrgChartPage } from '@/pages/org-chart';
 import { DepartmentsPage } from '@/pages/departments';
 import { LeavePage } from '@/pages/leave';
+import { HolidayImportPage } from '@/pages/leave/holiday-import';
 import { AttendancePage } from '@/pages/attendance';
+import { PayrollPage } from '@/pages/payroll';
+import { StructureEditorPage } from '@/pages/payroll/structure-editor';
+import { SalaryImportPage } from '@/pages/payroll/salary-import';
+import { FullAndFinalPage } from '@/pages/payroll/fnf';
 import { AccessPage } from '@/pages/access';
 import { AccountPage } from '@/pages/access/account';
+import { NotificationsPage } from '@/pages/notifications';
+import { ReportsPage } from '@/pages/reports';
 import { PlatformAdminConsole } from '@/pages/platform-admin/console';
+import { SetupPage } from '@/pages/setup';
+import { SetupGate, SetupStatusProvider } from '@/components/setup-gate';
+import { CompanySettingsPage } from '@/pages/company-settings';
 
 export default function App() {
   return (
@@ -29,16 +41,29 @@ export default function App() {
             path="/*"
             element={
               <AuthProvider>
+                <SetupStatusProvider>
                 <Routes>
                   <Route path="login" element={<LoginPage />} />
+                  <Route path="auth/action" element={<ResetPasswordPage />} />
+                  <Route
+                    path="setup"
+                    element={
+                      <ProtectedRoute>
+                        <SetupPage />
+                      </ProtectedRoute>
+                    }
+                  />
                   <Route
                     element={
                       <ProtectedRoute>
-                        <AppLayout />
+                        <SetupGate>
+                          <AppLayout />
+                        </SetupGate>
                       </ProtectedRoute>
                     }
                   >
                     <Route index element={<DashboardPage />} />
+                    <Route path="dashboard/:metric" element={<DashboardDetailPage />} />
                     <Route path="employees" element={<EmployeeListPage />} />
                     <Route path="employees/new" element={<EmployeeCreatePage />} />
                     <Route path="employees/import" element={<EmployeeBulkImportPage />} />
@@ -46,11 +71,20 @@ export default function App() {
                     <Route path="org-chart" element={<OrgChartPage />} />
                     <Route path="departments" element={<DepartmentsPage />} />
                     <Route path="leave" element={<LeavePage />} />
+                    <Route path="leave/holidays/import" element={<HolidayImportPage />} />
                     <Route path="attendance" element={<AttendancePage />} />
+                    <Route path="payroll" element={<PayrollPage />} />
+                    <Route path="payroll/import" element={<SalaryImportPage />} />
+                    <Route path="payroll/structures/:employeeId" element={<StructureEditorPage />} />
+                    <Route path="payroll/fnf/:employeeId" element={<FullAndFinalPage />} />
                     <Route path="access" element={<AccessPage />} />
+                    <Route path="notifications" element={<NotificationsPage />} />
+                    <Route path="reports" element={<ReportsPage />} />
                     <Route path="account" element={<AccountPage />} />
+                    <Route path="company" element={<CompanySettingsPage />} />
                   </Route>
                 </Routes>
+                </SetupStatusProvider>
               </AuthProvider>
             }
           />

@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import * as admin from 'firebase-admin';
+import { invalidateOnIdentityWrites } from '../../src/common/tenancy/auth-context-cache';
 
 /**
  * Connects as the migration/superuser role (DATABASE_URL) which owns every
@@ -10,6 +11,9 @@ import * as admin from 'firebase-admin';
  * or a raw connection opened with those same low-privilege roles.
  */
 export const superuserPrisma = new PrismaClient();
+// Fixture writes (deactivating a user, re-opening setup, ...) must clear the
+// app's in-process auth cache just as the app's own writes do.
+superuserPrisma.$use(invalidateOnIdentityWrites());
 
 export const TEST_PASSWORD = 'Test-Passw0rd!1';
 
@@ -59,7 +63,15 @@ async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
       const msg = `${err?.code ?? ''} ${err?.message ?? ''}`;
       const throttled =
         err?.code === 'auth/too-many-requests' ||
-        /TOO_MANY_ATTEMPTS|QUOTA_EXCEEDED|RESOURCE_EXHAUSTED|rate|429/i.test(msg);
+        // TOO_MANY_ATTEMPTS/QUOTA_EXCEEDED/RESOURCE_EXHAUSTED are distinctive
+        // enough to match loosely. `rate`/`429` are not — a bare `/rate/i`
+        // used to false-positive on "geneRATE a new key file" in Firebase's
+        // invalid-credential error text, which made a non-recoverable auth
+        // failure look throttled and burn ~15s of retries before failing
+        // anyway, so those two stay word-bounded.
+        /TOO_MANY_ATTEMPTS|QUOTA_EXCEEDED|RESOURCE_EXHAUSTED|\brate.?limit(ed)?\b|\b429\b/i.test(
+          msg,
+        );
       if (!throttled) throw err;
       await sleep(500 * 2 ** attempt);
     }
@@ -152,12 +164,26 @@ export async function createTenantFixture(label: string): Promise<TenantFixture>
       name: `E2E ${label}`,
       subdomain,
       status: 'ACTIVE',
-      subscription: { create: { plan: 'TRIAL', seats: 10 } },
+      // `enabledModules` must cover every module the e2e suites exercise
+      // (Leave, Attendance) — otherwise `EntitlementGuard` 403s before the
+      // tenant-isolation checks these fixtures exist for ever run.
+      subscription: {
+        create: {
+          plan: 'TRIAL',
+          seats: 10,
+          enabledModules: ['CORE_HR', 'LEAVE', 'ATTENDANCE'],
+        },
+      },
     },
   });
 
   const dept = await superuserPrisma.department.create({
     data: { tenantId: tenant.id, name: 'Engineering' },
+  });
+  // Fixture tenants skip company setup: every suite except the setup-gate
+  // one wants a working tenant, not the SETUP_INCOMPLETE gate.
+  await superuserPrisma.tenantSetup.create({
+    data: { tenantId: tenant.id, completedAt: new Date() },
   });
 
   const adminEmail = `admin+${subdomain}@example.test`;
@@ -276,6 +302,9 @@ export async function cleanupTenantFixture(tenantId: string) {
   await superuserPrisma.holiday.deleteMany({ where: { tenantId } });
   await superuserPrisma.attendanceSettings.deleteMany({ where: { tenantId } });
   await superuserPrisma.tenantSettings.deleteMany({ where: { tenantId } });
+  await superuserPrisma.tenantSetup.deleteMany({ where: { tenantId } });
+  await superuserPrisma.companyProfile.deleteMany({ where: { tenantId } });
   await superuserPrisma.auditLog.deleteMany({ where: { tenantId } });
+  await superuserPrisma.notificationLog.deleteMany({ where: { tenantId } });
   await superuserPrisma.tenant.delete({ where: { id: tenantId } }).catch(() => undefined);
 }

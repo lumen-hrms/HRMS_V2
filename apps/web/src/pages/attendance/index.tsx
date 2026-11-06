@@ -5,9 +5,17 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Select } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader } from '@/components/ui/dialog';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { useToast } from '@/components/ui/toast';
+import { UPLOAD_ACCEPT, uploadProblem } from '@/lib/documents';
 import { useAuth } from '@/context/auth-context';
 import { cn } from '@/lib/utils';
+import { EarlyClockOutDialog } from '@/components/attendance/early-clock-out-dialog';
+import { AttendanceSettingsTab } from './settings-tab';
+import { AttendanceTeamTab } from './team-tab';
+import { AttendanceApprovalsTab } from './approvals-tab';
 
 interface AttendanceBreakRow {
   id: string;
@@ -28,12 +36,15 @@ interface TodayResponse {
   effectiveMs: number;
   isOnBreak: boolean;
   targetHours: number;
+  overtimeMs: number;
 }
 interface StatsResponse {
   daysPresent: number;
   workingDays: number;
   punctualityRate: number;
   remainingLeave: number;
+  leaveBreakdown: { code: string; name: string; available: number }[];
+  overtimeHours: number;
 }
 const REASON_LABELS: Record<string, string> = {
   MISSED_PUNCH_IN: 'Missed Punch In',
@@ -70,7 +81,45 @@ function fmtDuration(ms: number) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+type Tab = 'my' | 'team' | 'approvals' | 'settings';
+
 export function AttendancePage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'COMPANY_ADMIN' || user?.role === 'HR_MANAGER';
+  const isManager = user?.role === 'LINE_MANAGER';
+  const hasTeamView = isAdmin || isManager;
+
+  const [tab, setTab] = React.useState<Tab>('my');
+
+  if (!hasTeamView) return <MyAttendanceTab />;
+
+  return (
+    <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
+      <TabsList>
+        <TabsTrigger value="my">My Attendance</TabsTrigger>
+        <TabsTrigger value="team">Team</TabsTrigger>
+        <TabsTrigger value="approvals">Approvals</TabsTrigger>
+        {isAdmin && <TabsTrigger value="settings">Settings</TabsTrigger>}
+      </TabsList>
+      <TabsContent value="my">
+        <MyAttendanceTab />
+      </TabsContent>
+      <TabsContent value="team">
+        <AttendanceTeamTab canMark={isAdmin} />
+      </TabsContent>
+      <TabsContent value="approvals">
+        <AttendanceApprovalsTab />
+      </TabsContent>
+      {isAdmin && (
+        <TabsContent value="settings">
+          <AttendanceSettingsTab />
+        </TabsContent>
+      )}
+    </Tabs>
+  );
+}
+
+function MyAttendanceTab() {
   const { user } = useAuth();
   const [today, setToday] = React.useState<TodayResponse | null>(null);
   const [stats, setStats] = React.useState<StatsResponse | null>(null);
@@ -82,6 +131,7 @@ export function AttendancePage() {
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [now, setNow] = React.useState(() => Date.now());
+  const [confirmingOut, setConfirmingOut] = React.useState(false);
 
   const load = React.useCallback(async () => {
     const mk = monthKey(month);
@@ -163,9 +213,20 @@ export function AttendancePage() {
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (
         <>
+          <EarlyClockOutDialog
+            open={confirmingOut}
+            workedMs={displayMs}
+            targetMs={targetMs}
+            busy={busy}
+            onCancel={() => setConfirmingOut(false)}
+            onConfirm={() => {
+              setConfirmingOut(false);
+              runAction(() => api.post('/attendance/clock-out'));
+            }}
+          />
           <Card className="p-6">
             <div className="flex flex-wrap items-center gap-8">
-              <ProgressRing pct={pct} />
+              <ProgressRing pct={pct} targetHours={today?.targetHours ?? 8} />
               <div className="flex flex-1 flex-col gap-1.5">
                 <Badge
                   variant={isClockedIn ? 'success' : 'outline'}
@@ -181,6 +242,11 @@ export function AttendancePage() {
                 <div className="text-4xl font-bold tabular-nums tracking-tight">
                   {fmtDuration(displayMs)} <span className="text-base font-normal text-muted-foreground">today</span>
                 </div>
+                {(today?.overtimeMs ?? 0) > 0 && (
+                  <div className="text-sm font-medium text-lumen-gold">
+                    +{fmtDuration(today!.overtimeMs)} overtime
+                  </div>
+                )}
                 {isClockedIn && (
                   <div className="flex items-center gap-1.5 text-sm text-lumen-success">
                     ✓ On schedule · Expected completion ~{' '}
@@ -206,7 +272,9 @@ export function AttendancePage() {
                 <Button
                   disabled={busy || today?.isOnBreak}
                   onClick={() =>
-                    runAction(() => api.post(isClockedIn ? '/attendance/clock-out' : '/attendance/clock-in'))
+                    isClockedIn && displayMs < targetMs
+                      ? setConfirmingOut(true)
+                      : runAction(() => api.post(isClockedIn ? '/attendance/clock-out' : '/attendance/clock-in'))
                   }
                 >
                   {isClockedIn ? <LogOut className="h-4 w-4" /> : <LogIn className="h-4 w-4" />}
@@ -216,7 +284,7 @@ export function AttendancePage() {
             </div>
           </Card>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard
               label="Days Present"
               value={`${stats?.daysPresent ?? 0}`}
@@ -232,11 +300,18 @@ export function AttendancePage() {
               tone="warning"
             />
             <StatCard
-              label="Remaining Leave"
+              label="Total Leave Balance"
               value={`${stats?.remainingLeave ?? 0}`}
-              suffix="days balance"
-              footer=""
+              suffix="days, all leave types"
+              footer={(stats?.leaveBreakdown ?? []).map((b) => `${b.code} ${b.available}`).join(' · ')}
               tone="info"
+            />
+            <StatCard
+              label="Overtime"
+              value={`${stats?.overtimeHours ?? 0}h`}
+              suffix="this month"
+              footer=""
+              tone="warning"
             />
           </div>
 
@@ -265,7 +340,7 @@ function breakMsSoFar(record: AttendanceRecordRow): number {
   }, 0);
 }
 
-function ProgressRing({ pct }: { pct: number }) {
+function ProgressRing({ pct, targetHours }: { pct: number; targetHours: number }) {
   const r = 42;
   const c = 2 * Math.PI * r;
   const offset = c - (pct / 100) * c;
@@ -289,7 +364,7 @@ function ProgressRing({ pct }: { pct: number }) {
       <div className="absolute flex flex-col items-center">
         <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Target</span>
         <span className="text-lg font-bold text-lumen-gold">{pct}%</span>
-        <span className="text-[10px] text-muted-foreground">8h goal</span>
+        <span className="text-[10px] text-muted-foreground">{targetHours}h goal</span>
       </div>
     </div>
   );
@@ -318,7 +393,7 @@ function StatCard({
       <CardContent className="pt-5">
         <div className="mb-3 flex items-center justify-between">
           <span className="text-sm text-muted-foreground">{label}</span>
-          <span className={cn('flex h-7 w-7 items-center justify-center rounded-md', toneClasses)}>
+          <span className={cn('flex h-7 w-7 items-center justify-center rounded-xl', toneClasses)}>
             <CalendarDays className="h-3.5 w-3.5" />
           </span>
         </div>
@@ -373,14 +448,14 @@ function CalendarCard({
         <div className="flex items-center gap-3">
           <button
             onClick={() => setMonth(new Date(year, monthIdx - 1, 1))}
-            className="rounded p-1 hover:bg-accent"
+            className="rounded-xl p-1 hover:bg-accent"
             aria-label="Previous month"
           >
             ‹
           </button>
           <button
             onClick={() => setMonth(new Date(year, monthIdx + 1, 1))}
-            className="rounded p-1 hover:bg-accent"
+            className="rounded-xl p-1 hover:bg-accent"
             aria-label="Next month"
           >
             ›
@@ -416,7 +491,7 @@ function CalendarCard({
               disabled={!rec}
               onClick={() => rec && onSelect(rec)}
               className={cn(
-                'flex aspect-square flex-col items-center justify-center gap-0.5 rounded-md text-sm transition-colors',
+                'flex aspect-square flex-col items-center justify-center gap-0.5 rounded-xl text-sm transition-colors',
                 isSelected
                   ? 'bg-lumen-navy text-white'
                   : isToday
@@ -482,7 +557,7 @@ function DetailsPanel({ record }: { record: AttendanceRecordRow | null }) {
           value={record.checkOutAt ? fmtTime(record.checkOutAt) : 'In Progress'}
           sub={record.checkOutAt ? undefined : 'Est. —'}
         />
-        <div className="flex items-center justify-between rounded-md bg-lumen-surface-2 px-3 py-2.5 text-sm">
+        <div className="flex items-center justify-between rounded-xl bg-lumen-surface-2 px-3 py-2.5 text-sm">
           <span className="flex items-center gap-2 text-muted-foreground">
             <Coffee className="h-4 w-4" /> Effective Duration
           </span>
@@ -512,7 +587,7 @@ function DetailRow({
   sub?: string;
 }) {
   return (
-    <div className="flex items-center justify-between rounded-md bg-lumen-surface-2 px-3 py-2.5 text-sm">
+    <div className="flex items-center justify-between rounded-xl bg-lumen-surface-2 px-3 py-2.5 text-sm">
       <span className="flex items-center gap-2 text-muted-foreground">
         {icon} {label}
       </span>
@@ -540,23 +615,44 @@ function RegularizationDialog({
     checkOut: '',
     note: '',
   });
+  const [evidence, setEvidence] = React.useState<File | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const { toast } = useToast();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const problem = evidence && uploadProblem(evidence);
+    if (problem) {
+      setError(problem);
+      return;
+    }
     setError(null);
     setBusy(true);
     try {
-      await api.post('/attendance/regularization', {
+      const created = await api.post<{ id: string }>('/attendance/regularization', {
         targetDate: form.targetDate,
         reasonType: form.reasonType,
         requestedCheckInAt: form.checkIn ? `${form.targetDate}T${form.checkIn}:00` : undefined,
         requestedCheckOutAt: form.checkOut ? `${form.targetDate}T${form.checkOut}:00` : undefined,
         note: form.note || undefined,
       });
+      if (evidence) {
+        // The request already exists — don't let an upload failure look like
+        // a failed submit (re-submitting would create a duplicate request).
+        await api
+          .upload(`/attendance/regularization/${created.id}/evidence`, evidence)
+          .catch((err) =>
+            toast({
+              title: 'Request submitted, but the evidence upload failed',
+              description: isApiError(err) ? err.message : undefined,
+              tone: 'error',
+            }),
+          );
+      }
       onOpenChange(false);
       setForm({ targetDate: '', reasonType: 'MISSED_PUNCH_OUT', checkIn: '', checkOut: '', note: '' });
+      setEvidence(null);
       onSubmitted();
     } catch (err) {
       setError(isApiError(err) ? err.message : 'Failed to submit request');
@@ -585,8 +681,7 @@ function RegularizationDialog({
           </div>
           <div className="flex flex-col gap-1.5">
             <Label>Reason Type</Label>
-            <select
-              className="h-9 rounded-md border border-input bg-card px-2 text-sm"
+            <Select
               value={form.reasonType}
               onChange={(e) => setForm((f) => ({ ...f, reasonType: e.target.value }))}
             >
@@ -595,7 +690,7 @@ function RegularizationDialog({
                   {label}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
@@ -618,10 +713,19 @@ function RegularizationDialog({
           <div className="flex flex-col gap-1.5">
             <Label>Note / Justification</Label>
             <textarea
-              className="min-h-20 rounded-md border border-input bg-card px-2 py-1.5 text-sm"
+              className="min-h-20 rounded-xl border border-input bg-card px-2 py-1.5 text-sm"
               value={form.note}
               onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
             />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Supporting evidence (optional)</Label>
+            <Input
+              type="file"
+              accept={UPLOAD_ACCEPT}
+              onChange={(e) => setEvidence(e.target.files?.[0] ?? null)}
+            />
+            <span className="text-xs text-muted-foreground">PDF, JPG or PNG, up to 10 MB.</span>
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="mt-2 flex justify-end gap-2">

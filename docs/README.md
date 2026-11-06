@@ -35,14 +35,14 @@ criteria, open questions.
 | `modules/03_EMPLOYEE_MASTER.md` | Employee Master + Org Structure |
 | `modules/04_LEAVE_MANAGEMENT.md` | Leave Management |
 | `modules/05_ATTENDANCE.md` | Attendance & Time Tracking |
-| `modules/06_DASHBOARD.md` | Role-aware Dashboard *(pending)* |
-| `modules/07_PAYROLL_ENGINE.md` | Payroll Engine *(pending)* |
-| `modules/08_STATUTORY_COMPLIANCE.md` | Statutory Compliance *(pending)* |
-| `modules/09_DOCUMENTS.md` | Documents *(pending)* |
-| `modules/10_NOTIFICATIONS.md` | Notifications *(pending)* |
-| `modules/11_REPORTS_AND_ANALYTICS.md` | Reports & Analytics *(pending)* |
-| `modules/12_AUDIT_LOG.md` | Audit Log *(pending)* |
-| `modules/13_TENANT_CONFIGURATION.md` | Tenant Configuration *(pending — pairs with `TENANT_CONFIGURATION.md`)* |
+| `modules/06_DASHBOARD.md` | Role-aware Dashboard |
+| `modules/07_PAYROLL_ENGINE.md` | Payroll Engine |
+| `modules/08_STATUTORY_COMPLIANCE.md` | Statutory Compliance |
+| `modules/09_DOCUMENTS.md` | Documents |
+| `modules/10_NOTIFICATIONS.md` | Notifications |
+| `modules/11_REPORTS_AND_ANALYTICS.md` | Reports & Analytics *(10% — blocked on Payroll, see the spec's §1.1)* |
+| `modules/12_AUDIT_LOG.md` | Audit Log |
+| `modules/13_TENANT_CONFIGURATION.md` | Tenant Configuration *(pairs with `TENANT_CONFIGURATION.md`, the primary mechanism doc)* |
 
 ## `ui-build-prompts/*.md` — lowercase, build inputs (not source of truth)
 
@@ -65,8 +65,10 @@ render in visual sync.
 | `ui-build-prompts/03-employee-master.md` | Directory, employee detail, add/bulk-import, departments, org chart | Employee · Line Manager · HR Manager · Company Admin · Auditor |
 | `ui-build-prompts/04-leave-management.md` | Overview, apply, approvals, team calendar/balances, leave types, ledger, holidays, settings | Employee · Line Manager · HR Manager · Company Admin · Auditor |
 | `ui-build-prompts/05-attendance.md` | Today (clock in/out, breaks), calendar, stats, regularisation, team roster, approvals, settings (shifts/guardrails) — team/approvals/settings screens are `TODO(api)` build targets | Employee · Line Manager · HR Manager · Company Admin · Auditor |
+| `ui-build-prompts/06-dashboard.md` | Home screen: role-branched stat grid + a shared own-attendance "today" card — fully live, no `TODO(api)` screens | Employee · Line Manager · HR Manager · Company Admin · Auditor |
+| `ui-build-prompts/07-payroll-engine.md` | Runs overview + run detail (stepper, approvals), salary structure list + editor, statutory settings (rates, PT slabs, income-tax slabs/regime config, overtime multiplier), employee My pay, Full & Final — structures/settings, the full run lifecycle (create/adjust/recalculate/approve/process/disburse, with approved overtime pay and real TDS folded in automatically), DOB-locked payslip download, the dummy-CSV bank file, per-employee tax-regime choice (self-service + audited HR override), backdated structure revisions generating arrears folded into the next run, and Full & Final settlement (unpaid salary, leave encashment, gratuity, advance recovery, one-approval lifecycle) for a separated employee are all live; the runs list (`GET /payroll/runs`, shared by every admin) is live too. The frontend itself is now built (`apps/web/src/pages/payroll`, module 07 Phase 9) — not yet browser-verified against a live backend. The overtime claim/approval screen itself is Attendance's UI (`05-attendance.md`) | Employee · HR Manager · Company Admin · Auditor (Line Manager: none) |
 
-*(Prompts for modules 06–13 are added as those modules are specced.)*
+*(Prompts for modules 08–13 are added as those modules are specced.)*
 
 ## Adding docs
 

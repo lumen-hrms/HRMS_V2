@@ -6,26 +6,36 @@
 > **Status:** ✅ tenant onboarding (hosted reset-link email — no
 > operator-typed password) / enable-disable / metadata live ·
 > ✅ full operator console UI (`/platform-admin/*`: login, tenants list,
-> new-tenant wizard, tenant detail w/ 4 tabs, **Plans catalog**, audit
-> screen) · ✅ **operator-editable `platform.plans`** (pricing / seats /
-> modules / features / isolation tier) with snapshot-at-assign +
-> re-snapshot-on-renewal; `PATCH .../plan` + `POST .../renew` live ·
-> ✅ `PlatformAuditLog` written for create / status / plan-change / renewal /
-> price-adjust / plan-edit, AND readable — `GET /api/platform-admin/audit`
+> new-tenant wizard, tenant detail w/ 4 tabs, **Plans catalog**, **Leads**,
+> **Settings**, audit screen) · ✅ **operator-editable `platform.plans`**
+> (pricing / seats / modules / features / isolation tier) with
+> snapshot-at-assign + re-snapshot-on-renewal; `PATCH .../plan` +
+> `POST .../renew` live · ✅ `PlatformAuditLog` written for create / status /
+> plan-change / renewal / price-adjust / plan-edit / settings-update, AND
+> readable — `GET /api/platform-admin/audit`
 > (`tenantId`/`action`/`from`/`to`/`q` filters) powers the console's Audit
-> screen; degrades to a real "couldn't load" error instead of the old
-> "not wired yet" placeholder · 🔴 refresh-headcount route · 🔴 billing /
-> seat enforcement · 🔴 break-glass.
-> **Progress:** ~97% of the intended V1 slice (see `docs/MODULE_SPECS.md`).
-> **Code:** `apps/api/src/platform-admin`, `apps/api/src/prisma`
+> screen · ✅ `POST /api/platform-admin/tenants/:id/refresh-headcount` (audited,
+> only when the count changed) · ✅ public "Contact us" form on the landing
+> page (`POST /api/contact`, no tenant, rate-limited) writes an
+> append-only `platform.contact_submissions` lead and best-effort emails
+> whichever addresses are configured on **Settings**
+> (`platform.platform_settings`, a singleton row); **Leads** lists every
+> submission regardless of whether the notify email sent · 🔴 billing /
+> seat enforcement · 🟡 break-glass (full audited request/track/expire/revoke
+> control-plane lifecycle built; doesn't yet grant an operator actual
+> elevated read access during the window — see §9).
+> **Progress:** ~99% of the intended V1 slice (see `docs/MODULE_SPECS.md`).
+> **Code:** `apps/api/src/platform-admin` (`+ plans.service.ts`),
+> `apps/api/src/contact` (the public form), `apps/api/src/prisma`
 > (`PlatformPrismaClientProvider`), `apps/web/src/pages/platform-admin`
-> (`console.tsx` gate → `shell.tsx` + `tenants`/`tenant-new`/`tenant-detail`/
+> (`console.tsx` gate → `shell.tsx` +
+> `tenants` / `tenant-new` / `tenant-detail` / `plans` / `leads` / `settings` /
 > `audit` + `components/` + `lib/`).
 > **Related:** `CLAUDE.md` ("Platform Admin is structurally separate") ·
 > `docs/BACKEND_ARCHITECTURE.md` §2.5–2.6, §3, §5 ·
 > `docs/TENANT_CONFIGURATION.md` (layer 1 = plan entitlements, set here) ·
 > module `01_IDENTITY_AND_ACCESS.md`.
-> **Last synced to code:** 2026-09-15 (`GET /api/platform-admin/audit` read API lands — closes what was §9's "Still open" item 1).
+> **Last synced to code:** 2026-09-24 (public contact form + Leads + Settings land).
 
 ---
 
@@ -92,9 +102,14 @@ console, per-tenant feature-flag UI beyond plan defaults, dunning emails.
    `public` — verified by test. The console cannot read tenant PII under any
    code path.
 2. **Onboarding is atomic-ish.** Creating a tenant creates `Tenant` +
-   `Subscription`, then seeds the first Company Admin. **If seeding the admin
-   fails, the tenant row is rolled back** — no tenant is left where nobody
-   can log in.
+   `Subscription`, then the first Company Admin's Firebase login, then — in
+   **one** RLS-scoped `hrms_app` transaction — the admin's `users` row and
+   every tenant default (settings, shift, payroll settings + PT slabs).
+   **If any step fails, all of it is rolled back**: the transaction leaves no
+   `public` rows, the Firebase login is deleted, and the tenant row is
+   removed — no tenant is left where nobody can log in, and no orphaned rows
+   or logins block a retry. The admin's invite email is sent only **after**
+   provisioning has fully succeeded.
 3. **Suspend is immediate and total.** `PATCH .../status` → `SUSPENDED`
    locks out every user of that tenant at `TenantResolutionMiddleware` on
    their next request.
@@ -123,9 +138,9 @@ console, per-tenant feature-flag UI beyond plan defaults, dunning emails.
 | `hrms_app` | all tenant business queries | CRUD on `public.*` only; `NOBYPASSRLS` |
 | `hrms_platform` | this module | CRUD on `platform.*` only; **zero grants on `public`, not even `USAGE`** |
 
-The **one deliberate exception**: `PlatformAdminService.seedCompanyAdmin()`
-and `.refreshHeadcount()` need to write a new tenant's `public.users` /
-read a count. They do **not** use `hrms_platform` — they use the
+The **one deliberate exception**: `PlatformAdminService.seedTenantRows()`
+and `.refreshHeadcount()` need to write a new tenant's `public.users` +
+default settings / read a count. They do **not** use `hrms_platform` — they use the
 `hrms_app`-backed `TenantPrismaClientProvider`, scoped to the one new tenant
 via `withTenantContext()`, exactly like a normal request. So `hrms_platform`
 itself never touches `public`; the exception is a correctly-scoped second
@@ -163,10 +178,20 @@ construction.
   `before` (jsonb), `after` (jsonb), `ip`, `at`. **Append-only** —
   `hrms_platform` must have no `UPDATE`/`DELETE` grant on it (enforce in the
   roles migration; see module 12).
-- **`BreakGlassGrant`** *(TODO — not in schema)* — `id`, `adminId`,
-  `tenantId`, `reason`, `grantedAt`, `expiresAt`, `revokedAt`,
-  `accessCount`. The tenant-side reads it performs run over a special
-  audited, read-only, time-boxed `hrms_app` context.
+- **`BreakGlassGrant`** — `id`, `tenantId`, `requestedBy`, `reason`,
+  `status` (`ACTIVE|EXPIRED|REVOKED`), `accessCount`, `grantedAt`,
+  `expiresAt`, `revokedAt`, `revokedBy`. Built (migration
+  `20260918100000_break_glass_and_audit_grants`); the tenant-side elevated
+  read the grant is supposed to authorize is not — see §9.
+- **`ContactSubmission`** — `id`, `name`, `email`, `company?`, `phone?`,
+  `message`, `ipAddress?`, `createdAt`. One row per landing-page contact
+  form submission. `hrms_platform` has `SELECT`/`INSERT` only (append-only,
+  same instinct as the audit tables — a lead shouldn't be editable after
+  the fact).
+- **`PlatformSettings`** — a singleton row (`id` is always the literal
+  `'singleton'`) holding `contactNotifyEmails: string[]`. Room for more
+  platform-wide config to land as columns here later rather than one table
+  per setting.
 
 ### 4.4 API surface
 
@@ -178,16 +203,22 @@ construction.
 | `GET` | `/api/platform-admin/tenants/:id` | `PlatformJwtAuthGuard` | Detail + subscription + recent platform-audit entries for this tenant. |
 | `PATCH` | `/api/platform-admin/tenants/:id/status` | `PlatformJwtAuthGuard` | `ACTIVE` / `SUSPENDED` / `TRIAL`. Enforced at resolution layer → immediate lockout. Audit. |
 | `PATCH` | `/api/platform-admin/tenants/:id/plan` | `PlatformJwtAuthGuard` | Change `plan` → re-derive `enabledModules` / `seats` / `features`. Audit. *(TODO — partial.)* |
-| `POST` | `/api/platform-admin/tenants/:id/refresh-headcount` | `PlatformJwtAuthGuard` | `refreshHeadcount()` writes `employeeCount`. *(Also runs on a schedule — TODO.)* |
-| `GET` | `/api/platform-admin/audit` | `PlatformJwtAuthGuard` | Platform audit trail, filterable by tenant / action / date. *(TODO — depends on writes.)* |
-| `POST` | `/api/platform-admin/tenants/:id/breakglass` | `PlatformJwtAuthGuard` | Open a time-boxed, reason-carrying read grant. *(TODO — design first.)* |
+| `POST` | `/api/platform-admin/tenants/:id/refresh-headcount` | `PlatformJwtAuthGuard` | `refreshHeadcount()` writes `employeeCount`; audited (`headcount.refreshed`, only when it changed). Also runs on a schedule (a daily job). |
+| `GET` | `/api/platform-admin/audit` | `PlatformJwtAuthGuard` | Platform audit trail, filterable by tenant / action / date. |
+| `POST` | `/api/platform-admin/tenants/:id/breakglass` | `PlatformJwtAuthGuard` | Open a time-boxed, reason-carrying read grant. `GET`/`POST .../revoke` round out the lifecycle; an hourly job auto-expires overdue grants. |
+| `GET` | `/api/platform-admin/leads` | `PlatformJwtAuthGuard` | Contact-form submissions, newest first. |
+| `GET` | `/api/platform-admin/settings` | `PlatformJwtAuthGuard` | `{ contactNotifyEmails: string[] }`. |
+| `PATCH` | `/api/platform-admin/settings` | `PlatformJwtAuthGuard` | Replaces the recipient list wholesale; audited (`platform_settings.updated`, before/after). |
+| `POST` | `/api/contact` | none — public, no tenant | The landing page's contact form. Rate-limited (3/email + 10/IP per 15 min, in-memory); writes a `ContactSubmission` row, then best-effort emails everyone in `PlatformSettings.contactNotifyEmails`. `202` either way. |
 
 ### 4.5 Frontend
 
 `apps/web/src/pages/platform-admin` behind `apps/web/src/routes/platform`
 route guards (platform-admin token required; a tenant token → 403). Separate
 login screen (already redesigned — split-panel). Screens: Tenants list,
-New-tenant wizard, Tenant detail, (next) Audit log, (next) Break-glass.
+New-tenant wizard, Tenant detail (with a Break-glass request/status panel),
+Plans catalog, Leads (contact-form submissions), Settings (notify-email
+list), Audit log.
 
 ### 4.6 Configuration
 
@@ -218,8 +249,9 @@ New-tenant wizard, Tenant detail, (next) Audit log, (next) Break-glass.
       *(TODO)*.
 4. Platform Admin shares `acme.hrms-platform.com`; the customer admin runs a
    hosted password reset and logs in.
-5. `TENANT_CONFIGURATION.md` layer-2 setup wizard runs on that first login
-   (tenant-side).
+5. On that first login the customer admin completes the mandatory company
+   setup (`TENANT_CONFIGURATION.md` "Company setup", tenant-side); until it's
+   submitted the tenant's business routes answer `SETUP_INCOMPLETE`.
 
 ### 5.2 Suspend / resume a tenant
 
@@ -265,7 +297,9 @@ New-tenant wizard, Tenant detail, (next) Audit log, (next) Break-glass.
 
 - **INV-1** — `hrms_platform` never gains any grant on `public`. The only
   path from this module into `public` is the `hrms_app`-backed, per-tenant
-  `withTenantContext()` used by `seedCompanyAdmin` / `refreshHeadcount`.
+  tenant context (`withTenantContext()`, or the RLS session variable set
+  inside `seedTenantRows`' transaction) used by `seedTenantRows` /
+  `refreshHeadcount`.
 - **INV-2** — no tenant is ever persisted without a working Company Admin
   login (rollback on seed failure).
 - **INV-3** — `subdomain` is immutable after creation in V1 (changing it
@@ -307,12 +341,23 @@ New-tenant wizard, Tenant detail, (next) Audit log, (next) Break-glass.
 | See tenant PII (employees, leave, payroll) | **— (structurally impossible)** | n/a |
 | Read the platform audit log | ✅ (`GET /api/platform-admin/audit`) | — |
 | Initiate break-glass into a tenant | ✅ (logged, time-boxed) | — |
+| Read landing-page leads / edit notify recipients | ✅ (Leads, Settings) | — |
+| Submit the public contact form | n/a (unauthenticated, pre-tenant) | ✅ (anyone) |
 
 ---
 
 ## 9. Known gaps / TODO (priority order)
 
-**Closed** since the last sync:
+**Closed** since the last sync (2026-09-24):
+- ✅ **Public "Contact us" form + Leads + Settings** — `POST /api/contact`
+  (no tenant, no auth, rate-limited) writes an append-only
+  `platform.contact_submissions` row and best-effort emails whichever
+  addresses are in the new `platform.platform_settings` singleton row
+  (`GET`/`PATCH /api/platform-admin/settings`, audited
+  `platform_settings.updated`). New **Leads** screen lists every
+  submission. `apps/api/src/contact`.
+
+**Closed** since the previous sync:
 - ✅ **Operator console UI** — full multi-screen console at `/platform-admin/*`
   (login, tenants list + stat tiles + filters, 3-section new-tenant wizard,
   tenant detail with 4 tabs, operator audit screen), on the real design

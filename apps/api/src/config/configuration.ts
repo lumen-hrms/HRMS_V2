@@ -29,15 +29,60 @@ export interface AppConfig {
   redis: {
     url: string;
   };
+  /**
+   * clamd (ClamAV daemon) that every uploaded document is streamed to
+   * before it becomes downloadable (docs/modules/09_DOCUMENTS.md §4.4).
+   * docker-compose runs one on :3310 locally. Scanning fails closed: if
+   * this is unreachable, uploads stay undownloadable until it's back.
+   */
+  clamav: {
+    host: string;
+    port: number;
+    timeoutMs: number;
+  };
+  /**
+   * Master switch for malware scanning of uploaded documents. ON unless
+   * `DOCUMENT_SCANNING_ENABLED` is explicitly `false`/`0` (a missing or
+   * mistyped value never disables the control). OFF is for environments
+   * with no clamd (e.g. the small preview box): uploads skip the scan and
+   * are downloadable, surfaced to the UI as `UNSCANNED`. Turning it back
+   * on makes the next sweep scan everything uploaded while it was off.
+   */
+  documents: {
+    scanningEnabled: boolean;
+  };
+  /**
+   * Module 10 notifications — AWS SES v2 (docs/modules/10_NOTIFICATIONS.md
+   * §4.3). Credentials come from the AWS SDK default chain
+   * (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, or an attached IAM role).
+   * Without `fromAddress`, sends fail and land as FAILED in the email log —
+   * nothing is silently dropped.
+   */
+  ses: {
+    region: string;
+    fromAddress?: string;
+    configurationSet?: string;
+    /**
+     * ARN of the SNS topic the configuration set publishes bounce/complaint
+     * events to. The public `POST /notifications/ses-events` webhook accepts
+     * only messages from this topic; unset → it rejects everything.
+     */
+    eventsTopicArn?: string;
+  };
+  /** Razorpay (module 14). All unset → billing endpoints refuse; webhook rejects. */
+  razorpay: {
+    keyId?: string;
+    keySecret?: string;
+    webhookSecret?: string;
+  };
+  /** Public URL of the web app, used for links inside emails. */
+  appBaseUrl: string;
   encryption: {
     /**
-     * The application-layer "KMS data key" for PII field encryption (PAN,
+     * The application-layer data key for PII field encryption (PAN,
      * bank account — CLAUDE.md's security non-negotiable). A base64-encoded
      * 32-byte AES-256 key. Today this is a static secret from the team
-     * vault, same tier as the DB/Firebase credentials; when the production
-     * AWS deployment lands (CLAUDE.md's Stack table), swap the source for a
-     * real AWS KMS-wrapped data key without touching FieldEncryptionService's
-     * interface — only where the key comes from changes.
+     * vault, same tier as the DB/Firebase credentials. AWS KMS is not used.
      */
     fieldKeyBase64?: string;
   };
@@ -67,6 +112,28 @@ export default (): AppConfig => ({
   redis: {
     url: process.env.REDIS_URL ?? 'redis://localhost:6379',
   },
+  clamav: {
+    host: process.env.CLAMAV_HOST ?? 'localhost',
+    port: parseInt(process.env.CLAMAV_PORT ?? '3310', 10),
+    timeoutMs: parseInt(process.env.CLAMAV_TIMEOUT_MS ?? '60000', 10),
+  },
+  documents: {
+    scanningEnabled: !['false', '0'].includes(
+      (process.env.DOCUMENT_SCANNING_ENABLED ?? '').trim().toLowerCase(),
+    ),
+  },
+  ses: {
+    region: process.env.SES_REGION ?? 'ap-south-1',
+    fromAddress: process.env.SES_FROM_ADDRESS || undefined,
+    configurationSet: process.env.SES_CONFIGURATION_SET || undefined,
+    eventsTopicArn: process.env.SES_EVENTS_TOPIC_ARN || undefined,
+  },
+  razorpay: {
+    keyId: process.env.RAZORPAY_KEY_ID || undefined,
+    keySecret: process.env.RAZORPAY_KEY_SECRET || undefined,
+    webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || undefined,
+  },
+  appBaseUrl: (process.env.APP_BASE_URL ?? 'http://localhost:5173').replace(/\/+$/, ''),
   encryption: {
     fieldKeyBase64: process.env.FIELD_ENCRYPTION_KEY,
   },

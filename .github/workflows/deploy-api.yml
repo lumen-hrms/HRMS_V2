@@ -1,0 +1,138 @@
+name: Deploy API to EC2
+
+# Testing-deploy CD, per docs/DEPLOY.md. Rebuilds and restarts the API
+# container on the EC2 box on every push to dev. Not used for the web app
+# (Vercel already auto-deploys from git on its own) and not part of the
+# real prod pipeline (still AWS ap-south-1 + RDS, per CLAUDE.md's Stack
+# table) — this only targets the free-tier testing box.
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH and redeploy
+        uses: appleboy/ssh-action@v1.0.3
+        # Object storage (module 09 documents) comes from repo secrets so the
+        # box's .env never needs hand-editing — e.g. Supabase Storage's S3
+        # endpoint (docs/DEPLOY.md). Each is only passed to the container
+        # when set; unset ones fall back to apps/api/.env / code defaults.
+        env:
+          S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+          S3_REGION: ${{ secrets.S3_REGION }}
+          S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+          S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
+          # Email notifications (module 10, AWS SES v2). The AWS keys belong
+          # to an IAM user with only ses:SendEmail (+ ses:DeleteSuppressedDestination,
+          # for lifting a bounce suppression) — named SES_* in GitHub so
+          # nobody mistakes them for broader AWS credentials.
+          SES_REGION: ${{ secrets.SES_REGION }}
+          SES_FROM_ADDRESS: ${{ secrets.SES_FROM_ADDRESS }}
+          SES_CONFIGURATION_SET: ${{ secrets.SES_CONFIGURATION_SET }}
+          SES_EVENTS_TOPIC_ARN: ${{ secrets.SES_EVENTS_TOPIC_ARN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.SES_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SES_AWS_SECRET_ACCESS_KEY }}
+          RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+          RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+          RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          # Repo *variable* (Settings → Variables), not a secret. Set to `false`
+          # on a box with no clamd: the API serves uploads unscanned and the
+          # ClamAV container below is skipped (and stopped if it exists).
+          # Unset/anything else = scanning on. docs/modules/09_DOCUMENTS.md.
+          DOCUMENT_SCANNING_ENABLED: ${{ vars.DOCUMENT_SCANNING_ENABLED }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2SSHKEY }}
+          envs: S3_ENDPOINT,S3_REGION,S3_ACCESS_KEY,S3_SECRET_KEY,S3_BUCKET,SES_REGION,SES_FROM_ADDRESS,SES_CONFIGURATION_SET,SES_EVENTS_TOPIC_ARN,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,APP_BASE_URL,RAZORPAY_KEY_ID,RAZORPAY_KEY_SECRET,RAZORPAY_WEBHOOK_SECRET,DOCUMENT_SCANNING_ENABLED
+          script: |
+            set -e
+            cd ~/HRMS_V2
+            git checkout dev
+            git pull origin dev
+            # clamd holds most of this 1 GiB box's RAM; free it for the build
+            # (the swap exists for exactly this step). Uploads just wait in
+            # PENDING_SCAN meanwhile — scanning fails closed.
+            docker stop clamav >/dev/null 2>&1 || true
+            DOCKER_BUILDKIT=0 docker build -f apps/api/Dockerfile -t hrms-api .
+
+            # Only forward secrets that are actually set — an empty -e would
+            # override a working value from apps/api/.env. Built as a bash
+            # ARRAY and trimmed: a value containing a space (a pasted
+            # trailing space, "Name <addr>") must stay one argument, or
+            # docker reads the leftover word as the image name ("invalid
+            # reference format") after the old container is already gone.
+            secret_args=()
+            for v in S3_ENDPOINT S3_REGION S3_ACCESS_KEY S3_SECRET_KEY S3_BUCKET \
+                     SES_REGION SES_FROM_ADDRESS SES_CONFIGURATION_SET SES_EVENTS_TOPIC_ARN \
+                     AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY APP_BASE_URL \
+                     RAZORPAY_KEY_ID RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET \
+                     DOCUMENT_SCANNING_ENABLED; do
+              val="${!v}"
+              val="${val#"${val%%[![:space:]]*}"}"   # trim leading whitespace
+              val="${val%"${val##*[![:space:]]}"}"   # trim trailing whitespace
+              if [ -n "$val" ]; then secret_args+=(-e "$v=$val"); fi
+            done
+
+            # WORKERS_ENABLED=true: this box is THE instance that runs the
+            # background jobs against the shared DB — explicit so it never
+            # depends on NODE_ENV in apps/api/.env (common/background-workers.ts).
+            # Validate the full run command against the new image BEFORE
+            # removing the running container, so a bad argument can never
+            # take the API down (docker create does the same parsing as run).
+            docker rm -f hrms-api-check >/dev/null 2>&1 || true
+            docker create --name hrms-api-check \
+              --env-file apps/api/.env -e CLAMAV_HOST=clamav -e CLAMAV_PORT=3310 -e WORKERS_ENABLED=true \
+              "${secret_args[@]}" --network hrms hrms-api >/dev/null
+            docker rm hrms-api-check >/dev/null
+
+            docker rm -f hrms-api || true
+            docker run -d --name hrms-api --restart unless-stopped \
+              --env-file apps/api/.env -e CLAMAV_HOST=clamav -e CLAMAV_PORT=3310 -e WORKERS_ENABLED=true \
+              "${secret_args[@]}" -p 80:3000 --network hrms hrms-api
+
+            # Boot time on this burstable, swap-backed box varies (seconds to
+            # a minute+), so poll instead of a fixed sleep. Dump the API's own
+            # logs + memory on failure so the Actions log shows *why*.
+            healthy=
+            for i in $(seq 1 30); do
+              if curl -fsS http://localhost/api/health; then healthy=1; break; fi
+              sleep 5
+            done
+            if [ -z "$healthy" ]; then
+              echo "API not healthy after ~150s"
+              docker ps -a --filter name=hrms-api
+              docker logs --tail 100 hrms-api
+              free -m
+              exit 1
+            fi
+
+            # ClamAV (module 09 document scanning) as a sibling container —
+            # started only AFTER the API is healthy: its first start
+            # downloads + loads signatures, which saturates this 1 GiB box
+            # and would otherwise slow the API's boot past the health check.
+            # Created once and left running across deploys (signature DB
+            # lives in the named volume). Memory-capped so an OOM kills
+            # clamd, not the API; past the cap it spills into the 2 GiB
+            # swap. `stable-debian` (not `stable`, which is amd64-only) so the
+            # same line works on the arm64/Graviton box. Not waited on: scanning
+            # fails closed and the documents
+            # sweep catches up once clamd is listening.
+            scanning_flag="$(echo "$DOCUMENT_SCANNING_ENABLED" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+            if [ "$scanning_flag" = "false" ] || [ "$scanning_flag" = "0" ]; then
+              echo "DOCUMENT_SCANNING_ENABLED=false — not starting ClamAV"
+              docker stop clamav >/dev/null 2>&1 || true
+            else
+              if ! docker ps -a --format '{{.Names}}' | grep -qx clamav; then
+                docker run -d --name clamav --restart unless-stopped --network hrms \
+                  --memory=700m --memory-swap=1800m \
+                  -v hrms_clamav_data:/var/lib/clamav clamav/clamav:stable-debian
+              fi
+              docker start clamav >/dev/null
+            fi

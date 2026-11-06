@@ -7,12 +7,14 @@ import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Field } from '@/components/ui/field';
 import { useToast } from '@/components/ui/toast';
+import { UPLOAD_ACCEPT, uploadProblem } from '@/lib/documents';
 import { LeaveMonthCalendar } from '@/pages/leave/components/leave-month-calendar';
-import { dayLabel } from '@/pages/leave/shared';
+import { NoEmployeeProfile, dayLabel } from '@/pages/leave/shared';
 import { leaveApi } from '@/lib/leave/client';
 import { MOCK_CURRENT_YEAR } from '@/lib/leave/fixtures';
 import { cn } from '@/lib/utils';
 import type {
+  EventLeaveAllowance,
   Holiday,
   LeaveRequestPreview,
   LeaveType,
@@ -30,7 +32,11 @@ export function ApplyTab({ onApplied }: { onApplied: () => void }) {
     endDate: '',
     halfDay: false,
     reason: '',
+    eventDate: '',
   });
+  const [allowances, setAllowances] = React.useState<EventLeaveAllowance[]>([]);
+  const [file, setFile] = React.useState<File | null>(null);
+  const fileInput = React.useRef<HTMLInputElement>(null);
   const [preview, setPreview] = React.useState<LeaveRequestPreview | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -44,17 +50,23 @@ export function ApplyTab({ onApplied }: { onApplied: () => void }) {
   }, []);
 
   React.useEffect(() => {
+    if (ctx?.employeeId) leaveApi.eventLeave(ctx.employeeId).then(setAllowances);
+  }, [ctx?.employeeId]);
+
+  React.useEffect(() => {
     if (!ctx) return;
     const y = calMonth.getFullYear();
     const from = `${y}-${String(calMonth.getMonth() + 1).padStart(2, '0')}-01`;
     const to = `${y}-${String(calMonth.getMonth() + 1).padStart(2, '0')}-31`;
-    leaveApi.listHolidays(y).then(setHolidays);
+    leaveApi.listHolidaysBetween(from, to).then(setHolidays);
     leaveApi.teamCalendar(ctx, from, to).then(setTeamEntries);
   }, [ctx, calMonth]);
 
   // Recompute the balance-impact preview whenever the inputs settle.
+  // Event-based leave has no balance to preview — its panel shows the event's allowance instead.
   React.useEffect(() => {
-    if (!ctx || !form.leaveTypeId || !form.startDate || !form.endDate) {
+    const eventBased = types.find((t) => t.id === form.leaveTypeId)?.grantMode === 'ON_EVENT';
+    if (!ctx?.employeeId || !form.leaveTypeId || !form.startDate || !form.endDate || eventBased) {
       setPreview(null);
       return;
     }
@@ -79,9 +91,18 @@ export function ApplyTab({ onApplied }: { onApplied: () => void }) {
     return () => {
       cancelled = true;
     };
-  }, [ctx, form.leaveTypeId, form.startDate, form.endDate, form.halfDay]);
+  }, [ctx, types, form.leaveTypeId, form.startDate, form.endDate, form.halfDay]);
 
   const selectedType = types.find((t) => t.id === form.leaveTypeId);
+  const eventAllowance = allowances.find((a) => a.leaveType.id === form.leaveTypeId) ?? null;
+  const isEvent = selectedType?.grantMode === 'ON_EVENT';
+  // Event types restricted to another gender aren't offered at all.
+  const offeredTypes = types.filter(
+    (t) => t.grantMode !== 'ON_EVENT' || allowances.some((a) => a.leaveType.id === t.id),
+  );
+  const canSubmit = isEvent
+    ? !!(form.startDate && form.endDate && form.eventDate && form.endDate >= form.startDate)
+    : !!preview;
   const noticeShort =
     selectedType &&
     form.startDate &&
@@ -90,7 +111,12 @@ export function ApplyTab({ onApplied }: { onApplied: () => void }) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!ctx) return;
+    if (!ctx?.employeeId) return;
+    const problem = file && uploadProblem(file);
+    if (problem) {
+      setError(problem);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -101,6 +127,7 @@ export function ApplyTab({ onApplied }: { onApplied: () => void }) {
           endDate: form.endDate,
           halfDay: form.halfDay,
           reason: form.reason || undefined,
+          ...(isEvent ? { eventDate: form.eventDate } : {}),
         },
         ctx,
       );
@@ -111,7 +138,21 @@ export function ApplyTab({ onApplied }: { onApplied: () => void }) {
           : `${dayLabel(created.days)} · routed to ${created.status === 'PENDING_L1' ? 'your manager' : 'HR'}.`,
         tone: created.isLop ? 'info' : 'success',
       });
-      setForm({ leaveTypeId: '', startDate: '', endDate: '', halfDay: false, reason: '' });
+      if (file) {
+        // The request already exists at this point — an upload failure
+        // must not read as "submit failed", so it gets its own toast.
+        await leaveApi.attachToRequest(created.id, file).catch((err) =>
+          toast({
+            title: 'Request submitted, but the attachment failed',
+            description: `${err instanceof Error ? err.message : 'Upload failed'} — attach it again from My Requests.`,
+            tone: 'error',
+          }),
+        );
+      }
+      setForm({ leaveTypeId: '', startDate: '', endDate: '', halfDay: false, reason: '', eventDate: '' });
+      if (isEvent) leaveApi.eventLeave(ctx.employeeId).then(setAllowances);
+      setFile(null);
+      if (fileInput.current) fileInput.current.value = '';
       setPreview(null);
       onApplied();
     } catch (err) {
@@ -121,9 +162,8 @@ export function ApplyTab({ onApplied }: { onApplied: () => void }) {
     }
   }
 
-  if (!ctx) {
-    return <p className="text-sm text-muted-foreground">This account has no linked employee record.</p>;
-  }
+  if (!ctx) return null;
+  if (!ctx.employeeId) return <NoEmployeeProfile role={ctx.role} />;
 
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,380px)_1fr]">
@@ -137,13 +177,32 @@ export function ApplyTab({ onApplied }: { onApplied: () => void }) {
               onChange={(e) => setForm((f) => ({ ...f, leaveTypeId: e.target.value }))}
             >
               <option value="">Select…</option>
-              {types.map((t) => (
+              {offeredTypes.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name} ({t.code})
                 </option>
               ))}
             </Select>
           </Field>
+
+          {isEvent && (
+            <Field
+              label={selectedType?.eventLabel ?? 'Event date'}
+              required
+              hint={
+                eventAllowance
+                  ? `Leave can start from ${eventAllowance.windowDaysBefore} days before to ${eventAllowance.windowDaysAfter} days after this date.`
+                  : undefined
+              }
+            >
+              <Input
+                type="date"
+                required
+                value={form.eventDate}
+                onChange={(e) => setForm((f) => ({ ...f, eventDate: e.target.value }))}
+              />
+            </Field>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <Field label="Start date" required>
@@ -176,7 +235,10 @@ export function ApplyTab({ onApplied }: { onApplied: () => void }) {
               type="checkbox"
               className="h-4 w-4 rounded border-input"
               checked={form.halfDay}
-              disabled={!!form.startDate && !!form.endDate && form.startDate !== form.endDate}
+              disabled={
+                (!!form.startDate && !!form.endDate && form.startDate !== form.endDate) ||
+                (isEvent && !!selectedType?.countCalendarDays)
+              }
               onChange={(e) => setForm((f) => ({ ...f, halfDay: e.target.checked }))}
             />
             Half day
@@ -192,8 +254,24 @@ export function ApplyTab({ onApplied }: { onApplied: () => void }) {
             />
           </Field>
 
+          <Field
+            label="Supporting document"
+            hint={
+              isEvent && selectedType?.requiresDocument
+                ? 'Required before final approval (e.g. a medical or marriage certificate) · PDF, JPG or PNG, up to 10 MB.'
+                : 'Optional · PDF, JPG or PNG, up to 10 MB.'
+            }
+          >
+            <Input
+              ref={fileInput}
+              type="file"
+              accept={UPLOAD_ACCEPT}
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            />
+          </Field>
+
           {preview && (
-            <div className="rounded-md border border-border bg-muted/50 p-3 text-sm">
+            <div className="rounded-xl border border-border bg-muted/50 p-3 text-sm">
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">Duration</span>
                 <span className="font-medium">{dayLabel(preview.days)}</span>
@@ -216,10 +294,40 @@ export function ApplyTab({ onApplied }: { onApplied: () => void }) {
                 <span className="font-medium">{preview.firstApprover ?? '—'}</span>
               </div>
               {preview.isLop && (
-                <p className="mt-2 flex items-start gap-1.5 rounded bg-warning/10 p-2 text-xs text-warning">
+                <p className="mt-2 flex items-start gap-1.5 rounded-xl bg-warning/10 p-2 text-xs text-warning">
                   <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                   {dayLabel(preview.lopDays)} will be Loss of Pay — you can still submit, but those
                   days won’t be paid.
+                </p>
+              )}
+            </div>
+          )}
+
+          {isEvent && eventAllowance && (
+            <div className="rounded-xl border border-border bg-muted/50 p-3 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Allowance for a new event</span>
+                <span className="font-medium">
+                  {eventAllowance.nextAllowanceDays} {eventAllowance.countCalendarDays ? 'calendar' : 'working'} days
+                </span>
+              </div>
+              <div className="mt-1 flex items-center justify-between">
+                <span className="text-muted-foreground">Used so far</span>
+                <span className="font-medium">
+                  {eventAllowance.eventsUsed}
+                  {eventAllowance.maxEvents ? ` of ${eventAllowance.maxEvents}` : ''} time
+                  {eventAllowance.eventsUsed === 1 ? '' : 's'}
+                </span>
+              </div>
+              {eventAllowance.genderMissing && (
+                <p className="mt-2 rounded-xl bg-warning/10 p-2 text-xs text-warning">
+                  Your profile has no gender set, so this request will be refused — ask HR to update it.
+                </p>
+              )}
+              {eventAllowance.esiCovered && (
+                <p className="mt-2 rounded-xl bg-muted p-2 text-xs text-muted-foreground">
+                  You’re covered by ESI, so the maternity benefit for this leave is usually paid by ESIC rather
+                  than through payroll.
                 </p>
               )}
             </div>
@@ -233,7 +341,7 @@ export function ApplyTab({ onApplied }: { onApplied: () => void }) {
           )}
           {error && <p className="text-sm text-destructive">{error}</p>}
 
-          <Button type="submit" disabled={busy || !preview} className="self-start">
+          <Button type="submit" disabled={busy || !canSubmit} className="self-start">
             <CalendarCheck className="h-4 w-4" />
             {busy ? 'Submitting…' : 'Submit request'}
           </Button>

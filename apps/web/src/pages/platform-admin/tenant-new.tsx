@@ -26,6 +26,7 @@ export function TenantNewPage() {
     plan: 'STARTER',
     seats: undefined,
     pricePerSeat: undefined,
+    trialDays: 7,
     firstAdminName: '',
     firstAdminEmail: '',
   });
@@ -167,8 +168,23 @@ export function TenantNewPage() {
               </p>
             </div>
           </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="trial-days">Trial length (days)</Label>
+            <Input
+              id="trial-days"
+              type="number"
+              min={1}
+              max={90}
+              value={form.trialDays ?? ''}
+              onChange={(e) => set('trialDays', e.target.value ? Number(e.target.value) : undefined)}
+            />
+            <p className="text-xs text-muted-foreground">
+              The workspace is fully usable for this many days from creation, then becomes read-only
+              until you convert it to a paid plan.
+            </p>
+          </div>
           {pickedPlan && (
-            <p className="rounded-lg bg-muted/50 p-2.5 text-xs text-muted-foreground">
+            <p className="rounded-xl bg-muted/50 p-2.5 text-xs text-muted-foreground">
               ≈{' '}
               <strong className="text-foreground">
                 {inr(

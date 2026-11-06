@@ -28,7 +28,7 @@ export function TeamCalendarTab() {
     const from = `${y}-${mm}-01`;
     const to = `${y}-${mm}-31`;
     setLoading(true);
-    Promise.all([leaveApi.teamCalendar(ctx, from, to), leaveApi.listHolidays(y)])
+    Promise.all([leaveApi.teamCalendar(ctx, from, to), leaveApi.listHolidaysBetween(from, to)])
       .then(([e, h]) => {
         setEntries(e);
         setHolidays(h);

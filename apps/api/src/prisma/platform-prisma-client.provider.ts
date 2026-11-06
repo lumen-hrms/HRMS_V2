@@ -2,6 +2,8 @@ import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaClient } from '@prisma/client';
 import type { AppConfig } from '../config/configuration';
+import { invalidateOnIdentityWrites } from '../common/tenancy/auth-context-cache';
+import { logAuditWrites } from '../common/logging/audit-event-log';
 
 /**
  * The single long-lived PostgreSQL connection pool used by the
@@ -25,6 +27,8 @@ export class PlatformPrismaClientProvider
         db: { url: config.get('db.platformUrl', { infer: true }) },
       },
     });
+    this.$use(invalidateOnIdentityWrites());
+    this.$use(logAuditWrites());
   }
 
   async onModuleInit() {

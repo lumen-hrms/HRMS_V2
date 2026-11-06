@@ -3,7 +3,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { Prisma, LeaveLedgerSource } from '@prisma/client';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service';
-import { StorageService } from '../storage/storage.service';
+import { DocumentsService, type DocumentDto } from '../documents/documents.service';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import type {
   ApplyLeaveDto,
@@ -17,6 +17,30 @@ import type {
 } from './dto/leave.dto';
 import { LEAVE_QUEUE } from './leave.constants';
 import { resolveLeaveYear } from './leave-year.util';
+import { leaveYearWindow } from './leave-entitlement';
+import {
+  calendarDays,
+  eventAllowance,
+  eventRequestProblem,
+  eventTypeConfigProblems,
+  toEventPolicy,
+} from './event-leave';
+import {
+  holidayKey,
+  parseHolidaySheet,
+  validateHolidays,
+  type HolidayIssue,
+} from './holiday-import';
+import {
+  buildReport,
+  readSpreadsheet,
+  type ImportReport,
+  type ImportRowResult,
+} from '../common/bulk-import';
+import { LeaveEntitlementService } from './leave-entitlement.service';
+import { recursiveReportIds } from '../common/reporting-hierarchy';
+import { HR_ROLES, NotificationDispatcher } from '../notifications/notification-dispatcher.service';
+import { leaveNotificationContext } from './leave-notifications';
 
 const ADMIN_ROLES = ['COMPANY_ADMIN', 'HR_MANAGER'];
 
@@ -25,6 +49,27 @@ const REQUEST_INCLUDE = {
   leaveType: true,
   approvals: { include: { approver: true }, orderBy: { createdAt: 'asc' } },
 } satisfies Prisma.LeaveRequestInclude;
+
+/** The event-based-leave columns a create/update DTO sets (only the ones it sends). */
+function eventTypeData(dto: CreateLeaveTypeDto | UpdateLeaveTypeDto) {
+  const keys = [
+    'grantMode',
+    'daysPerEvent',
+    'reducedDaysPerEvent',
+    'reducedAfterEvents',
+    'countCalendarDays',
+    'maxEventsPerEmployment',
+    'eventLabel',
+    'eventWindowDaysBefore',
+    'eventWindowDaysAfter',
+    'minServiceDays',
+    'requiresDocument',
+    'statutoryMaternity',
+  ] as const;
+  const data: Record<string, unknown> = {};
+  for (const k of keys) if (dto[k] !== undefined) data[k] = dto[k];
+  return data;
+}
 
 /** Working-day count: inclusive of start/end, excluding holidays and weekly-offs. */
 function countWorkingDays(
@@ -55,9 +100,26 @@ function num(value: Prisma.Decimal | number | null | undefined): number {
 export class LeaveService {
   constructor(
     private readonly tenantPrisma: TenantPrismaService,
-    private readonly storage: StorageService,
+    private readonly documents: DocumentsService,
     @InjectQueue(LEAVE_QUEUE) private readonly leaveQueue: Queue,
+    private readonly notifications: NotificationDispatcher,
+    private readonly entitlement: LeaveEntitlementService,
   ) {}
+
+  /**
+   * Every employee in `managerId`'s full reporting subtree, any depth — the
+   * same recursive scoping Employees uses (module 03's Line-Manager
+   * decision), now mirrored here instead of Leave's previous direct-report-
+   * only equality checks. Direct Prisma access rather than importing
+   * EmployeesService, same as the rest of this file — see CLAUDE.md's note
+   * on avoiding a circular module dependency with Attendance.
+   */
+  private async recursiveReportIds(managerId: string): Promise<string[]> {
+    const employees = await this.tenantPrisma.client.employee.findMany({
+      select: { id: true, reportingManagerId: true },
+    });
+    return [...recursiveReportIds(employees, managerId)];
+  }
 
   // ---- Tenant settings (leave-specific slice) ----
 
@@ -78,6 +140,9 @@ export class LeaveService {
         ...(dto.leaveApprovalLevels !== undefined && {
           leaveApprovalLevels: dto.leaveApprovalLevels,
         }),
+        ...(dto.leaveSingleApprover !== undefined && {
+          leaveSingleApprover: dto.leaveSingleApprover,
+        }),
         ...(dto.leaveEscalationDays !== undefined && {
           leaveEscalationDays: dto.leaveEscalationDays,
         }),
@@ -97,8 +162,10 @@ export class LeaveService {
   }
 
   createType(dto: CreateLeaveTypeDto) {
+    this.assertEventConfig(dto);
     return this.tenantPrisma.client.leaveType.create({
       data: {
+        ...eventTypeData(dto),
         tenantId: this.tenantPrisma.tenantId,
         name: dto.name,
         code: dto.code,
@@ -112,14 +179,24 @@ export class LeaveService {
         paid: dto.paid ?? true,
         requiresApproval: dto.requiresApproval ?? true,
         isCompOff: dto.isCompOff ?? false,
+        isRestrictedHoliday: dto.isRestrictedHoliday ?? false,
       },
     });
   }
 
-  updateType(id: string, dto: UpdateLeaveTypeDto) {
+  async updateType(id: string, dto: UpdateLeaveTypeDto) {
+    const current = await this.tenantPrisma.client.leaveType.findUniqueOrThrow({ where: { id } });
+    this.assertEventConfig({
+      ...current,
+      daysPerEvent: current.daysPerEvent === null ? null : Number(current.daysPerEvent),
+      reducedDaysPerEvent:
+        current.reducedDaysPerEvent === null ? null : Number(current.reducedDaysPerEvent),
+      ...dto,
+    });
     return this.tenantPrisma.client.leaveType.update({
       where: { id },
       data: {
+        ...eventTypeData(dto),
         ...(dto.name !== undefined && { name: dto.name }),
         ...(dto.code !== undefined && { code: dto.code }),
         ...(dto.colorToken !== undefined && { colorToken: dto.colorToken }),
@@ -132,40 +209,94 @@ export class LeaveService {
         ...(dto.paid !== undefined && { paid: dto.paid }),
         ...(dto.requiresApproval !== undefined && { requiresApproval: dto.requiresApproval }),
         ...(dto.isCompOff !== undefined && { isCompOff: dto.isCompOff }),
+        ...(dto.isRestrictedHoliday !== undefined && {
+          isRestrictedHoliday: dto.isRestrictedHoliday,
+        }),
       },
     });
   }
 
-  /** (Re)initializes this year's balance row for every employee for a leave type. */
+  /**
+   * "Apply policy now" for one leave type: credits every employee whatever
+   * the type's policy owes for the current leave year and the ledger doesn't
+   * hold yet (`LeaveEntitlementService`). The daily job does the same thing
+   * for every type, so this is only ever a "don't wait for tonight" button.
+   * Only the current leave year — past years are history, and a future year
+   * is credited by the job when it starts.
+   */
   async initializeYearlyBalances(leaveTypeId: string, year: number) {
-    const tenantId = this.tenantPrisma.tenantId;
-    const [leaveType, employees] = await Promise.all([
-      this.tenantPrisma.client.leaveType.findUniqueOrThrow({ where: { id: leaveTypeId } }),
-      this.tenantPrisma.client.employee.findMany({ select: { id: true } }),
-    ]);
-
-    for (const emp of employees) {
-      await this.tenantPrisma.client.leaveBalance.upsert({
-        where: {
-          tenantId_employeeId_leaveTypeId_year: {
-            tenantId,
-            employeeId: emp.id,
-            leaveTypeId,
-            year,
-          },
-        },
-        create: {
-          tenantId,
-          employeeId: emp.id,
-          leaveTypeId,
-          year,
-          accrued: leaveType.annualQuota,
-          used: 0,
-        },
-        update: {},
-      });
+    const settings = await this.getTenantSettings();
+    const currentYear = resolveLeaveYear(new Date(), settings.fyStartMonth);
+    if (year !== currentYear) {
+      throw new BadRequestException(
+        `Balances can only be applied for the current leave year (${currentYear}); later years are credited automatically when they start.`,
+      );
     }
-    return { initialized: employees.length };
+    await this.tenantPrisma.client.leaveType.findUniqueOrThrow({ where: { id: leaveTypeId } });
+    const { balancesCreated, credited } = await this.entitlement.applyPolicyDefaults(
+      this.tenantPrisma.client,
+      this.tenantPrisma.tenantId,
+      new Date(),
+      { leaveTypeIds: [leaveTypeId] },
+    );
+    return { initialized: balancesCreated, credited };
+  }
+
+  private assertEventConfig(t: Parameters<typeof eventTypeConfigProblems>[0]) {
+    const problems = eventTypeConfigProblems(t);
+    if (problems.length > 0) throw new BadRequestException(problems);
+  }
+
+  /**
+   * Event-based leave an employee can request (module 04 §4.4b): per type,
+   * how many events they've used and what the next event's allowance is.
+   * Types restricted to another gender are left out.
+   */
+  async eventLeave(employeeId: string, user: AuthenticatedUser) {
+    await this.assertCanViewEmployee(employeeId, user);
+    const [employee, types, requests] = await Promise.all([
+      this.tenantPrisma.client.employee.findUniqueOrThrow({
+        where: { id: employeeId },
+        select: { gender: true, esicNumber: true },
+      }),
+      this.tenantPrisma.client.leaveType.findMany({
+        where: { active: true, grantMode: 'ON_EVENT' },
+        orderBy: { name: 'asc' },
+      }),
+      this.tenantPrisma.client.leaveRequest.findMany({
+        where: {
+          employeeId,
+          leaveType: { grantMode: 'ON_EVENT' },
+          status: { in: ['PENDING_L1', 'PENDING_L2', 'APPROVED'] },
+        },
+        select: { leaveTypeId: true, eventDate: true },
+      }),
+    ]);
+    const gender = employee.gender?.trim().toUpperCase();
+    return types
+      .filter((t) => t.genderRestriction === 'ANY' || !gender || gender === t.genderRestriction)
+      .map((t) => {
+        const policy = toEventPolicy(t)!;
+        const events = new Set(
+          requests
+            .filter((r) => r.leaveTypeId === t.id && r.eventDate)
+            .map((r) => r.eventDate!.toISOString().slice(0, 10)),
+        ).size;
+        const exhausted = t.maxEventsPerEmployment !== null && events >= t.maxEventsPerEmployment;
+        return {
+          leaveType: { id: t.id, name: t.name, code: t.code, colorToken: t.colorToken },
+          eventLabel: t.eventLabel,
+          countCalendarDays: t.countCalendarDays,
+          requiresDocument: t.requiresDocument,
+          eventsUsed: events,
+          maxEvents: t.maxEventsPerEmployment,
+          nextAllowanceDays: exhausted ? 0 : eventAllowance(policy, events),
+          windowDaysBefore: t.eventWindowDaysBefore,
+          windowDaysAfter: t.eventWindowDaysAfter,
+          genderMissing: t.genderRestriction !== 'ANY' && !gender,
+          esiCovered: t.statutoryMaternity && !!employee.esicNumber,
+        };
+      });
   }
 
   // ---- Holidays ----
@@ -181,11 +312,24 @@ export class LeaveService {
     };
   }
 
-  async listHolidays(year: number) {
+  /**
+   * `year` is a *leave* year (with an April start, 2026 = Apr 2026–Mar 2027),
+   * so the Holidays screen shows the same span as the balances. `from`/`to`
+   * (inclusive `YYYY-MM-DD`) override it for calendar views of a month.
+   */
+  async listHolidays(year: number | undefined, range?: { from?: string; to?: string }) {
+    let gte: Date;
+    let lt: Date;
+    if (range?.from && range?.to) {
+      gte = new Date(range.from);
+      lt = new Date(new Date(range.to).getTime() + 86_400_000);
+    } else {
+      const settings = await this.getTenantSettings();
+      const leaveYear = year ?? resolveLeaveYear(new Date(), settings.fyStartMonth);
+      ({ start: gte, end: lt } = leaveYearWindow(leaveYear, settings.fyStartMonth));
+    }
     const rows = await this.tenantPrisma.client.holiday.findMany({
-      where: {
-        date: { gte: new Date(Date.UTC(year, 0, 1)), lte: new Date(Date.UTC(year, 11, 31)) },
-      },
+      where: { date: { gte, lt } },
       orderBy: { date: 'asc' },
     });
     return rows.map((r) => this.toHolidayDto(r));
@@ -220,17 +364,159 @@ export class LeaveService {
     return { deleted: true };
   }
 
+  /**
+   * Leave › Holidays › Import (CSV/XLSX, `holiday-import.ts`). Same two-call
+   * shape as the other bulk imports: `dryRun` reports every row, the commit
+   * saves the valid ones. Rows match on date + name, so re-importing a
+   * corrected file updates instead of duplicating; holidays missing from the
+   * file are never deleted.
+   */
+  async importHolidays(buffer: Buffer | undefined, dryRun: boolean): Promise<ImportReport> {
+    const sheet = await readSpreadsheet(buffer);
+    const { holidays, issues: parseIssues, ignoredColumns } = parseHolidaySheet(sheet);
+    const [settings, existing, lockedRuns] = await Promise.all([
+      this.getTenantSettings(),
+      this.tenantPrisma.client.holiday.findMany({ select: { date: true, name: true } }),
+      this.tenantPrisma.client.payrollRun.findMany({
+        where: { status: { in: ['PROCESSED', 'DISBURSED'] } },
+        select: { period: true },
+      }),
+    ]);
+    const currentYear = resolveLeaveYear(new Date(), settings.fyStartMonth);
+    const existingKeys = new Set(
+      existing.map((h) => holidayKey({ date: h.date.toISOString().slice(0, 10), name: h.name })),
+    );
+    const issues = [
+      ...parseIssues,
+      ...validateHolidays(holidays, {
+        current: leaveYearWindow(currentYear, settings.fyStartMonth),
+        next: leaveYearWindow(currentYear + 1, settings.fyStartMonth),
+        weeklyOffDays: settings.weeklyOffDays,
+        lockedMonths: new Set(lockedRuns.map((r) => r.period)),
+        existingKeys,
+      }),
+    ];
+
+    const byRow = new Map<number, HolidayIssue[]>();
+    for (const i of issues) if (i.row) byRow.set(i.row, [...(byRow.get(i.row) ?? []), i]);
+    const results: ImportRowResult[] = sheet.rows.map((r) => {
+      const rowIssues = byRow.get(r.row) ?? [];
+      const h = holidays.find((x) => x.row === r.row);
+      const errors = rowIssues.filter((i) => i.level === 'error').map((i) => i.message);
+      const warnings = rowIssues.filter((i) => i.level === 'warning').map((i) => i.message);
+      return {
+        row: r.row,
+        employeeCode: h?.date ?? r.values.get('date') ?? null,
+        action: h ? (existingKeys.has(holidayKey(h)) ? 'update' : 'create') : null,
+        success: errors.length === 0,
+        ...(errors.length > 0 ? { error: errors.join('; ') } : {}),
+        ...(warnings.length > 0 ? { warnings } : {}),
+        ...(h ? { detail: `${h.name}${h.optional ? ' · Optional' : ''}` } : {}),
+      };
+    });
+    const valid = holidays.filter((h) => results.find((r) => r.row === h.row)?.success);
+    const listWarnings = issues.filter((i) => !i.row).map((i) => i.message);
+
+    if (!dryRun) {
+      const tenantId = this.tenantPrisma.tenantId;
+      for (const h of valid) {
+        await this.tenantPrisma.client.holiday.upsert({
+          where: { tenantId_date_name: { tenantId, date: new Date(h.date), name: h.name } },
+          update: { isOptional: h.optional },
+          create: { tenantId, date: new Date(h.date), name: h.name, isOptional: h.optional },
+        });
+      }
+    }
+    return buildReport(dryRun, results, ignoredColumns, {
+      create: valid.filter((h) => !existingKeys.has(holidayKey(h))).length,
+      update: valid.filter((h) => existingKeys.has(holidayKey(h))).length,
+      warnings: listWarnings,
+    });
+  }
+
+  /**
+   * Restricted Holiday leave is how an employee opts in to an optional
+   * holiday — so every working day it covers must be one. (Weekly-offs and
+   * company-wide holidays in the range cost nothing and are fine.)
+   */
+  private async assertOnlyOptionalHolidays(
+    typeName: string,
+    start: Date,
+    end: Date,
+    holidayDates: Set<string>,
+    settings: { weeklyOffDays: number[] },
+  ) {
+    const optional = await this.tenantPrisma.client.holiday.findMany({
+      where: { date: { gte: start, lte: end }, isOptional: true },
+      select: { date: true },
+    });
+    const optionalDates = new Set(optional.map((h) => h.date.toISOString().slice(0, 10)));
+    const cur = new Date(start);
+    while (cur.getTime() <= end.getTime()) {
+      const iso = cur.toISOString().slice(0, 10);
+      const working = !holidayDates.has(iso) && !settings.weeklyOffDays.includes(cur.getUTCDay());
+      if (working && !optionalDates.has(iso)) {
+        throw new BadRequestException(
+          `${typeName} can only be taken on optional holidays — ${iso} isn't one.`,
+        );
+      }
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+  }
+
+  /** Company-wide days off in a range. Optional (restricted) holidays are
+   *  working days unless an employee takes one as Restricted Holiday leave. */
   private async holidayDatesBetween(start: Date, end: Date): Promise<Set<string>> {
     const holidays = await this.tenantPrisma.client.holiday.findMany({
-      where: { date: { gte: start, lte: end } },
+      where: { date: { gte: start, lte: end }, isOptional: false },
       select: { date: true },
     });
     return new Set(holidays.map((h) => h.date.toISOString().slice(0, 10)));
   }
 
+  /**
+   * Per-employee whole-day LOP from *approved unpaid leave* overlapping
+   * `[start, end)`, for Payroll's `getLopDays`/`getLopDaysBatch` (module 07
+   * decision 3, RULE-5) — the Attendance-side `ABSENT` count is a separate,
+   * already-tracked figure Attendance adds on top of this. A request
+   * spanning the boundary is clipped to the days that actually fall inside
+   * this window and re-counted as working days, not pro-rated from its
+   * stored `days` total (which covers its own full, possibly wider, range).
+   * Half-day leave is never LOP (decision 15), so every day counted here is
+   * a whole day.
+   */
+  async getApprovedLopDaysBatch(start: Date, end: Date): Promise<Map<string, number>> {
+    const settings = await this.getTenantSettings();
+    const inclusiveEnd = new Date(end.getTime() - 1);
+    const [holidayDates, requests] = await Promise.all([
+      this.holidayDatesBetween(start, inclusiveEnd),
+      this.tenantPrisma.client.leaveRequest.findMany({
+        where: {
+          status: 'APPROVED',
+          isLop: true,
+          startDate: { lt: end },
+          endDate: { gte: start },
+        },
+        select: { employeeId: true, startDate: true, endDate: true },
+      }),
+    ]);
+
+    const result = new Map<string, number>();
+    for (const req of requests) {
+      const clippedStart = req.startDate < start ? start : req.startDate;
+      const clippedEnd = req.endDate > inclusiveEnd ? inclusiveEnd : req.endDate;
+      const days = countWorkingDays(clippedStart, clippedEnd, holidayDates, settings.weeklyOffDays);
+      result.set(req.employeeId, (result.get(req.employeeId) ?? 0) + days);
+    }
+    return result;
+  }
+
   // ---- Response mappers (Decimal -> number, relations -> frontend contract) ----
 
-  private toRequestDto(row: Prisma.LeaveRequestGetPayload<{ include: typeof REQUEST_INCLUDE }>) {
+  private toRequestDto(
+    row: Prisma.LeaveRequestGetPayload<{ include: typeof REQUEST_INCLUDE }>,
+    attachment: DocumentDto | null,
+  ) {
     return {
       id: row.id,
       employeeId: row.employeeId,
@@ -253,10 +539,34 @@ export class LeaveService {
       halfDay: row.halfDay,
       reason: row.reason,
       isLop: row.isLop,
-      attachmentName: row.attachmentName,
+      eventDate: row.eventDate ? row.eventDate.toISOString().slice(0, 10) : null,
+      // Statutory maternity for an ESI member: ESIC pays the benefit — a flag for HR/payroll.
+      esiCovered: row.leaveType.statutoryMaternity && !!row.employee.esicNumber,
+      // `attachmentName` predates module 09 and stays for the existing FE
+      // contract; `attachment` carries the id + scan state for downloads.
+      attachmentName: attachment?.label ?? null,
+      attachment,
       createdAt: row.createdAt,
       approvals: row.approvals.map((a) => this.toApprovalStep(a)),
     };
+  }
+
+  /** Folds each request's live attachment (module 09 `documents`) into its DTO. */
+  private async toRequestDtos(
+    rows: Prisma.LeaveRequestGetPayload<{ include: typeof REQUEST_INCLUDE }>[],
+  ) {
+    const attachments = await this.documents.attachmentsFor(
+      'LEAVE_REQUEST',
+      rows.map((r) => r.id),
+    );
+    return rows.map((r) => this.toRequestDto(r, attachments.get(r.id) ?? null));
+  }
+
+  private async toRequestDtoOne(
+    row: Prisma.LeaveRequestGetPayload<{ include: typeof REQUEST_INCLUDE }>,
+  ) {
+    const [dto] = await this.toRequestDtos([row]);
+    return dto;
   }
 
   private toApprovalStep(row: {
@@ -392,8 +702,9 @@ export class LeaveService {
       year = resolveLeaveYear(new Date(), settings.fyStartMonth);
     }
     const [balances, pendingMap, carryMap] = await Promise.all([
+      // Event-based types have no running balance (see eventLeave()).
       this.tenantPrisma.client.leaveBalance.findMany({
-        where: { employeeId, year },
+        where: { employeeId, year, leaveType: { grantMode: 'ACCRUED' } },
         include: { leaveType: true },
       }),
       this.pendingDaysMap([employeeId]),
@@ -408,19 +719,42 @@ export class LeaveService {
     );
   }
 
+  /**
+   * Total available balance (accrued - used) across every `isEncashable`
+   * leave type, for the FY `asOfDate` falls in — module 07 Phase 8's Full &
+   * Final encashment contract, defined the same way `getLopDays()` was
+   * defined for Attendance: Payroll calls this and never reads
+   * `leave_balances` directly. Pending (not yet approved) leave is not
+   * subtracted — only what's already posted to the balance.
+   */
+  async getEncashableBalance(employeeId: string, asOfDate: Date): Promise<number> {
+    const settings = await this.getTenantSettings();
+    const year = resolveLeaveYear(asOfDate, settings.fyStartMonth);
+    const balances = await this.tenantPrisma.client.leaveBalance.findMany({
+      where: { employeeId, year, leaveType: { isEncashable: true } },
+    });
+    return balances.reduce((sum, b) => sum + (num(b.accrued) - num(b.used)), 0);
+  }
+
   /** Per-report balance matrix: Line Manager -> direct reports, HR/Admin -> everyone. */
   async teamBalances(user: AuthenticatedUser, year?: number) {
     if (year === undefined) {
       const settings = await this.getTenantSettings();
       year = resolveLeaveYear(new Date(), settings.fyStartMonth);
     }
+    const scopeIds = ADMIN_ROLES.includes(user.role)
+      ? null
+      : user.employeeId
+        ? await this.recursiveReportIds(user.employeeId)
+        : [];
     const employees = await this.tenantPrisma.client.employee.findMany({
-      where: ADMIN_ROLES.includes(user.role)
-        ? {}
-        : { reportingManagerId: user.employeeId ?? '__none__' },
+      where: scopeIds === null ? {} : { id: { in: scopeIds } },
       include: {
         department: true,
-        leaveBalances: { where: { year }, include: { leaveType: true } },
+        leaveBalances: {
+          where: { year, leaveType: { grantMode: 'ACCRUED' } },
+          include: { leaveType: true },
+        },
       },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
     });
@@ -560,11 +894,52 @@ export class LeaveService {
       }
     }
 
-    const days = dto.halfDay
-      ? 0.5
-      : countWorkingDays(start, end, holidayDates, settings.weeklyOffDays);
-    const available = balance ? num(balance.accrued) - num(balance.used) : 0;
-    const isLop = days > available;
+    if (leaveType.isRestrictedHoliday) {
+      await this.assertOnlyOptionalHolidays(leaveType.name, start, end, holidayDates, settings);
+    }
+
+    const eventPolicy = toEventPolicy(leaveType);
+    const eventDate = eventPolicy && dto.eventDate ? new Date(dto.eventDate) : null;
+    const days = eventPolicy?.countCalendarDays
+      ? calendarDays(start, end)
+      : dto.halfDay
+        ? 0.5
+        : countWorkingDays(start, end, holidayDates, settings.weeklyOffDays);
+    let isLop: boolean;
+    if (eventPolicy) {
+      // Event-based: no balance — the event's own allowance is the limit.
+      const active = await this.tenantPrisma.client.leaveRequest.findMany({
+        where: {
+          employeeId: user.employeeId,
+          leaveTypeId: leaveType.id,
+          status: { in: ['PENDING_L1', 'PENDING_L2', 'APPROVED'] },
+        },
+        select: { eventDate: true, days: true },
+      });
+      const key = eventDate?.toISOString().slice(0, 10);
+      const problem = eventRequestProblem({
+        policy: eventPolicy,
+        gender: employee.gender,
+        dateOfJoining: employee.dateOfJoining,
+        eventDate,
+        startDate: start,
+        days,
+        halfDay: dto.halfDay ?? false,
+        activeEventDates: active
+          .filter((r) => r.eventDate)
+          .map((r) => r.eventDate!.toISOString().slice(0, 10)),
+        daysAlreadyForEvent: active
+          .filter((r) => r.eventDate?.toISOString().slice(0, 10) === key)
+          .reduce((sum, r) => sum + num(r.days), 0),
+      });
+      if (problem) throw new BadRequestException(problem);
+      isLop = false;
+    } else {
+      const available = balance ? num(balance.accrued) - num(balance.used) : 0;
+      // Half-day leave is always full pay, never LOP (Payroll module 07,
+      // decision 15) — regardless of balance sufficiency.
+      isLop = !dto.halfDay && days > available;
+    }
 
     if (isLop && !settings.allowLopRequests) {
       throw new BadRequestException(
@@ -572,12 +947,11 @@ export class LeaveService {
       );
     }
 
-    const status =
-      settings.leaveApprovalLevels === 1
-        ? 'PENDING_L2'
-        : employee.reportingManagerId
-          ? 'PENDING_L1'
-          : 'PENDING_L2';
+    // L1 = the reporting manager, L2 = HR. One level goes to whichever the
+    // tenant picked; anyone without a reporting manager goes to HR.
+    const managerDecides =
+      settings.leaveApprovalLevels === 2 || settings.leaveSingleApprover === 'MANAGER';
+    const status = managerDecides && employee.reportingManagerId ? 'PENDING_L1' : 'PENDING_L2';
 
     const request = await this.tenantPrisma.client.leaveRequest.create({
       data: {
@@ -589,6 +963,7 @@ export class LeaveService {
         days,
         halfDay: dto.halfDay ?? false,
         isLop,
+        eventDate,
         reason: dto.reason,
         status,
       },
@@ -600,31 +975,41 @@ export class LeaveService {
       status === 'PENDING_L1' ? 1 : 2,
       settings.leaveEscalationDays,
     );
-    return this.toRequestDto(request);
+    const level = status === 'PENDING_L1' ? 1 : 2;
+    await this.notifications.notify({
+      tenantId: this.tenantPrisma.tenantId,
+      template: 'LEAVE_PENDING_APPROVAL',
+      context: { ...leaveNotificationContext(request), level },
+      dedupeKey: `leave:${request.id}:pending:L${level}`,
+      to: level === 1 ? { employeeIds: [employee.reportingManagerId] } : { roles: HR_ROLES },
+      actorUserId: user.sub,
+    });
+    return this.toRequestDtoOne(request);
   }
 
-  async attach(id: string, file: Express.Multer.File, user: AuthenticatedUser) {
-    const req = await this.tenantPrisma.client.leaveRequest.findUniqueOrThrow({ where: { id } });
+  /** One live supporting document per request, stored via module 09 (replacing soft-deletes the old one). */
+  async attach(id: string, file: Express.Multer.File | undefined, user: AuthenticatedUser) {
+    const req = await this.tenantPrisma.client.leaveRequest.findUniqueOrThrow({
+      where: { id },
+      include: REQUEST_INCLUDE,
+    });
     if (req.employeeId !== user.employeeId && !ADMIN_ROLES.includes(user.role)) {
       throw new ForbiddenException('Only the applicant or an HR admin can attach a document');
     }
-    const key = this.storage.buildKey(
-      this.tenantPrisma.tenantId,
-      req.employeeId,
-      file.originalname,
-    );
-    await this.storage.upload(key, file.buffer, file.mimetype);
-    const updated = await this.tenantPrisma.client.leaveRequest.update({
-      where: { id },
-      data: {
-        attachmentKey: key,
-        attachmentName: file.originalname,
-        attachmentMimeType: file.mimetype,
-        attachmentSizeBytes: file.size,
+    if (req.status === 'CANCELLED' || req.status === 'REJECTED') {
+      throw new BadRequestException(`Cannot attach a document to a ${req.status} request`);
+    }
+    const attachment = await this.documents.upload(
+      {
+        employeeId: req.employeeId,
+        ownerType: 'LEAVE_REQUEST',
+        ownerId: id,
+        file,
+        label: file?.originalname,
       },
-      include: REQUEST_INCLUDE,
-    });
-    return this.toRequestDto(updated);
+      user,
+    );
+    return this.toRequestDto(req, attachment);
   }
 
   async cancel(id: string, user: AuthenticatedUser) {
@@ -634,15 +1019,27 @@ export class LeaveService {
     }
     if (req.status === 'APPROVED') {
       const settings = await this.getTenantSettings();
+      const year = resolveLeaveYear(req.startDate, settings.fyStartMonth);
       if (!req.isLop) {
         await this.adjustUsedDays(
           req.employeeId,
           req.leaveTypeId,
-          resolveLeaveYear(req.startDate, settings.fyStartMonth),
+          year,
           -Number(req.days),
           LeaveLedgerSource.REQUEST_CANCELLED,
           user.sub,
           `Leave request ${id} cancelled`,
+        );
+      }
+      if (req.eventDate) {
+        // Only event-based requests carry an eventDate: take the grant back too.
+        await this.grantEventDays(
+          req.employeeId,
+          req.leaveTypeId,
+          year,
+          -Number(req.days),
+          user.sub,
+          `Grant reversed — leave request ${id} cancelled`,
         );
       }
       const holidayDates = await this.holidayDatesBetween(req.startDate, req.endDate);
@@ -660,7 +1057,22 @@ export class LeaveService {
       data: { status: 'CANCELLED' },
       include: REQUEST_INCLUDE,
     });
-    return this.toRequestDto(updated);
+    // Tell whoever it was sitting with: the manager at L1, HR at L2 or once
+    // approved (their balance/attendance view just changed).
+    if (req.status === 'PENDING_L1' || req.status === 'PENDING_L2' || req.status === 'APPROVED') {
+      await this.notifications.notify({
+        tenantId: this.tenantPrisma.tenantId,
+        template: 'LEAVE_CANCELLED',
+        context: { ...leaveNotificationContext(updated), wasApproved: req.status === 'APPROVED' },
+        dedupeKey: `leave:${id}:cancelled`,
+        to:
+          req.status === 'PENDING_L1'
+            ? { employeeIds: [updated.employee.reportingManagerId] }
+            : { roles: HR_ROLES },
+        actorUserId: user.sub,
+      });
+    }
+    return this.toRequestDtoOne(updated);
   }
 
   async approve(id: string, user: AuthenticatedUser, dto?: DecideLeaveDto) {
@@ -674,6 +1086,11 @@ export class LeaveService {
       if (!isReportingManager && !ADMIN_ROLES.includes(user.role)) {
         throw new ForbiddenException('Only the reporting manager or HR admin can give L1 approval');
       }
+      const settings = await this.getTenantSettings();
+      // "Reporting manager only": the manager's decision is final.
+      if (settings.leaveApprovalLevels === 1 && settings.leaveSingleApprover === 'MANAGER') {
+        return this.finalApprove(req, 1, user, dto);
+      }
       const [updated] = await Promise.all([
         this.tenantPrisma.client.leaveRequest.update({
           where: { id },
@@ -686,9 +1103,25 @@ export class LeaveService {
         }),
         this.recordApproval(id, 1, user.employeeId ?? null, 'APPROVED', dto?.comment ?? null),
       ]);
-      const settings = await this.getTenantSettings();
       await this.scheduleEscalation(id, 2, settings.leaveEscalationDays);
-      return this.toRequestDto(updated);
+      const ctx = leaveNotificationContext(updated);
+      await this.notifications.notify({
+        tenantId: this.tenantPrisma.tenantId,
+        template: 'LEAVE_DECIDED',
+        context: { ...ctx, outcome: 'L1_APPROVED', comment: dto?.comment ?? null },
+        dedupeKey: `leave:${id}:decided:L1_APPROVED`,
+        to: { employeeIds: [req.employeeId] },
+        actorUserId: user.sub,
+      });
+      await this.notifications.notify({
+        tenantId: this.tenantPrisma.tenantId,
+        template: 'LEAVE_PENDING_APPROVAL',
+        context: { ...ctx, level: 2 },
+        dedupeKey: `leave:${id}:pending:L2`,
+        to: { roles: HR_ROLES },
+        actorUserId: user.sub,
+      });
+      return this.toRequestDtoOne(updated);
     }
 
     if (req.status === 'PENDING_L2') {
@@ -697,44 +1130,94 @@ export class LeaveService {
           'Only HR Manager or Company Admin can give final (L2) approval',
         );
       }
-      const settings = await this.getTenantSettings();
-      if (!req.isLop) {
-        await this.adjustUsedDays(
-          req.employeeId,
-          req.leaveTypeId,
-          resolveLeaveYear(req.startDate, settings.fyStartMonth),
-          Number(req.days),
-          LeaveLedgerSource.REQUEST_APPROVED,
-          user.sub,
-          `Leave request ${id} approved`,
-        );
-      }
-      // Physically on leave regardless of LOP — LOP only affects pay/balance.
-      const holidayDates = await this.holidayDatesBetween(req.startDate, req.endDate);
-      await this.syncAttendanceForLeave(
-        req.employeeId,
-        req.startDate,
-        req.endDate,
-        holidayDates,
-        settings.weeklyOffDays,
-        true,
-      );
-      const [updated] = await Promise.all([
-        this.tenantPrisma.client.leaveRequest.update({
-          where: { id },
-          data: {
-            status: 'APPROVED',
-            l2ApproverId: user.employeeId ?? undefined,
-            l2DecidedAt: new Date(),
-          },
-          include: REQUEST_INCLUDE,
-        }),
-        this.recordApproval(id, 2, user.employeeId ?? null, 'APPROVED', dto?.comment ?? null),
-      ]);
-      return this.toRequestDto(updated);
+      return this.finalApprove(req, 2, user, dto);
     }
 
     throw new BadRequestException(`Request is not pending approval (status: ${req.status})`);
+  }
+
+  /**
+   * The final decision on a request: posts used days / event grants, marks
+   * attendance ON_LEAVE and approves. `level` is the step making it — 2 (HR)
+   * normally, 1 when the tenant runs "reporting manager only".
+   */
+  private async finalApprove(
+    req: Prisma.LeaveRequestGetPayload<{ include: { employee: true } }>,
+    level: 1 | 2,
+    user: AuthenticatedUser,
+    dto?: DecideLeaveDto,
+  ) {
+    const id = req.id;
+    const settings = await this.getTenantSettings();
+    const leaveType = await this.tenantPrisma.client.leaveType.findUniqueOrThrow({
+      where: { id: req.leaveTypeId },
+    });
+    const year = resolveLeaveYear(req.startDate, settings.fyStartMonth);
+    if (leaveType.grantMode === 'ON_EVENT') {
+      if (leaveType.requiresDocument) {
+        const attachments = await this.documents.attachmentsFor('LEAVE_REQUEST', [id]);
+        if (!attachments.get(id)) {
+          throw new BadRequestException(
+            `${leaveType.name} needs a supporting document (e.g. a medical or marriage certificate) before it can be approved`,
+          );
+        }
+      }
+      await this.grantEventDays(
+        req.employeeId,
+        req.leaveTypeId,
+        year,
+        Number(req.days),
+        user.sub,
+        `${leaveType.name} granted for leave request ${id}`,
+      );
+    }
+    if (!req.isLop) {
+      await this.adjustUsedDays(
+        req.employeeId,
+        req.leaveTypeId,
+        year,
+        Number(req.days),
+        LeaveLedgerSource.REQUEST_APPROVED,
+        user.sub,
+        `Leave request ${id} approved`,
+      );
+    }
+    // Physically on leave regardless of LOP — LOP only affects pay/balance.
+    const holidayDates = await this.holidayDatesBetween(req.startDate, req.endDate);
+    await this.syncAttendanceForLeave(
+      req.employeeId,
+      req.startDate,
+      req.endDate,
+      holidayDates,
+      settings.weeklyOffDays,
+      true,
+    );
+    const [updated] = await Promise.all([
+      this.tenantPrisma.client.leaveRequest.update({
+        where: { id },
+        data: {
+          status: 'APPROVED',
+          ...(level === 1
+            ? { l1ApproverId: user.employeeId ?? undefined, l1DecidedAt: new Date() }
+            : { l2ApproverId: user.employeeId ?? undefined, l2DecidedAt: new Date() }),
+        },
+        include: REQUEST_INCLUDE,
+      }),
+      this.recordApproval(id, level, user.employeeId ?? null, 'APPROVED', dto?.comment ?? null),
+    ]);
+    await this.notifications.notify({
+      tenantId: this.tenantPrisma.tenantId,
+      template: 'LEAVE_DECIDED',
+      context: {
+        ...leaveNotificationContext(updated),
+        outcome: 'APPROVED',
+        comment: dto?.comment ?? null,
+      },
+      dedupeKey: `leave:${id}:decided:APPROVED`,
+      to: { employeeIds: [req.employeeId] },
+      actorUserId: user.sub,
+    });
+    return this.toRequestDtoOne(updated);
   }
 
   async reject(id: string, user: AuthenticatedUser, dto?: DecideLeaveDto) {
@@ -755,7 +1238,19 @@ export class LeaveService {
       }),
       this.recordApproval(id, level, user.employeeId ?? null, 'REJECTED', dto?.comment ?? null),
     ]);
-    return this.toRequestDto(updated);
+    await this.notifications.notify({
+      tenantId: this.tenantPrisma.tenantId,
+      template: 'LEAVE_DECIDED',
+      context: {
+        ...leaveNotificationContext(updated),
+        outcome: 'REJECTED',
+        comment: dto?.comment ?? null,
+      },
+      dedupeKey: `leave:${id}:decided:REJECTED`,
+      to: { employeeIds: [req.employeeId] },
+      actorUserId: user.sub,
+    });
+    return this.toRequestDtoOne(updated);
   }
 
   async listForEmployee(employeeId: string, user: AuthenticatedUser) {
@@ -765,7 +1260,7 @@ export class LeaveService {
       include: REQUEST_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
-    return rows.map((r) => this.toRequestDto(r));
+    return this.toRequestDtos(rows);
   }
 
   /** Filtered org-wide register — All Requests (HR/Admin) / Auditor read-only. */
@@ -788,7 +1283,7 @@ export class LeaveService {
       include: REQUEST_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
-    return rows.map((r) => this.toRequestDto(r));
+    return this.toRequestDtos(rows);
   }
 
   async getRequest(id: string, user: AuthenticatedUser) {
@@ -797,7 +1292,7 @@ export class LeaveService {
       include: REQUEST_INCLUDE,
     });
     await this.assertCanViewEmployee(req.employeeId, user);
-    return this.toRequestDto(req);
+    return this.toRequestDtoOne(req);
   }
 
   /** Requests awaiting this user's decision (L1 for their direct reports, L2 for HR/Admin). */
@@ -815,19 +1310,22 @@ export class LeaveService {
       include: REQUEST_INCLUDE,
       orderBy: { createdAt: 'asc' },
     });
-    return rows.map((r) => this.toRequestDto(r));
+    return this.toRequestDtos(rows);
   }
 
-  /** Team calendar: approved/pending leave for a manager's direct reports (whole company for HR/Admin). */
+  /** Team calendar: approved/pending leave for a manager's full reporting subtree (whole company for HR/Admin). */
   async teamCalendar(user: AuthenticatedUser, from: string, to: string) {
+    const scopeIds = ADMIN_ROLES.includes(user.role)
+      ? null
+      : user.employeeId
+        ? await this.recursiveReportIds(user.employeeId)
+        : [];
     const rows = await this.tenantPrisma.client.leaveRequest.findMany({
       where: {
         status: { in: ['PENDING_L1', 'PENDING_L2', 'APPROVED'] },
         startDate: { lte: new Date(to) },
         endDate: { gte: new Date(from) },
-        ...(ADMIN_ROLES.includes(user.role)
-          ? {}
-          : { employee: { reportingManagerId: user.employeeId ?? '__none__' } }),
+        ...(scopeIds === null ? {} : { employeeId: { in: scopeIds } }),
       },
       include: { employee: true, leaveType: true },
     });
@@ -843,15 +1341,15 @@ export class LeaveService {
     }));
   }
 
+  /** Mirrors Employees' recursive-subtree row scoping (module 03) — a Line
+   *  Manager can view leave data for anyone in their reporting subtree, any
+   *  depth, not just direct reports. */
   private async assertCanViewEmployee(employeeId: string, user: AuthenticatedUser) {
     if (ADMIN_ROLES.includes(user.role) || user.role === 'AUDITOR') return;
     if (user.employeeId === employeeId) return;
-    if (user.role === 'LINE_MANAGER') {
-      const target = await this.tenantPrisma.client.employee.findUnique({
-        where: { id: employeeId },
-        select: { reportingManagerId: true },
-      });
-      if (target?.reportingManagerId === user.employeeId) return;
+    if (user.role === 'LINE_MANAGER' && user.employeeId) {
+      const subordinates = await this.recursiveReportIds(user.employeeId);
+      if (subordinates.includes(employeeId)) return;
     }
     throw new ForbiddenException('Not authorized to view this employee’s leave data');
   }
@@ -881,6 +1379,39 @@ export class LeaveService {
       { tenantId: this.tenantPrisma.tenantId, leaveRequestId, level },
       { delay: escalationDays * 24 * 60 * 60 * 1000, jobId: `escalate:${leaveRequestId}:${level}` },
     );
+  }
+
+  /**
+   * Event-based leave has no balance to draw on: the event's days are
+   * granted at final approval (and taken back on cancel), right next to the
+   * usual `used` movement, so the balance nets to zero and the ledger shows both.
+   */
+  private async grantEventDays(
+    employeeId: string,
+    leaveTypeId: string,
+    year: number,
+    delta: number,
+    actorUserId: string,
+    note: string,
+  ) {
+    const tenantId = this.tenantPrisma.tenantId;
+    const balance = await this.tenantPrisma.client.leaveBalance.upsert({
+      where: { tenantId_employeeId_leaveTypeId_year: { tenantId, employeeId, leaveTypeId, year } },
+      create: { tenantId, employeeId, leaveTypeId, year, accrued: Math.max(delta, 0), used: 0 },
+      update: { accrued: { increment: delta } },
+    });
+    await this.tenantPrisma.client.leaveLedgerEntry.create({
+      data: {
+        tenantId,
+        employeeId,
+        leaveTypeId,
+        delta,
+        balanceAfter: num(balance.accrued) - num(balance.used),
+        source: LeaveLedgerSource.EVENT_GRANT,
+        note,
+        actorUserId,
+      },
+    });
   }
 
   /** Adjusts `used` days for a request approval/cancellation and logs the ledger movement. */
@@ -1009,6 +1540,51 @@ export class LeaveService {
         balanceAfter,
         source: LeaveLedgerSource.COMP_OFF_CREDIT,
         note: `Comp-off credit for working on ${reason} (${date.toISOString().slice(0, 10)})`,
+        actorUserId: null,
+      },
+    });
+  }
+
+  /**
+   * Overtime-sourced comp-off (module 07 Phase 4, decision 6): a fractional
+   * day amount (hours ÷ shift full-day hours), credited once when HR
+   * approves a COMP_OFF `OvertimeClaim` — the claim's own PENDING_HR ->
+   * APPROVED transition (checked by the caller) is the idempotency
+   * boundary, not a second check here, same as every other one-shot
+   * ledger write in this service.
+   */
+  async creditOvertimeCompOff(employeeId: string, days: number, month: string): Promise<void> {
+    const tenantId = this.tenantPrisma.tenantId;
+    const compOffType = await this.tenantPrisma.client.leaveType.findFirst({
+      where: { isCompOff: true },
+    });
+    if (!compOffType) return;
+
+    const settings = await this.getTenantSettings();
+    const year = resolveLeaveYear(new Date(`${month}-01`), settings.fyStartMonth);
+
+    const balance = await this.tenantPrisma.client.leaveBalance.upsert({
+      where: {
+        tenantId_employeeId_leaveTypeId_year: {
+          tenantId,
+          employeeId,
+          leaveTypeId: compOffType.id,
+          year,
+        },
+      },
+      create: { tenantId, employeeId, leaveTypeId: compOffType.id, year, accrued: days, used: 0 },
+      update: { accrued: { increment: days } },
+    });
+    const balanceAfter = num(balance.accrued) - num(balance.used);
+    await this.tenantPrisma.client.leaveLedgerEntry.create({
+      data: {
+        tenantId,
+        employeeId,
+        leaveTypeId: compOffType.id,
+        delta: days,
+        balanceAfter,
+        source: LeaveLedgerSource.COMP_OFF_CREDIT,
+        note: `Comp-off credit for ${month} approved overtime (${days} day(s))`,
         actorUserId: null,
       },
     });

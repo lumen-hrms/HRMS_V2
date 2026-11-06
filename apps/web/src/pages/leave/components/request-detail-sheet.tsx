@@ -4,8 +4,9 @@ import { Sheet } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Field } from '@/components/ui/field';
+import { DocumentLink } from '@/components/documents';
 import { StatusTimeline } from './status-timeline';
-import { LeaveStatusBadge, LeaveTypeChip, LopBadge, dayLabel, fmtRange } from '@/pages/leave/shared';
+import { LeaveStatusBadge, LeaveTypeChip, LopBadge, dayLabel, fmtDate, fmtRange } from '@/pages/leave/shared';
 import type { LeaveRequest } from '@/lib/leave/types';
 
 export type DetailAction =
@@ -107,18 +108,31 @@ export function RequestDetailSheet({
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
           <Row label="Leave type" value={request.leaveType.name} />
           <Row label="Duration" value={`${fmtRange(request.startDate, request.endDate)} · ${dayLabel(request.days)}${request.halfDay ? ' (half day)' : ''}`} span />
-          <Row label="Reason" value={request.reason || '—'} span />
-          {request.attachmentName && (
+          {request.eventDate && <Row label="Event date" value={fmtDate(request.eventDate)} />}
+          {request.esiCovered && (
             <Row
-              label="Attachment"
+              label="ESI"
               span
-              value={
-                <span className="inline-flex items-center gap-1.5 text-primary">
-                  <Paperclip className="h-3.5 w-3.5" />
-                  {request.attachmentName}
-                </span>
-              }
+              value="ESI-covered employee — the maternity benefit is usually paid by ESIC, not payroll."
             />
+          )}
+          <Row label="Reason" value={request.reason || '—'} span />
+          {request.attachment ? (
+            <Row label="Attachment" span value={<DocumentLink doc={request.attachment} />} />
+          ) : (
+            request.attachmentName && (
+              // Mock-store fixtures carry only a name, no document id.
+              <Row
+                label="Attachment"
+                span
+                value={
+                  <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                    <Paperclip className="h-3.5 w-3.5" />
+                    {request.attachmentName}
+                  </span>
+                }
+              />
+            )
           )}
         </dl>
 

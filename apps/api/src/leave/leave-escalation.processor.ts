@@ -1,9 +1,12 @@
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import { Job, Queue } from 'bullmq';
+import { PAUSED_WORKER, startBackgroundWorker } from '../common/background-workers';
 import { TenantPrismaClientProvider } from '../prisma/tenant-prisma-client.provider';
 import { withTenantContext } from '../prisma/with-tenant-context';
 import { LEAVE_QUEUE } from './leave.constants';
+import { HR_ROLES, NotificationDispatcher } from '../notifications/notification-dispatcher.service';
+import { leaveNotificationContext } from './leave-notifications';
 
 interface EscalationJobData {
   tenantId: string;
@@ -19,13 +22,20 @@ interface EscalationJobData {
  * follow up manually — a balance deduction is never auto-approved.
  */
 @Injectable()
-@Processor(LEAVE_QUEUE)
-export class LeaveEscalationProcessor extends WorkerHost {
+@Processor(LEAVE_QUEUE, PAUSED_WORKER)
+export class LeaveEscalationProcessor extends WorkerHost implements OnApplicationBootstrap {
   constructor(
     private readonly tenantPrismaRaw: TenantPrismaClientProvider,
     @InjectQueue(LEAVE_QUEUE) private readonly leaveQueue: Queue,
+    private readonly notifications: NotificationDispatcher,
   ) {
     super();
+  }
+
+  /** Starts the worker only where background workers are enabled
+   *  (`common/background-workers.ts`). */
+  async onApplicationBootstrap() {
+    await startBackgroundWorker(this);
   }
 
   async process(job: Job): Promise<void> {
@@ -33,7 +43,10 @@ export class LeaveEscalationProcessor extends WorkerHost {
     const { tenantId, leaveRequestId, level } = job.data as EscalationJobData;
     const client = withTenantContext(this.tenantPrismaRaw, tenantId);
 
-    const req = await client.leaveRequest.findUnique({ where: { id: leaveRequestId } });
+    const req = await client.leaveRequest.findUnique({
+      where: { id: leaveRequestId },
+      include: { employee: true, leaveType: true },
+    });
     const expectedStatus = level === 1 ? 'PENDING_L1' : 'PENDING_L2';
     if (!req || req.status !== expectedStatus) return;
 
@@ -61,6 +74,14 @@ export class LeaveEscalationProcessor extends WorkerHost {
           jobId: `escalate:${leaveRequestId}:2`,
         },
       );
+      // Same dedupe key as a manual L1 approval — HR hears once either way.
+      await this.notifications.notify({
+        tenantId,
+        template: 'LEAVE_PENDING_APPROVAL',
+        context: { ...leaveNotificationContext(req), level: 2, escalated: true },
+        dedupeKey: `leave:${leaveRequestId}:pending:L2`,
+        to: { roles: HR_ROLES },
+      });
       return;
     }
 
@@ -73,6 +94,13 @@ export class LeaveEscalationProcessor extends WorkerHost {
         decision: 'ESCALATED',
         comment: 'Escalation threshold reached at final approval — needs manual HR follow-up',
       },
+    });
+    await this.notifications.notify({
+      tenantId,
+      template: 'LEAVE_ESCALATED',
+      context: leaveNotificationContext(req),
+      dedupeKey: `leave:${leaveRequestId}:escalated:L2`,
+      to: { roles: HR_ROLES },
     });
   }
 }

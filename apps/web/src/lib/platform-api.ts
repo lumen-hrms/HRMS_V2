@@ -9,11 +9,16 @@
  */
 import { auth } from './firebase';
 import type {
+  BreakGlassGrant,
+  ContactLead,
   CreatedTenant,
   CreateTenantInput,
+  EmailSuppression,
   Plan,
   PlatformAuditEntry,
+  PlatformSettings,
   TenantDetail,
+  TenantPayment,
   TenantRow,
   TenantStatus,
   UpdatePlanInput,
@@ -53,6 +58,7 @@ const raw = {
     request<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined }),
   patch: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'PATCH', body: body ? JSON.stringify(body) : undefined }),
+  delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
 };
 
 export const platformApi = {
@@ -108,6 +114,34 @@ export const platformApi = {
     return raw.patch<TenantRow>(`/tenants/${id}/plan`, { plan, reason });
   },
 
+  /** `PATCH /tenants/:id/trial` — set when the trial ends (reopens a read-only tenant). */
+  setTrialEnd(id: string, trialEndsAt: string, reason: string) {
+    return raw.patch<{ trialEndsAt: string; status: TenantStatus }>(`/tenants/${id}/trial`, {
+      trialEndsAt,
+      reason,
+    });
+  },
+
+  /** `POST /tenants/:id/convert` — confirm the paid plan after payment (outside the app). */
+  convertTenant(id: string, plan: string, reason: string) {
+    return raw.post<{ status: TenantStatus; plan: string; renewsAt: string }>(
+      `/tenants/${id}/convert`,
+      { plan, reason },
+    );
+  },
+
+  /** `POST /tenants/:id/billing/subscribe` — create the Razorpay subscription; returns the customer's payment link. */
+  subscribeBilling(id: string) {
+    return raw.post<{ subscriptionId: string; paymentUrl: string }>(
+      `/tenants/${id}/billing/subscribe`,
+    );
+  },
+
+  /** `GET /tenants/:id/payments` — captured Razorpay charges, newest first. */
+  listPayments(id: string) {
+    return raw.get<TenantPayment[]>(`/tenants/${id}/payments`);
+  },
+
   /** `POST /tenants/:id/renew` — renew a term; re-snapshots the current plan definition. */
   renew(id: string) {
     return raw.post<TenantRow>(`/tenants/${id}/renew`);
@@ -129,25 +163,58 @@ export const platformApi = {
     return raw.get<PlatformAuditEntry[]>(`/audit${qs ? `?${qs}` : ''}`);
   },
 
-  // ---- TODO(api): endpoints not built yet — these will 404 until the
-  //      backend catches up (docs/modules/02_PLATFORM_ADMIN.md §9). Screens
-  //      call them and degrade gracefully.
-
-  /** TODO(api) `GET /tenants/:id` */
+  /** `GET /tenants/:id` — tenant detail (superset of the list row). */
   getTenant(id: string) {
     return raw.get<TenantDetail>(`/tenants/${id}`);
   },
 
-  /** TODO(api) `POST /tenants/:id/refresh-headcount` */
+  /** `POST /tenants/:id/refresh-headcount` — recompute the denormalized employee count. */
   refreshHeadcount(id: string) {
     return raw.post<{ employeeCount: number }>(`/tenants/${id}/refresh-headcount`);
   },
 
-  /** TODO(api) `POST /tenants/:id/breakglass` */
+  /** `POST /tenants/:id/breakglass` — request time-boxed, read-only, audited support access. */
   requestBreakGlass(id: string, reason: string, ttlMinutes: number) {
     return raw.post<{ id: string; expiresAt: string }>(`/tenants/${id}/breakglass`, {
       reason,
       ttlMinutes,
     });
+  },
+
+  /** `GET /tenants/:id/breakglass` — the tenant's current ACTIVE grant, if any. */
+  getActiveBreakGlass(id: string) {
+    return raw.get<BreakGlassGrant | null>(`/tenants/${id}/breakglass`);
+  },
+
+  /** `POST /tenants/:id/breakglass/:grantId/revoke` */
+  revokeBreakGlass(id: string, grantId: string) {
+    return raw.post<{ status: 'REVOKED' }>(`/tenants/${id}/breakglass/${grantId}/revoke`);
+  },
+
+  /** `GET /leads` — contact-form submissions, newest first. */
+  listLeads() {
+    return raw.get<ContactLead[]>('/leads');
+  },
+
+  /** `GET /settings` — currently just the contact-notify recipient list. */
+  getSettings() {
+    return raw.get<PlatformSettings>('/settings');
+  },
+
+  /** `PATCH /settings` — replaces the recipient list wholesale, audited. */
+  updateSettings(contactNotifyEmails: string[]) {
+    return raw.patch<PlatformSettings>('/settings', { contactNotifyEmails });
+  },
+
+  /** `GET /email-suppressions` — hard-bounced / complained addresses, newest event first. */
+  listEmailSuppressions() {
+    return raw.get<EmailSuppression[]>('/email-suppressions');
+  },
+
+  /** `DELETE /email-suppressions/:email` — also clears SES's own list (best effort); audited. */
+  liftEmailSuppression(email: string) {
+    return raw.delete<{ email: string; sesListCleared: boolean }>(
+      `/email-suppressions/${encodeURIComponent(email)}`,
+    );
   },
 };

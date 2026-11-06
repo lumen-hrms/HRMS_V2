@@ -1,6 +1,37 @@
+import { Link } from 'react-router-dom';
+import { UserX } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { EmptyState } from '@/components/ui/empty-state';
 import { cn } from '@/lib/utils';
+import { isLeaveAdmin, type Role } from '@/lib/roles';
 import { STATUS_LABELS, type LeaveRequestStatus } from '@/lib/leave/types';
+
+/**
+ * Self-service tabs for a login with no linked employee record — typically
+ * the Company Admin created at tenant onboarding. Admin/HR can fix it
+ * themselves (Add Employee → "Link existing login", or Link login on a
+ * profile); everyone else has to ask HR.
+ */
+export function NoEmployeeProfile({ role }: { role: Role }) {
+  return (
+    <EmptyState
+      icon={UserX}
+      title="Your login isn’t linked to an employee profile"
+      description={
+        isLeaveAdmin({ role })
+          ? 'Balances and requests belong to an employee record. Add yourself under Employees and choose “Link existing login”, or use Link login on your existing profile.'
+          : 'Balances and requests belong to an employee record. Ask HR to link your login to your employee profile.'
+      }
+      action={
+        isLeaveAdmin({ role }) ? (
+          <Link to="/employees/new" className="text-sm font-medium text-primary hover:underline">
+            Add employee →
+          </Link>
+        ) : undefined
+      }
+    />
+  );
+}
 
 export function fmtDate(iso: string): string {
   return new Date(iso + (iso.length === 10 ? 'T00:00:00' : '')).toLocaleDateString(undefined, {

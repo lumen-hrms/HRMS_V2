@@ -1,18 +1,24 @@
 import * as React from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Upload, Download, ArrowRightLeft, Eye, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, CalendarDays, Phone, Upload, Download, ArrowRightLeft, Eye, KeyRound, Mail, Pencil, Plus, RefreshCw, Trash2, UserPlus } from 'lucide-react';
 import { api, getAccessToken, getTenantSubdomain, isApiError } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader } from '@/components/ui/dialog';
 import { Field } from '@/components/ui/field';
+import { PhoneInput } from '@/components/ui/phone-input';
 import { Select } from '@/components/ui/select';
+import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/context/auth-context';
+import { ScanStatusBadge } from '@/components/documents';
+import { canDownload, UPLOAD_ACCEPT, uploadProblem, useOpenDocument, type ScanStatus } from '@/lib/documents';
+import { assignableRoles, ROLE_LABELS } from '@/lib/roles';
+import { useLinkableLogins } from '@/pages/employees/linkable-logins';
 
 const DOCUMENT_CATEGORY_LABEL: Record<string, string> = {
   OFFER_LETTER: 'Offer letter',
@@ -81,10 +87,14 @@ interface EmployeeDetail {
   noticeStartDate: string | null;
   lastWorkingDate: string | null;
   userId: string | null;
+  /** Sign-in email of the linked login — only sent to Company Admin / HR Manager. */
+  loginEmail?: string | null;
   personalEmail: string | null;
   phone: string | null;
   gender: string | null;
+  departmentId: string | null;
   department: { name: string } | null;
+  reportingManagerId: string | null;
   reportingManager: { firstName: string; lastName: string } | null;
   directReports: { id: string; firstName: string; lastName: string }[];
   maritalStatus: string | null;
@@ -114,6 +124,7 @@ interface Doc {
   id: string;
   label: string;
   category: string;
+  scanStatus: ScanStatus;
   mimeType: string;
   sizeBytes: number;
   uploadedAt: string;
@@ -134,18 +145,22 @@ const HR_ADMIN = ['COMPANY_ADMIN', 'HR_MANAGER'];
 
 export function EmployeeDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const [employee, setEmployee] = React.useState<EmployeeDetail | null>(null);
   const [docs, setDocs] = React.useState<Doc[]>([]);
   const [contacts, setContacts] = React.useState<EmergencyContact[]>([]);
   const [uploading, setUploading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [statusDialogOpen, setStatusDialogOpen] = React.useState(false);
+  const [linkDialogOpen, setLinkDialogOpen] = React.useState(false);
+  const [createLoginOpen, setCreateLoginOpen] = React.useState(false);
+  const [resetDialogOpen, setResetDialogOpen] = React.useState(false);
   const [profileDialogOpen, setProfileDialogOpen] = React.useState(false);
   const [sensitiveDialogOpen, setSensitiveDialogOpen] = React.useState(false);
   const [contactDialog, setContactDialog] = React.useState<EmergencyContact | 'new' | null>(null);
   const [tab, setTab] = React.useState('profile');
   const { toast } = useToast();
+  const openDocument = useOpenDocument();
   const canManage = !!user && HR_ADMIN.includes(user.role);
 
   const load = React.useCallback(() => {
@@ -157,7 +172,55 @@ export function EmployeeDetailPage() {
 
   React.useEffect(load, [load]);
 
+  const [syncingEmail, setSyncingEmail] = React.useState(false);
+  async function syncLoginEmail() {
+    if (!id) return;
+    setSyncingEmail(true);
+    try {
+      const { email, changed } = await api.post<{ email: string; changed: boolean }>(
+        `/employees/${id}/login/sync-email`,
+      );
+      toast({
+        title: changed ? 'Login email updated' : 'Already in sync',
+        description: changed
+          ? `They now sign in with ${email}.`
+          : `The login already uses ${email}.`,
+      });
+      load();
+    } catch (err) {
+      toast({
+        title: 'Could not sync the login email',
+        description: isApiError(err) ? err.message : 'Try again.',
+      });
+    } finally {
+      setSyncingEmail(false);
+    }
+  }
+
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !id) return;
+    const problem = uploadProblem(file);
+    if (problem) {
+      setError(problem);
+      e.target.value = '';
+      return;
+    }
+    setUploading(true);
+    setError(null);
+    try {
+      await api.upload(`/employees/${id}/documents?label=${encodeURIComponent(file.name)}`, file);
+      toast({ title: 'Uploaded', description: 'The file is being scanned and will be downloadable shortly.' });
+      load();
+    } catch (err) {
+      setError(isApiError(err) ? err.message : (err as Error).message);
+    } finally {
+      setUploading(false);
+      e.target.value = '';
+    }
+  }
+
+  async function handlePhotoUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file || !id) return;
     setUploading(true);
@@ -170,12 +233,8 @@ export function EmployeeDetailPage() {
       const subdomain = getTenantSubdomain();
       if (token) headers.Authorization = `Bearer ${token}`;
       if (subdomain) headers['X-Tenant-Subdomain'] = subdomain;
-      const res = await fetch(`/api/employees/${id}/documents?label=${encodeURIComponent(file.name)}`, {
-        method: 'POST',
-        headers,
-        body: formData,
-      });
-      if (!res.ok) throw new Error((await res.json()).message ?? 'Upload failed');
+      const res = await fetch(`/api/employees/${id}/photo`, { method: 'POST', headers, body: formData });
+      if (!res.ok) throw new Error((await res.json()).message ?? 'Photo upload failed');
       load();
     } catch (err) {
       setError(isApiError(err) ? err.message : (err as Error).message);
@@ -183,11 +242,6 @@ export function EmployeeDetailPage() {
       setUploading(false);
       e.target.value = '';
     }
-  }
-
-  async function handleDownload(docId: string) {
-    const { url } = await api.get<{ url: string }>(`/documents/${docId}/download-url`);
-    window.open(url, '_blank');
   }
 
   async function handleDeleteDocument(docId: string) {
@@ -207,16 +261,41 @@ export function EmployeeDetailPage() {
   const initials = `${employee.firstName[0] ?? ''}${employee.lastName[0] ?? ''}`.toUpperCase();
 
   return (
-    <div className="flex max-w-4xl flex-col gap-5">
+    <div className="flex w-full flex-col gap-5">
+      <Link
+        to="/employees"
+        className="-mb-2 inline-flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+      >
+        <ArrowLeft className="h-4 w-4" /> Back to employees
+      </Link>
       <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-4">
-          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-secondary text-lg font-semibold text-secondary-foreground">
+          <label
+            className={`group relative flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-secondary text-lg font-semibold text-secondary-foreground ${
+              canManage || isSelf ? 'cursor-pointer' : ''
+            }`}
+            title={canManage || isSelf ? 'Change photo (JPEG/PNG/WebP, max 5MB)' : undefined}
+          >
             {employee.photoUrl ? (
               <img src={employee.photoUrl} alt="" className="h-14 w-14 rounded-full object-cover" />
             ) : (
               initials || '—'
             )}
-          </div>
+            {(canManage || isSelf) && (
+              <>
+                <span className="absolute inset-0 hidden items-center justify-center rounded-full bg-black/50 group-hover:flex">
+                  <Upload className="h-4 w-4 text-white" />
+                </span>
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="hidden"
+                  disabled={uploading}
+                  onChange={handlePhotoUpload}
+                />
+              </>
+            )}
+          </label>
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-xl font-semibold">
@@ -230,12 +309,51 @@ export function EmployeeDetailPage() {
               {employee.employeeCode} · {employee.designation ?? 'No designation set'}
               {employee.department?.name ? ` · ${employee.department.name}` : ''}
             </p>
+            <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
+              {employee.personalEmail && (
+                <span className="inline-flex items-center gap-1.5">
+                  <Mail className="h-3.5 w-3.5" /> {employee.personalEmail}
+                </span>
+              )}
+              {employee.phone && (
+                <span className="inline-flex items-center gap-1.5">
+                  <Phone className="h-3.5 w-3.5" /> {employee.phone}
+                </span>
+              )}
+              {employee.dateOfJoining && (
+                <span className="inline-flex items-center gap-1.5">
+                  <CalendarDays className="h-3.5 w-3.5" /> Joined {fmtDate(employee.dateOfJoining)}
+                </span>
+              )}
+            </div>
           </div>
         </div>
         {canManage && (
-          <Button size="sm" variant="outline" onClick={() => setStatusDialogOpen(true)}>
-            <ArrowRightLeft className="h-3.5 w-3.5" /> Change status
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {!employee.userId && employee.lifecycleState !== 'SEPARATED' && (
+              <>
+                <Button size="sm" variant="outline" onClick={() => setCreateLoginOpen(true)}>
+                  <UserPlus className="h-3.5 w-3.5" /> Create login
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setLinkDialogOpen(true)}>
+                  <KeyRound className="h-3.5 w-3.5" /> Link login
+                </Button>
+              </>
+            )}
+            {employee.userId && (
+              <>
+                <Button size="sm" variant="outline" disabled={syncingEmail} onClick={syncLoginEmail}>
+                  <RefreshCw className="h-3.5 w-3.5" /> {syncingEmail ? 'Syncing…' : 'Sync login email'}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setResetDialogOpen(true)}>
+                  <Mail className="h-3.5 w-3.5" /> Send password reset
+                </Button>
+              </>
+            )}
+            <Button size="sm" variant="outline" onClick={() => setStatusDialogOpen(true)}>
+              <ArrowRightLeft className="h-3.5 w-3.5" /> Change status
+            </Button>
+          </div>
         )}
       </div>
 
@@ -260,8 +378,18 @@ export function EmployeeDetailPage() {
                 </Button>
               )}
             </CardHeader>
-            <CardContent className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
-              <Row label="Personal email" value={employee.personalEmail ?? '—'} />
+            <CardContent className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
+              <Row label="Email" value={employee.personalEmail ?? '—'} />
+              {canManage && employee.userId && (
+                <Row
+                  label="Login email"
+                  value={
+                    employee.loginEmail && employee.loginEmail !== employee.personalEmail
+                      ? `${employee.loginEmail} (differs — use Sync login email)`
+                      : (employee.loginEmail ?? '—')
+                  }
+                />
+              )}
               <Row label="Phone" value={employee.phone ?? '—'} />
               <Row label="Gender" value={employee.gender ?? '—'} />
               <Row label="Marital status" value={employee.maritalStatus ?? '—'} />
@@ -272,7 +400,8 @@ export function EmployeeDetailPage() {
         </TabsContent>
 
         <TabsContent value="employment">
-          <Card>
+          <div className="grid gap-4 xl:grid-cols-3 xl:items-start">
+          <Card className="xl:col-span-2">
             <CardHeader className="flex-row items-center justify-between">
               <CardTitle>Employment</CardTitle>
               {canManage && (
@@ -281,7 +410,7 @@ export function EmployeeDetailPage() {
                 </Button>
               )}
             </CardHeader>
-            <CardContent className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+            <CardContent className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
               <Row label="Department" value={employee.department?.name ?? '—'} />
               <Row
                 label="Reporting manager"
@@ -299,6 +428,7 @@ export function EmployeeDetailPage() {
             </CardContent>
           </Card>
           <LifecycleTimeline employee={employee} />
+          </div>
         </TabsContent>
 
         <TabsContent value="statutory">
@@ -311,7 +441,7 @@ export function EmployeeDetailPage() {
                 </Button>
               )}
             </CardHeader>
-            <CardContent className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+            <CardContent className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
               <MaskedRow
                 employeeId={employee.id}
                 label="PAN"
@@ -338,7 +468,7 @@ export function EmployeeDetailPage() {
                 </Button>
               )}
             </CardHeader>
-            <CardContent className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+            <CardContent className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
               <Row label="Account holder" value={employee.bankAccountHolderName ?? '—'} />
               <MaskedRow
                 employeeId={employee.id}
@@ -364,16 +494,16 @@ export function EmployeeDetailPage() {
                 </Button>
               )}
             </CardHeader>
-            <CardContent className="flex flex-col gap-2">
+            <CardContent className="grid grid-cols-1 gap-3 lg:grid-cols-2">
               {contacts.length === 0 && (
-                <p className="text-sm text-muted-foreground">No emergency contacts on file.</p>
+                <p className="text-sm text-muted-foreground lg:col-span-2">No emergency contacts on file.</p>
               )}
               {contacts.map((c) => (
                 <div
                   key={c.id}
-                  className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm"
+                  className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-secondary/40 px-4 py-3 text-sm"
                 >
-                  <div className="flex flex-col">
+                  <div className="flex min-w-0 flex-col">
                     <span className="font-medium">
                       {c.name} {c.isPrimary && <Badge variant="success">Primary</Badge>}
                     </span>
@@ -409,8 +539,14 @@ export function EmployeeDetailPage() {
             <CardHeader className="flex-row items-center justify-between">
               <CardTitle>Documents</CardTitle>
               <label>
-                <input type="file" className="hidden" onChange={handleUpload} disabled={uploading} />
-                <span className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-accent">
+                <input
+                  type="file"
+                  accept={UPLOAD_ACCEPT}
+                  className="hidden"
+                  onChange={handleUpload}
+                  disabled={uploading}
+                />
+                <span className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-border px-3 py-1.5 text-xs font-medium hover:bg-accent">
                   <Upload className="h-3.5 w-3.5" /> {uploading ? 'Uploading…' : 'Upload'}
                 </span>
               </label>
@@ -421,10 +557,11 @@ export function EmployeeDetailPage() {
               {docs.map((d) => (
                 <div
                   key={d.id}
-                  className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-sm"
+                  className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2 text-sm"
                 >
                   <div className="flex flex-1 items-center gap-2 min-w-0">
                     <span className="truncate">{d.label}</span>
+                    <ScanStatusBadge status={d.scanStatus} />
                     {canManage ? (
                       <Select
                         className="h-7 w-36 text-xs"
@@ -442,7 +579,12 @@ export function EmployeeDetailPage() {
                     )}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    <Button size="sm" variant="ghost" onClick={() => handleDownload(d.id)}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={!canDownload(d.scanStatus)}
+                      onClick={() => openDocument(d.id)}
+                    >
                       <Download className="h-3.5 w-3.5" /> Download
                     </Button>
                     {canManage && (
@@ -458,7 +600,7 @@ export function EmployeeDetailPage() {
         </TabsContent>
 
         <TabsContent value="reporting">
-          <div className="flex flex-col gap-4">
+          <div className="grid gap-4 md:grid-cols-2 md:items-start">
             <Card>
               <CardHeader>
                 <CardTitle>Reporting manager</CardTitle>
@@ -510,6 +652,51 @@ export function EmployeeDetailPage() {
         }}
       />
 
+      {linkDialogOpen && (
+        <LinkLoginDialog
+          employee={employee}
+          onOpenChange={setLinkDialogOpen}
+          onLinked={async (userId) => {
+            setLinkDialogOpen(false);
+            // Linking your own login changes your employeeId.
+            if (userId === user?.sub) await refreshUser();
+            load();
+            toast({ title: 'Login linked' });
+          }}
+        />
+      )}
+
+      {createLoginOpen && (
+        <CreateLoginDialog
+          employee={employee}
+          onOpenChange={setCreateLoginOpen}
+          onCreated={({ email, emailSent }) => {
+            setCreateLoginOpen(false);
+            load();
+            toast(
+              emailSent
+                ? { title: 'Login created', description: `Sign-in details emailed to ${email}.` }
+                : {
+                    title: 'Login created, email not sent',
+                    description: `Use “Send password reset” so ${email} can set a password.`,
+                  },
+            );
+          }}
+        />
+      )}
+
+      {resetDialogOpen && employee.userId && (
+        <SendResetDialog
+          employee={employee}
+          userId={employee.userId}
+          onOpenChange={setResetDialogOpen}
+          onSent={(email) => {
+            setResetDialogOpen(false);
+            toast({ title: 'Password reset sent', description: `Reset link emailed to ${email}.` });
+          }}
+        />
+      )}
+
       {profileDialogOpen && (
         <ProfileFieldsDialog
           employee={employee}
@@ -553,9 +740,9 @@ export function EmployeeDetailPage() {
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-medium">{value}</span>
+    <div className="flex min-w-0 flex-col gap-1 rounded-xl border border-border/60 bg-secondary/40 px-4 py-3">
+      <span className="text-xs uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className="break-words font-medium">{value}</span>
     </div>
   );
 }
@@ -588,7 +775,7 @@ function LifecycleTimeline({ employee }: { employee: EmployeeDetail }) {
   if (milestones.length === 0) return null;
 
   return (
-    <Card className="mt-4">
+    <Card>
       <CardHeader>
         <CardTitle>Lifecycle history</CardTitle>
       </CardHeader>
@@ -629,17 +816,20 @@ function MaskedRow({
 }) {
   const [revealed, setRevealed] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [confirmOpen, setConfirmOpen] = React.useState(false);
+  const [reason, setReason] = React.useState('');
 
   async function reveal() {
-    const reason = window.prompt(`Reason for revealing ${label} (this is logged)`);
-    if (!reason) return;
+    if (reason.trim().length < 5) return;
     setBusy(true);
     try {
       const result = await api.post<{ field: string; value: string }>(`/employees/${employeeId}/reveal`, {
         field,
-        reason,
+        reason: reason.trim(),
       });
       setRevealed(result.value);
+      setConfirmOpen(false);
+      setReason('');
     } catch {
       // silently ignore — the masked value stays shown
     } finally {
@@ -648,14 +838,13 @@ function MaskedRow({
   }
 
   return (
-    <div className="flex items-center justify-between">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="flex items-center gap-1.5 font-medium">
+    <div className="flex min-w-0 flex-col gap-1 rounded-xl border border-border/60 bg-secondary/40 px-4 py-3">
+      <span className="text-xs uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className="flex items-center gap-1.5 break-all font-medium">
         {revealed ?? masked ?? '—'}
         {canReveal && masked && !revealed && (
           <button
-            onClick={reveal}
-            disabled={busy}
+            onClick={() => setConfirmOpen(true)}
             title="Reveal (logged)"
             className="text-muted-foreground hover:text-foreground"
           >
@@ -663,8 +852,41 @@ function MaskedRow({
           </button>
         )}
       </span>
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent>
+          <DialogHeader title={`Reveal ${label}`} onClose={() => setConfirmOpen(false)} />
+          <p className="mb-3 text-sm text-muted-foreground">
+            This reveal is logged against your account. State why you need to see the unmasked
+            value.
+          </p>
+          <Textarea
+            rows={2}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. Verifying bank details ahead of this month's payroll run."
+          />
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button onClick={reveal} disabled={busy || reason.trim().length < 5}>
+              {busy ? '…' : 'Reveal'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
+}
+
+interface ManagerCandidate {
+  id: string;
+  firstName: string;
+  lastName: string;
+  designation: string | null;
+  lifecycleState: string;
+  department: { name: string } | null;
 }
 
 function ProfileFieldsDialog({
@@ -689,15 +911,55 @@ function ProfileFieldsDialog({
   const [ctcAnnual, setCtcAnnual] = React.useState(employee.ctcAnnual ?? '');
   const [payGrade, setPayGrade] = React.useState(employee.payGrade ?? '');
   const [costCenter, setCostCenter] = React.useState(employee.costCenter ?? '');
+  const [designation, setDesignation] = React.useState(employee.designation ?? '');
+  const [managerId, setManagerId] = React.useState(employee.reportingManagerId ?? '');
+  const [departmentId, setDepartmentId] = React.useState(employee.departmentId ?? '');
+  const [departments, setDepartments] = React.useState<{ id: string; name: string }[]>([]);
+  const [managers, setManagers] = React.useState<ManagerCandidate[]>([]);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (selfEditOnly) return;
+    api
+      .get<ManagerCandidate[]>('/employees')
+      .then((all) => setManagers(all.filter((e) => e.id !== employee.id)))
+      .catch(() => setManagers([]));
+    api
+      .get<{ id: string; name: string }[]>('/departments')
+      .then(setDepartments)
+      .catch(() => setDepartments([]));
+  }, [selfEditOnly, employee.id]);
+
+  // A-Z by name; ex-employees can't be picked (the current manager stays listed regardless).
+  const managerOptions = React.useMemo(() => {
+    const options: ComboboxOption[] = managers
+      .filter((m) => m.lifecycleState !== 'SEPARATED')
+      .map((m) => ({
+        value: m.id,
+        label: `${m.firstName} ${m.lastName}`,
+        description: [m.designation, m.department?.name].filter(Boolean).join(' · '),
+      }));
+    if (
+      employee.reportingManagerId &&
+      employee.reportingManager &&
+      !options.some((o) => o.value === employee.reportingManagerId)
+    ) {
+      options.push({
+        value: employee.reportingManagerId,
+        label: `${employee.reportingManager.firstName} ${employee.reportingManager.lastName}`,
+      });
+    }
+    return options.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+  }, [managers, employee.reportingManagerId, employee.reportingManager]);
 
   async function save() {
     setBusy(true);
     setError(null);
     try {
       await api.patch(`/employees/${employee.id}`, {
-        personalEmail: personalEmail || undefined,
+        // HR only — it is also the login's sign-in email.
+        ...(selfEditOnly ? {} : { personalEmail: personalEmail || undefined }),
         phone: phone || undefined,
         gender: gender || undefined,
         maritalStatus: maritalStatus || undefined,
@@ -709,11 +971,18 @@ function ProfileFieldsDialog({
         ...(selfEditOnly
           ? {}
           : {
+              designation: designation.trim() || undefined,
               employmentType: employmentType || undefined,
               workLocation: workLocation || undefined,
               ctcAnnual: ctcAnnual ? Number(ctcAnnual) : undefined,
               payGrade: payGrade || undefined,
               costCenter: costCenter || undefined,
+              // Only when changed.
+              ...(departmentId && departmentId !== (employee.departmentId ?? '') ? { departmentId } : {}),
+              // Null clears the manager.
+              ...(managerId !== (employee.reportingManagerId ?? '')
+                ? { reportingManagerId: managerId || null }
+                : {}),
             }),
       });
       onSaved();
@@ -726,17 +995,22 @@ function ProfileFieldsDialog({
 
   return (
     <Dialog open onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-2xl">
         <DialogHeader
           title={selfEditOnly ? 'Edit my contact details' : 'Edit personal & employment details'}
           onClose={() => onOpenChange(false)}
         />
-        <div className="grid max-h-[60vh] grid-cols-2 gap-3 overflow-y-auto pr-1">
-          <Field label="Personal email">
-            <Input type="email" value={personalEmail} onChange={(e) => setPersonalEmail(e.target.value)} />
-          </Field>
+        <div className="grid max-h-[65vh] grid-cols-1 gap-x-5 gap-y-4 overflow-y-auto pr-1 sm:grid-cols-2">
+          {!selfEditOnly && (
+            <Field
+              label="Email"
+              hint={employee.userId ? 'Also their sign-in email — changing it updates the login.' : undefined}
+            >
+              <Input type="email" value={personalEmail} onChange={(e) => setPersonalEmail(e.target.value)} />
+            </Field>
+          )}
           <Field label="Phone">
-            <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <PhoneInput value={phone} onChange={setPhone} />
           </Field>
           <Field label="Gender">
             <Select value={gender} onChange={(e) => setGender(e.target.value)}>
@@ -773,7 +1047,40 @@ function ProfileFieldsDialog({
                   ))}
                 </Select>
               </Field>
-              <Field label="Work location" className="col-span-2">
+              <Field label="Designation" className="sm:col-span-2">
+                <Input
+                  value={designation}
+                  onChange={(e) => setDesignation(e.target.value)}
+                  placeholder="e.g. Fan Engagement Executive"
+                />
+              </Field>
+              <Field label="Department" className="sm:col-span-2">
+                <Select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
+                  {!departmentId && <option value="">—</option>}
+                  {/* Keep the current department selectable even before the list loads. */}
+                  {employee.departmentId &&
+                    !departments.some((d) => d.id === employee.departmentId) &&
+                    employee.department && (
+                      <option value={employee.departmentId}>{employee.department.name}</option>
+                    )}
+                  {departments.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Reporting manager" className="sm:col-span-2">
+                <Combobox
+                  value={managerId}
+                  onChange={setManagerId}
+                  options={managerOptions}
+                  clearLabel="No reporting manager"
+                  placeholder="Select a manager"
+                  searchPlaceholder="Search by name, title or department…"
+                />
+              </Field>
+              <Field label="Work location" className="sm:col-span-2">
                 <Input value={workLocation} onChange={(e) => setWorkLocation(e.target.value)} />
               </Field>
               <Field label="Annual CTC (₹)">
@@ -787,7 +1094,7 @@ function ProfileFieldsDialog({
               <Field label="Pay grade">
                 <Input value={payGrade} onChange={(e) => setPayGrade(e.target.value)} />
               </Field>
-              <Field label="Cost center" className="col-span-2">
+              <Field label="Cost center" className="sm:col-span-2">
                 <Input value={costCenter} onChange={(e) => setCostCenter(e.target.value)} />
               </Field>
             </>
@@ -998,10 +1305,10 @@ function ContactDialog({
             <Input value={relationship} onChange={(e) => setRelationship(e.target.value)} />
           </Field>
           <Field label="Phone" required>
-            <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <PhoneInput value={phone} onChange={setPhone} />
           </Field>
           <Field label="Alternate phone">
-            <Input value={altPhone} onChange={(e) => setAltPhone(e.target.value)} />
+            <PhoneInput value={altPhone} onChange={setAltPhone} />
           </Field>
           <Field label="Address">
             <Textarea value={address} onChange={(e) => setAddress(e.target.value)} rows={2} />
@@ -1041,6 +1348,7 @@ function LifecycleDialog({
   const [targetState, setTargetState] = React.useState(targets[0] ?? '');
   const [effectiveDate, setEffectiveDate] = React.useState('');
   const [reason, setReason] = React.useState('');
+  const [separationReason, setSeparationReason] = React.useState('');
   const [submitting, setSubmitting] = React.useState(false);
   const [formError, setFormError] = React.useState<string | null>(null);
 
@@ -1049,6 +1357,7 @@ function LifecycleDialog({
       setTargetState(targets[0] ?? '');
       setEffectiveDate('');
       setReason('');
+      setSeparationReason('');
       setFormError(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1073,6 +1382,8 @@ function LifecycleDialog({
         targetState,
         effectiveDate: effectiveDate || undefined,
         reason: reason.trim(),
+        separationReason:
+          targetState === 'SEPARATED' && separationReason ? separationReason : undefined,
       });
       onOpenChange(false);
       onChanged(targetState);
@@ -1117,9 +1428,22 @@ function LifecycleDialog({
               </Field>
             )}
             {employee.userId && targetState === 'SEPARATED' && (
-              <p className="rounded-md bg-warning/10 px-3 py-2 text-xs text-warning">
+              <p className="rounded-xl bg-warning/10 px-3 py-2 text-xs text-warning">
                 This will disable the employee's login.
               </p>
+            )}
+            {targetState === 'SEPARATED' && (
+              <Field
+                label="Separation type"
+                hint="Used for voluntary vs involuntary attrition on Reports."
+              >
+                <Select value={separationReason} onChange={(e) => setSeparationReason(e.target.value)}>
+                  <option value="">Not recorded</option>
+                  <option value="VOLUNTARY">Voluntary (resignation)</option>
+                  <option value="INVOLUNTARY">Involuntary (termination, dismissal)</option>
+                  <option value="OTHER">Other (end of contract, death, retirement)</option>
+                </Select>
+              </Field>
             )}
             <Field label="Reason" required>
               <Textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} />
@@ -1135,6 +1459,209 @@ function LifecycleDialog({
             </div>
           </div>
         )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CreateLoginDialog({
+  employee,
+  onOpenChange,
+  onCreated,
+}: {
+  employee: EmployeeDetail;
+  onOpenChange: (open: boolean) => void;
+  onCreated: (result: { email: string; emailSent: boolean }) => void;
+}) {
+  const { user } = useAuth();
+  const roles = assignableRoles(user);
+  const [email, setEmail] = React.useState(employee.personalEmail ?? '');
+  const [role, setRole] = React.useState('EMPLOYEE');
+  const [submitting, setSubmitting] = React.useState(false);
+  const [formError, setFormError] = React.useState<string | null>(null);
+
+  async function submit() {
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      const result = await api.post<{ email: string; emailSent: boolean }>(
+        `/employees/${employee.id}/login`,
+        { loginEmail: email.trim(), loginRole: role },
+      );
+      onCreated(result);
+    } catch (err) {
+      setFormError(isApiError(err) ? err.message : 'Could not create the login — try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader
+          title="Create login"
+          description={`${employee.firstName} ${employee.lastName} · ${employee.employeeCode}`}
+          onClose={() => onOpenChange(false)}
+        />
+        <div className="flex flex-col gap-4">
+          <Field
+            label="Email"
+            required
+            hint={`The sign-in username. We email it with a generated temporary password and the employee ID (${employee.employeeCode}).`}
+          >
+            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          </Field>
+          <Field label="Role" required>
+            <Select value={role} onChange={(e) => setRole(e.target.value)}>
+              {roles.map((r) => (
+                <option key={r} value={r}>
+                  {ROLE_LABELS[r]}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          {formError && <p className="text-sm text-destructive">{formError}</p>}
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+              Cancel
+            </Button>
+            <Button onClick={submit} disabled={submitting || !email.trim()}>
+              {submitting ? 'Creating…' : 'Create & email login'}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function SendResetDialog({
+  employee,
+  userId,
+  onOpenChange,
+  onSent,
+}: {
+  employee: EmployeeDetail;
+  userId: string;
+  onOpenChange: (open: boolean) => void;
+  onSent: (email: string) => void;
+}) {
+  const [submitting, setSubmitting] = React.useState(false);
+  const [formError, setFormError] = React.useState<string | null>(null);
+
+  async function submit() {
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      const { email } = await api.post<{ email: string }>(`/access/users/${userId}/password-reset`);
+      onSent(email);
+    } catch (err) {
+      setFormError(isApiError(err) ? err.message : 'Could not send the reset email — try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader
+          title="Send password reset"
+          description={`${employee.firstName} ${employee.lastName} · ${employee.employeeCode}`}
+          onClose={() => onOpenChange(false)}
+        />
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-muted-foreground">
+            Emails a link to the employee’s login address so they can set a new password. Their
+            current password stops working once they do.
+          </p>
+          {formError && <p className="text-sm text-destructive">{formError}</p>}
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+              Cancel
+            </Button>
+            <Button onClick={submit} disabled={submitting}>
+              {submitting ? 'Sending…' : 'Send reset email'}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function LinkLoginDialog({
+  employee,
+  onOpenChange,
+  onLinked,
+}: {
+  employee: EmployeeDetail;
+  onOpenChange: (open: boolean) => void;
+  onLinked: (userId: string) => void;
+}) {
+  const { user } = useAuth();
+  const logins = useLinkableLogins();
+  const [userId, setUserId] = React.useState('');
+  const [submitting, setSubmitting] = React.useState(false);
+  const [formError, setFormError] = React.useState<string | null>(null);
+
+  async function submit() {
+    if (!userId) {
+      setFormError('Choose a login to link.');
+      return;
+    }
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      await api.patch(`/employees/${employee.id}/login`, { userId });
+      onLinked(userId);
+    } catch (err) {
+      setFormError(isApiError(err) ? err.message : 'Could not link the login — try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader
+          title="Link an existing login"
+          description={`${employee.firstName} ${employee.lastName} · ${employee.employeeCode}`}
+          onClose={() => onOpenChange(false)}
+        />
+        <div className="flex flex-col gap-4">
+          <Field
+            label="Login"
+            required
+            hint="Logins in this workspace without an employee record. The login keeps its current role."
+          >
+            <Select value={userId} onChange={(e) => setUserId(e.target.value)}>
+              <option value="">{logins === null ? 'Loading…' : 'Select a login'}</option>
+              {logins?.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.email} · {ROLE_LABELS[u.role]}
+                  {u.id === user?.sub ? ' (you)' : ''}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          {logins?.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              Every login in this workspace already has an employee record.
+            </p>
+          )}
+          {formError && <p className="text-sm text-destructive">{formError}</p>}
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+              Cancel
+            </Button>
+            <Button onClick={submit} disabled={submitting || !userId}>
+              {submitting ? 'Linking…' : 'Link login'}
+            </Button>
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
   );

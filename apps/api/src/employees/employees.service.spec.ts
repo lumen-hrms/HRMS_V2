@@ -1,5 +1,7 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { EmployeesService } from './employees.service';
+import { AuditService } from '../audit/audit.service';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
 
 /** Minimal fake of the tenant-scoped Prisma surface EmployeesService touches. */
@@ -7,6 +9,7 @@ function buildFakeTenantPrisma(employee: Record<string, any>, overrides: Record<
   const client: any = {
     employee: {
       findFirst: jest.fn().mockResolvedValue(employee),
+      findUnique: jest.fn().mockResolvedValue(employee),
       findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn((args: any) => ({ ...employee, ...args.data })),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -66,21 +69,43 @@ function actor(overrides: Partial<AuthenticatedUser> = {}): AuthenticatedUser {
   };
 }
 
+function fakeStorage(overrides: Record<string, any> = {}) {
+  return {
+    buildKey: jest.fn(
+      (tenantId: string, employeeId: string, name: string) => `${tenantId}/${employeeId}/${name}`,
+    ),
+    upload: jest.fn().mockResolvedValue(undefined),
+    delete: jest.fn().mockResolvedValue(undefined),
+    getPresignedDownloadUrl: jest.fn().mockResolvedValue('https://signed.example/photo'),
+    ...overrides,
+  };
+}
+
 function buildService(
   employee: Record<string, any>,
   firebaseOverrides: Record<string, any> = {},
   prismaOverrides: Record<string, any> = {},
+  storageOverrides: Record<string, any> = {},
 ) {
   const tenantPrisma = buildFakeTenantPrisma(employee, prismaOverrides);
   const firebaseAuth = fakeFirebaseAuth(firebaseOverrides);
   const fieldEncryption = fakeFieldEncryption();
+  const storage = fakeStorage(storageOverrides);
+  const audit = new AuditService(tenantPrisma as any);
+  const entitlement = {
+    applyPolicyDefaults: jest.fn().mockResolvedValue({ credited: 0, balancesCreated: 0 }),
+  };
+  const authEmails = { sendLoginCredentials: jest.fn().mockResolvedValue(undefined) };
   const service = new EmployeesService(
     tenantPrisma as any,
-    {} as any,
+    storage as any,
     fieldEncryption as any,
     firebaseAuth as any,
+    audit,
+    entitlement as any,
+    authEmails as any,
   );
-  return { service, tenantPrisma, firebaseAuth, fieldEncryption };
+  return { service, tenantPrisma, firebaseAuth, fieldEncryption, storage, entitlement, authEmails };
 }
 
 describe('EmployeesService.transitionLifecycle', () => {
@@ -150,6 +175,59 @@ describe('EmployeesService.transitionLifecycle', () => {
       actor(),
     );
     expect(result.lifecycleState).toBe('CONFIRMED');
+  });
+
+  it('records the separation reason on a SEPARATED transition', async () => {
+    const { service, tenantPrisma } = buildService({
+      id: 'emp-1',
+      employeeCode: 'LUM-1',
+      lifecycleState: 'NOTICE_PERIOD',
+      userId: null,
+    });
+
+    await service.transitionLifecycle(
+      'emp-1',
+      {
+        targetState: 'SEPARATED',
+        effectiveDate: '2026-03-15',
+        reason: 'Resignation',
+        separationReason: 'VOLUNTARY',
+      },
+      actor(),
+    );
+
+    expect(tenantPrisma.client.employee.update).toHaveBeenCalledWith({
+      where: { id: 'emp-1' },
+      data: {
+        lifecycleState: 'SEPARATED',
+        lastWorkingDate: new Date('2026-03-15'),
+        separationReason: 'VOLUNTARY',
+      },
+    });
+    expect(tenantPrisma.client.auditLog.create).toHaveBeenCalled();
+  });
+
+  it('rejects a separation reason on a non-SEPARATED transition', async () => {
+    const { service, tenantPrisma } = buildService({
+      id: 'emp-1',
+      employeeCode: 'LUM-1',
+      lifecycleState: 'PROBATION',
+      userId: null,
+    });
+
+    await expect(
+      service.transitionLifecycle(
+        'emp-1',
+        {
+          targetState: 'CONFIRMED',
+          effectiveDate: '2026-03-01',
+          reason: 'Passed probation',
+          separationReason: 'VOLUNTARY',
+        },
+        actor(),
+      ),
+    ).rejects.toThrow(BadRequestException);
+    expect(tenantPrisma.client.employee.update).not.toHaveBeenCalled();
   });
 
   it('cascades SEPARATED into disabling the linked login', async () => {
@@ -303,6 +381,19 @@ describe('EmployeesService emergency contacts', () => {
   });
 });
 
+describe('EmployeesService.updateDepartment', () => {
+  it('sets the department head, and clears it when null is sent', async () => {
+    const { service, tenantPrisma } = buildService({});
+
+    await service.updateDepartment('dept-1', { headEmployeeId: 'emp-9' });
+    await service.updateDepartment('dept-1', { headEmployeeId: null });
+
+    const calls = tenantPrisma.client.department.update.mock.calls;
+    expect(calls[0][0].data).toEqual({ headEmployeeId: 'emp-9' });
+    expect(calls[1][0].data).toEqual({ headEmployeeId: null });
+  });
+});
+
 describe('EmployeesService.deleteDepartment (RULE-6 reassign guard)', () => {
   it('blocks deleting a non-empty department with no reassignment target', async () => {
     const { service, tenantPrisma } = buildService({ id: 'emp-1', employeeCode: 'LUM-1' });
@@ -340,134 +431,90 @@ describe('EmployeesService.deleteDepartment (RULE-6 reassign guard)', () => {
 });
 
 describe('EmployeesService line-manager recursive subtree scoping', () => {
-  it('list() includes indirect reports, not just direct reports', async () => {
-    const { service, tenantPrisma } = buildService({ id: 'mgr-1', employeeCode: 'LUM-1' });
+  const lineManager = actor({ role: 'LINE_MANAGER', employeeId: 'mgr-1' });
+
+  it('get() lets a Line Manager open indirect reports, not just direct reports', async () => {
+    const { service, tenantPrisma } = buildService({ id: 'emp-b', employeeCode: 'LUM-2' });
     // mgr-1 -> emp-a -> emp-b (emp-b is an INDIRECT report of mgr-1)
-    tenantPrisma.client.employee.findMany
-      .mockResolvedValueOnce([
-        { id: 'mgr-1', reportingManagerId: null },
-        { id: 'emp-a', reportingManagerId: 'mgr-1' },
-        { id: 'emp-b', reportingManagerId: 'emp-a' },
-        { id: 'emp-c', reportingManagerId: null }, // unrelated
-      ])
-      .mockResolvedValueOnce([]); // the actual list() query, contents unimportant here
+    tenantPrisma.client.employee.findMany.mockResolvedValueOnce([
+      { id: 'mgr-1', reportingManagerId: null },
+      { id: 'emp-a', reportingManagerId: 'mgr-1' },
+      { id: 'emp-b', reportingManagerId: 'emp-a' },
+      { id: 'emp-c', reportingManagerId: null }, // unrelated
+    ]);
 
-    await service.list(actor({ role: 'LINE_MANAGER', employeeId: 'mgr-1' }));
+    await service.get('emp-b', lineManager);
 
-    const listWhere = tenantPrisma.client.employee.findMany.mock.calls[1][0].where;
-    expect(listWhere.id.in).toEqual(expect.arrayContaining(['mgr-1', 'emp-a', 'emp-b']));
-    expect(listWhere.id.in).not.toContain('emp-c');
+    const [requested, scope] = tenantPrisma.client.employee.findFirst.mock.calls[0][0].where.AND;
+    expect(requested).toEqual({ id: 'emp-b' });
+    expect(scope.id.in).toEqual(expect.arrayContaining(['mgr-1', 'emp-a', 'emp-b']));
+    expect(scope.id.in).not.toContain('emp-c');
+  });
+
+  it('get() keeps the requested id alongside the scope, so it can never return a different employee', async () => {
+    const { service, tenantPrisma } = buildService({ id: 'emp-x', employeeCode: 'LUM-3' });
+    tenantPrisma.client.employee.findMany.mockResolvedValueOnce([
+      { id: 'mgr-1', reportingManagerId: null },
+      { id: 'emp-a', reportingManagerId: 'mgr-1' },
+    ]);
+
+    await service.get('emp-x', lineManager);
+    const lmWhere = tenantPrisma.client.employee.findFirst.mock.calls[0][0].where;
+    expect(lmWhere.AND[0]).toEqual({ id: 'emp-x' });
+
+    await service.get('emp-y', actor({ role: 'EMPLOYEE', employeeId: 'emp-self' }));
+    const employeeWhere = tenantPrisma.client.employee.findFirst.mock.calls[1][0].where;
+    expect(employeeWhere.AND).toEqual([{ id: 'emp-y' }, { id: 'emp-self' }]);
   });
 
   it('never infinite-loops on a cyclic reportingManagerId chain', async () => {
-    const { service, tenantPrisma } = buildService({ id: 'mgr-1', employeeCode: 'LUM-1' });
+    const { service, tenantPrisma } = buildService({ id: 'a', employeeCode: 'LUM-1' });
     // Bad data forming a genuine cycle reachable from mgr-1:
     // mgr-1 -> a -> b -> mgr-1 (b incorrectly lists mgr-1 as its report).
-    tenantPrisma.client.employee.findMany
-      .mockResolvedValueOnce([
-        { id: 'mgr-1', reportingManagerId: 'b' },
-        { id: 'a', reportingManagerId: 'mgr-1' },
-        { id: 'b', reportingManagerId: 'a' },
-      ])
-      .mockResolvedValueOnce([]);
+    tenantPrisma.client.employee.findMany.mockResolvedValueOnce([
+      { id: 'mgr-1', reportingManagerId: 'b' },
+      { id: 'a', reportingManagerId: 'mgr-1' },
+      { id: 'b', reportingManagerId: 'a' },
+    ]);
 
-    await expect(
-      service.list(actor({ role: 'LINE_MANAGER', employeeId: 'mgr-1' })),
-    ).resolves.toBeDefined();
+    await expect(service.get('a', lineManager)).resolves.toBeDefined();
   });
 });
 
-describe('EmployeesService.uploadDocument', () => {
-  const storage = { buildKey: jest.fn(() => 'key'), upload: jest.fn() };
-
-  function buildUploadService(employee: Record<string, any>) {
-    const tenantPrisma = buildFakeTenantPrisma(employee, {
-      document: { create: jest.fn((args: any) => ({ id: 'doc-1', ...args.data })) },
-    });
-    const service = new EmployeesService(
-      tenantPrisma as any,
-      storage as any,
-      fakeFieldEncryption() as any,
-      fakeFirebaseAuth() as any,
+describe('EmployeesService.isEmployeeCodeAvailable', () => {
+  it('is available when no employee has the code', async () => {
+    const { service, tenantPrisma } = buildService(
+      {},
+      {},
+      {
+        employee: { findFirst: jest.fn().mockResolvedValue(null) },
+      },
     );
-    return { service, tenantPrisma };
-  }
 
-  it('rejects a disallowed MIME type', async () => {
-    const { service } = buildUploadService({ id: 'emp-1' });
-    const file = {
-      mimetype: 'application/x-msdownload',
-      size: 100,
-      buffer: Buffer.from(''),
-      originalname: 'x.exe',
-    } as any;
-    await expect(
-      service.uploadDocument('emp-1', file, 'label', undefined, actor()),
-    ).rejects.toThrow(BadRequestException);
+    await expect(service.isEmployeeCodeAvailable(' RBR042 ')).resolves.toEqual({ available: true });
+    expect(tenantPrisma.client.employee.findFirst).toHaveBeenCalledWith({
+      where: { employeeCode: 'RBR042' },
+      select: { id: true },
+    });
   });
 
-  it('rejects a file over the 10MB cap', async () => {
-    const { service } = buildUploadService({ id: 'emp-1' });
-    const file = {
-      mimetype: 'application/pdf',
-      size: 11 * 1024 * 1024,
-      buffer: Buffer.from(''),
-      originalname: 'big.pdf',
-    } as any;
-    await expect(
-      service.uploadDocument('emp-1', file, 'label', undefined, actor()),
-    ).rejects.toThrow(BadRequestException);
+  it('is not available when an employee (any lifecycle state) already has it', async () => {
+    const { service } = buildService(
+      {},
+      {},
+      {
+        employee: { findFirst: jest.fn().mockResolvedValue({ id: 'emp-1' }) },
+      },
+    );
+
+    await expect(service.isEmployeeCodeAvailable('RBR001')).resolves.toEqual({ available: false });
   });
 
-  it('rejects an Employee uploading to someone else’s record', async () => {
-    const { service } = buildUploadService({ id: 'emp-1' });
-    const file = {
-      mimetype: 'application/pdf',
-      size: 100,
-      buffer: Buffer.from(''),
-      originalname: 'x.pdf',
-    } as any;
-    await expect(
-      service.uploadDocument(
-        'someone-else',
-        file,
-        'label',
-        undefined,
-        actor({ role: 'EMPLOYEE', employeeId: 'emp-1' }),
-      ),
-    ).rejects.toThrow(ForbiddenException);
-  });
+  it('rejects a blank code', async () => {
+    const { service } = buildService({});
 
-  it('allows an Employee uploading to their own record', async () => {
-    const { service } = buildUploadService({ id: 'emp-1' });
-    const file = {
-      mimetype: 'application/pdf',
-      size: 100,
-      buffer: Buffer.from(''),
-      originalname: 'x.pdf',
-    } as any;
-    await expect(
-      service.uploadDocument(
-        'emp-1',
-        file,
-        'label',
-        undefined,
-        actor({ role: 'EMPLOYEE', employeeId: 'emp-1' }),
-      ),
-    ).resolves.toBeDefined();
-  });
-
-  it('blocks a Line Manager from uploading on behalf of anyone', async () => {
-    const { service } = buildUploadService({ id: 'emp-1' });
-    const file = {
-      mimetype: 'application/pdf',
-      size: 100,
-      buffer: Buffer.from(''),
-      originalname: 'x.pdf',
-    } as any;
-    await expect(
-      service.uploadDocument('emp-1', file, 'label', undefined, actor({ role: 'LINE_MANAGER' })),
-    ).rejects.toThrow(ForbiddenException);
+    await expect(service.isEmployeeCodeAvailable('  ')).rejects.toThrow(BadRequestException);
+    await expect(service.isEmployeeCodeAvailable(undefined)).rejects.toThrow(BadRequestException);
   });
 });
 
@@ -477,20 +524,18 @@ describe('EmployeesService.update (RULE-1 self-edit whitelist)', () => {
 
     await service.update(
       'emp-1',
-      { phone: '9999999999', personalEmail: 'me@test.com' },
+      { phone: '9999999999', gender: 'FEMALE' },
       actor({ role: 'EMPLOYEE', employeeId: 'emp-1' }),
     );
 
     expect(tenantPrisma.client.employee.update).toHaveBeenCalledWith({
       where: { id: 'emp-1' },
       data: {
-        personalEmail: 'me@test.com',
         phone: '9999999999',
-        gender: undefined,
+        gender: 'FEMALE',
         maritalStatus: undefined,
         bloodGroup: undefined,
         nationality: undefined,
-        photoUrl: undefined,
       },
     });
   });
@@ -536,6 +581,231 @@ describe('EmployeesService.update (RULE-1 self-edit whitelist)', () => {
     const data = tenantPrisma.client.employee.update.mock.calls[0][0].data;
     expect(data.designation).toBe('Staff Engineer');
     expect(data.ctcAnnual).toBe(1500000);
+  });
+
+  it('audits a compensation/org field change with before/after values', async () => {
+    const { service, tenantPrisma } = buildService({
+      id: 'emp-1',
+      employeeCode: 'LUM-1',
+      designation: 'Engineer',
+      ctcAnnual: 1000000,
+    });
+
+    await service.update('emp-1', { designation: 'Staff Engineer', ctcAnnual: 1500000 }, actor());
+
+    expect(tenantPrisma.client.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'employee.updated',
+          targetId: 'emp-1',
+          metadata: expect.objectContaining({
+            module: 'employee-master',
+            changes: expect.arrayContaining([
+              { field: 'designation', before: 'Engineer', after: 'Staff Engineer' },
+              { field: 'ctcAnnual', before: 1000000, after: 1500000 },
+            ]),
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('records an empty change list for a no-op update (value resubmitted unchanged)', async () => {
+    const { service, tenantPrisma } = buildService({
+      id: 'emp-1',
+      employeeCode: 'LUM-1',
+      designation: 'Engineer',
+    });
+
+    await service.update('emp-1', { designation: 'Engineer' }, actor());
+
+    const changes = tenantPrisma.client.auditLog.create.mock.calls[0][0].data.metadata.changes;
+    expect(changes).toEqual([]);
+  });
+
+  describe('department', () => {
+    it('lets HR move an employee to another department and audits before/after', async () => {
+      const { service, tenantPrisma } = buildService({
+        id: 'emp-1',
+        employeeCode: 'LUM-1',
+        departmentId: 'dept-old',
+      });
+
+      await service.update('emp-1', { departmentId: 'dept-1' }, actor());
+
+      expect(tenantPrisma.client.employee.update.mock.calls[0][0].data.departmentId).toBe('dept-1');
+      const changes = tenantPrisma.client.auditLog.create.mock.calls[0][0].data.metadata.changes;
+      expect(changes).toContainEqual({
+        field: 'departmentId',
+        before: 'dept-old',
+        after: 'dept-1',
+      });
+    });
+
+    it('rejects a department that does not exist, writing nothing', async () => {
+      const { service, tenantPrisma } = buildService(
+        { id: 'emp-1', employeeCode: 'LUM-1' },
+        {},
+        {
+          department: { findUnique: jest.fn().mockResolvedValue(null) },
+        },
+      );
+
+      await expect(service.update('emp-1', { departmentId: 'ghost' }, actor())).rejects.toThrow(
+        /Department not found/,
+      );
+      expect(tenantPrisma.client.employee.update).not.toHaveBeenCalled();
+    });
+
+    it('does not let an Employee change their own department', async () => {
+      const { service, tenantPrisma } = buildService({ id: 'emp-1', employeeCode: 'LUM-1' });
+
+      await service.update(
+        'emp-1',
+        { phone: '999', departmentId: 'dept-1' },
+        actor({ role: 'EMPLOYEE', employeeId: 'emp-1' }),
+      );
+
+      expect(tenantPrisma.client.employee.update.mock.calls[0][0].data).not.toHaveProperty(
+        'departmentId',
+      );
+    });
+  });
+
+  describe('reporting manager', () => {
+    /** emp-1 is managed by mgr-1, who is managed by top; every id exists. */
+    const chain: Record<string, string | null> = {
+      'emp-1': 'mgr-1',
+      'mgr-1': 'top',
+      top: null,
+      other: null,
+    };
+    const build = () =>
+      buildService(
+        { id: 'emp-1', employeeCode: 'LUM-1', reportingManagerId: 'mgr-1' },
+        {},
+        {
+          employee: {
+            findFirst: jest.fn().mockResolvedValue({
+              id: 'emp-1',
+              employeeCode: 'LUM-1',
+              reportingManagerId: 'mgr-1',
+            }),
+            findUnique: jest.fn(({ where }: any) =>
+              where.id in chain ? { reportingManagerId: chain[where.id] } : null,
+            ),
+            findMany: jest.fn().mockResolvedValue([]),
+            update: jest.fn((args: any) => ({ id: 'emp-1', ...args.data })),
+          },
+        },
+      );
+
+    it('lets HR change the reporting manager and audits before/after', async () => {
+      const { service, tenantPrisma } = build();
+
+      await service.update('emp-1', { reportingManagerId: 'other' }, actor());
+
+      expect(tenantPrisma.client.employee.update.mock.calls[0][0].data.reportingManagerId).toBe(
+        'other',
+      );
+      const changes = tenantPrisma.client.auditLog.create.mock.calls[0][0].data.metadata.changes;
+      expect(changes).toContainEqual({
+        field: 'reportingManagerId',
+        before: 'mgr-1',
+        after: 'other',
+      });
+    });
+
+    it('clears the reporting manager when null is sent', async () => {
+      const { service, tenantPrisma } = build();
+
+      await service.update('emp-1', { reportingManagerId: null }, actor());
+
+      expect(
+        tenantPrisma.client.employee.update.mock.calls[0][0].data.reportingManagerId,
+      ).toBeNull();
+    });
+
+    it('rejects a manager who already reports (indirectly) to this employee, writing nothing', async () => {
+      const { service, tenantPrisma } = buildService(
+        { id: 'top', employeeCode: 'LUM-9' },
+        {},
+        {
+          employee: {
+            findFirst: jest.fn().mockResolvedValue({ id: 'top', employeeCode: 'LUM-9' }),
+            findUnique: jest.fn(({ where }: any) => ({
+              reportingManagerId: chain[where.id] ?? null,
+            })),
+            update: jest.fn(),
+          },
+        },
+      );
+
+      // emp-1 -> mgr-1 -> top, so making emp-1 the manager of top closes a loop.
+      await expect(service.update('top', { reportingManagerId: 'emp-1' }, actor())).rejects.toThrow(
+        /reporting loop/,
+      );
+      expect(tenantPrisma.client.employee.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a manager that does not exist', async () => {
+      const { service, tenantPrisma } = build();
+
+      await expect(
+        service.update('emp-1', { reportingManagerId: 'ghost' }, actor()),
+      ).rejects.toThrow(/Reporting manager not found/);
+      expect(tenantPrisma.client.employee.update).not.toHaveBeenCalled();
+    });
+
+    it('does not let an Employee change their own manager', async () => {
+      const { service, tenantPrisma } = build();
+
+      await service.update(
+        'emp-1',
+        { phone: '999', reportingManagerId: 'other' },
+        actor({ role: 'EMPLOYEE', employeeId: 'emp-1' }),
+      );
+
+      expect(tenantPrisma.client.employee.update.mock.calls[0][0].data).not.toHaveProperty(
+        'reportingManagerId',
+      );
+    });
+  });
+
+  it('lets HR set workState (Professional Tax state) but an Employee cannot set their own', async () => {
+    const hr = buildService({ id: 'emp-1', employeeCode: 'LUM-1' });
+    await hr.service.update('emp-1', { workState: 'KARNATAKA' } as any, actor());
+    expect(hr.tenantPrisma.client.employee.update.mock.calls[0][0].data.workState).toBe(
+      'KARNATAKA',
+    );
+
+    const self = buildService({ id: 'emp-1', employeeCode: 'LUM-1' });
+    await self.service.update(
+      'emp-1',
+      { workState: 'DELHI' } as any,
+      actor({ role: 'EMPLOYEE', employeeId: 'emp-1' }),
+    );
+    expect(self.tenantPrisma.client.employee.update.mock.calls[0][0].data).not.toHaveProperty(
+      'workState',
+    );
+  });
+
+  it('lets HR set a weekly-off override but an Employee cannot set their own', async () => {
+    const hr = buildService({ id: 'emp-1', employeeCode: 'LUM-1' });
+    await hr.service.update('emp-1', { weeklyOffDaysOverride: [0, 3] } as any, actor());
+    expect(
+      hr.tenantPrisma.client.employee.update.mock.calls[0][0].data.weeklyOffDaysOverride,
+    ).toEqual([0, 3]);
+
+    const self = buildService({ id: 'emp-1', employeeCode: 'LUM-1' });
+    await self.service.update(
+      'emp-1',
+      { weeklyOffDaysOverride: [0, 3] } as any,
+      actor({ role: 'EMPLOYEE', employeeId: 'emp-1' }),
+    );
+    expect(self.tenantPrisma.client.employee.update.mock.calls[0][0].data).not.toHaveProperty(
+      'weeklyOffDaysOverride',
+    );
   });
 });
 
@@ -585,5 +855,975 @@ describe('EmployeesService emergency-contact write authorization', () => {
         actor({ role: 'EMPLOYEE', employeeId: 'emp-1' }),
       ),
     ).rejects.toThrow(ForbiddenException);
+  });
+});
+
+describe('EmployeesService.uploadPhoto', () => {
+  const file = {
+    originalname: 'me.jpg',
+    mimetype: 'image/jpeg',
+    size: 1024,
+    buffer: Buffer.from('x'),
+  } as any;
+
+  it('uploads, updates photoKey, deletes the old object, and returns a resolved URL', async () => {
+    const { service, tenantPrisma, storage } = buildService({
+      id: 'emp-1',
+      employeeCode: 'LUM-1',
+      photoKey: 'old/key.jpg',
+    });
+
+    const result = await service.uploadPhoto('emp-1', file, actor({ role: 'HR_MANAGER' }));
+
+    expect(storage.upload).toHaveBeenCalled();
+    expect(storage.delete).toHaveBeenCalledWith('old/key.jpg');
+    expect(tenantPrisma.client.employee.update).toHaveBeenCalledWith({
+      where: { id: 'emp-1' },
+      data: { photoKey: expect.any(String) },
+    });
+    expect(result).toEqual({ photoUrl: 'https://signed.example/photo' });
+  });
+
+  it('lets an Employee upload their own photo but not someone else’s', async () => {
+    const { service } = buildService({ id: 'emp-1', employeeCode: 'LUM-1' });
+
+    await expect(
+      service.uploadPhoto('emp-1', file, actor({ role: 'EMPLOYEE', employeeId: 'emp-1' })),
+    ).resolves.toBeDefined();
+    await expect(
+      service.uploadPhoto('someone-else', file, actor({ role: 'EMPLOYEE', employeeId: 'emp-1' })),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('rejects an unsupported file type', async () => {
+    const { service } = buildService({ id: 'emp-1', employeeCode: 'LUM-1' });
+    await expect(
+      service.uploadPhoto(
+        'emp-1',
+        { ...file, mimetype: 'application/pdf' },
+        actor({ role: 'HR_MANAGER' }),
+      ),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('rejects a file over the 5 MB limit', async () => {
+    const { service } = buildService({ id: 'emp-1', employeeCode: 'LUM-1' });
+    await expect(
+      service.uploadPhoto(
+        'emp-1',
+        { ...file, size: 6 * 1024 * 1024 },
+        actor({ role: 'HR_MANAGER' }),
+      ),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('404s for an unknown employee', async () => {
+    const { service, tenantPrisma } = buildService({ id: 'emp-1', employeeCode: 'LUM-1' });
+    tenantPrisma.client.employee.findUnique.mockResolvedValueOnce(null);
+    await expect(
+      service.uploadPhoto('missing', file, actor({ role: 'HR_MANAGER' })),
+    ).rejects.toThrow('Employee not found');
+  });
+});
+
+describe('EmployeesService.orgChart', () => {
+  // ceo -> (cto -> (dev1, dev2), hr). `findMany` returns the select shape.
+  function row(id: string, managerId: string | null, extra: Record<string, any> = {}) {
+    return {
+      id,
+      employeeCode: id.toUpperCase(),
+      firstName: id,
+      lastName: 'Test',
+      designation: null,
+      photoKey: null,
+      phone: null,
+      workLocation: null,
+      lifecycleState: 'CONFIRMED',
+      dateOfJoining: null,
+      reportingManagerId: managerId,
+      department: null,
+      user: null,
+      ...extra,
+    };
+  }
+  const rows = [
+    row('ceo', null, { user: { email: 'ceo@work.test' }, department: { id: 'd1', name: 'Exec' } }),
+    row('cto', 'ceo', { phone: '+91 90000 00001' }),
+    row('hr', 'ceo'),
+    row('dev1', 'cto'),
+    row('dev2', 'cto'),
+  ];
+
+  function serviceWith(data: any[]) {
+    const { service, tenantPrisma } = buildService({});
+    tenantPrisma.client.employee.findMany.mockResolvedValue(data);
+    return { service, findMany: tenantPrisma.client.employee.findMany };
+  }
+
+  it('returns the whole tree from the top for HR/Admin/Auditor, with counts and contact fields', async () => {
+    for (const role of ['HR_MANAGER', 'COMPANY_ADMIN', 'AUDITOR'] as const) {
+      const { service } = serviceWith(rows.map((r) => ({ ...r })));
+      const roots = await service.orgChart(actor({ role }));
+
+      expect(roots.map((r) => r.id)).toEqual(['ceo']);
+      const [ceo] = roots;
+      expect(ceo.workEmail).toBe('ceo@work.test');
+      expect(ceo.department).toEqual({ id: 'd1', name: 'Exec' });
+      expect(ceo.manager).toBeNull();
+      expect(ceo.directReportCount).toBe(2);
+      expect(ceo.totalReportCount).toBe(4);
+      expect(ceo).not.toHaveProperty('user');
+
+      const cto = ceo.directReports.find((r) => r.id === 'cto')!;
+      expect(cto.phone).toBe('+91 90000 00001');
+      expect(cto.manager).toEqual({ id: 'ceo', firstName: 'ceo', lastName: 'Test' });
+      expect(cto.directReportCount).toBe(2);
+      expect(cto.totalReportCount).toBe(2);
+    }
+  });
+
+  it('signs a photo URL only for people who have an uploaded photo, never exposing the key', async () => {
+    const { service, tenantPrisma, storage } = buildService({});
+    tenantPrisma.client.employee.findMany.mockResolvedValue([
+      row('ceo', null, { photoKey: 'tenants/t/photos/ceo.jpg' }),
+      row('cto', 'ceo'),
+    ]);
+    const [ceo] = await service.orgChart(actor());
+
+    expect(ceo.photoUrl).toBe('https://signed.example/photo');
+    expect(ceo.directReports[0].photoUrl).toBeNull();
+    expect(ceo).not.toHaveProperty('photoKey');
+    expect(storage.getPresignedDownloadUrl).toHaveBeenCalledTimes(1);
+    expect(storage.getPresignedDownloadUrl).toHaveBeenCalledWith('tenants/t/photos/ceo.jpg', 3600);
+  });
+
+  it('never selects personalEmail and excludes SEPARATED employees', async () => {
+    const { service, findMany } = serviceWith(rows);
+    await service.orgChart(actor());
+
+    const args = findMany.mock.calls[0][0];
+    expect(args.where).toEqual({ lifecycleState: { not: 'SEPARATED' } });
+    expect(args.select).not.toHaveProperty('personalEmail');
+    expect(args.select.user).toEqual({ select: { email: true } });
+  });
+
+  it('roots a Line Manager at their own subtree', async () => {
+    const { service } = serviceWith(rows.map((r) => ({ ...r })));
+    const roots = await service.orgChart(actor({ role: 'LINE_MANAGER', employeeId: 'cto' }));
+
+    expect(roots.map((r) => r.id)).toEqual(['cto']);
+    expect(roots[0].directReports.map((r) => r.id).sort()).toEqual(['dev1', 'dev2']);
+    expect(roots[0].totalReportCount).toBe(2);
+  });
+
+  it('roots an Employee at themselves only', async () => {
+    const { service } = serviceWith(rows.map((r) => ({ ...r })));
+    const roots = await service.orgChart(actor({ role: 'EMPLOYEE', employeeId: 'dev1' }));
+
+    expect(roots.map((r) => r.id)).toEqual(['dev1']);
+    expect(roots[0].directReports).toEqual([]);
+  });
+
+  it('returns nothing for an Employee/Line Manager with no linked employee in the tree', async () => {
+    const { service } = serviceWith(rows.map((r) => ({ ...r })));
+    await expect(
+      service.orgChart(actor({ role: 'LINE_MANAGER', employeeId: 'not-here' })),
+    ).resolves.toEqual([]);
+  });
+
+  it('prunes a reportingManagerId cycle instead of recursing forever', async () => {
+    const { service } = serviceWith([row('a', 'b'), row('b', 'a')]);
+    const roots = await service.orgChart(actor({ role: 'LINE_MANAGER', employeeId: 'a' }));
+
+    expect(roots[0].id).toBe('a');
+    expect(roots[0].directReports.map((r) => r.id)).toEqual(['b']);
+    expect(roots[0].directReports[0].directReports).toEqual([]);
+    expect(roots[0].totalReportCount).toBe(1);
+    expect(() => JSON.stringify(roots)).not.toThrow();
+  });
+});
+
+describe('EmployeesService.list — the Employee’s view-only directory', () => {
+  const row = (id: string, over: Record<string, any> = {}) => ({
+    id,
+    employeeCode: id.toUpperCase(),
+    firstName: id,
+    lastName: 'Test',
+    designation: 'Engineer',
+    workLocation: 'Pune',
+    dateOfJoining: new Date('2020-01-01'),
+    phone: '999',
+    lifecycleState: 'CONFIRMED',
+    reportingManagerId: null,
+    department: { name: 'Eng' },
+    reportingManager: null,
+    user: { email: `${id}@test.com` },
+    ...over,
+  });
+  const me = actor({ role: 'EMPLOYEE', employeeId: 'me', sub: 'u-me' });
+
+  function setup(rows: Record<string, any>[]) {
+    const built = buildService({ id: 'me' });
+    built.tenantPrisma.client.employee.findMany.mockResolvedValue(rows);
+    return built;
+  }
+
+  const org = [
+    row('vp'),
+    row('me', { reportingManagerId: 'vp' }),
+    row('peer', { reportingManagerId: 'vp' }),
+    row('r1', { reportingManagerId: 'me' }),
+    row('r1a', { reportingManagerId: 'r1' }),
+    row('stranger'),
+    row('gone', { lifecycleState: 'SEPARATED', reportingManagerId: 'vp' }),
+  ];
+
+  it('shows an Employee everyone still employed, not just themselves', async () => {
+    const { service } = setup(org);
+
+    const list = await service.list(me);
+
+    expect(list.map((e: any) => e.id).sort()).toEqual([
+      'me',
+      'peer',
+      'r1',
+      'r1a',
+      'stranger',
+      'vp',
+    ]);
+  });
+
+  it('marks how each person relates to the caller for the My team filter', async () => {
+    const { service } = setup(org);
+
+    const rel = Object.fromEntries(
+      (await service.list(me)).map((e: any) => [e.id, e.teamRelation]),
+    );
+
+    expect(rel).toEqual({
+      me: 'SELF',
+      vp: 'BOSS',
+      peer: 'TEAMMATE',
+      r1: 'REPORT',
+      r1a: 'REPORT',
+      stranger: null,
+    });
+  });
+
+  it('never sends compensation, DOB, personal details, statutory IDs or lifecycle status', async () => {
+    const { service, tenantPrisma } = setup([row('me'), row('peer')]);
+
+    const [first] = await service.list(me);
+
+    const select = tenantPrisma.client.employee.findMany.mock.calls[0][0].select;
+    for (const forbidden of [
+      'ctcAnnual',
+      'dateOfBirth',
+      'personalEmail',
+      'panCiphertext',
+      'panMasked',
+      'bankAccountCiphertext',
+      'aadhaarLast4',
+      'uan',
+      'payGrade',
+    ]) {
+      expect(select).not.toHaveProperty(forbidden);
+    }
+    expect(first).not.toHaveProperty('lifecycleState');
+    expect(first).not.toHaveProperty('user');
+    expect(first).toMatchObject({ workEmail: expect.stringContaining('@test.com'), phone: '999' });
+  });
+
+  it('gives an Employee with no linked record the directory with no relations', async () => {
+    const { service } = setup(org);
+
+    const list = await service.list({ ...me, employeeId: null });
+
+    expect(list.every((e: any) => e.teamRelation === null)).toBe(true);
+  });
+
+  describe('for a Line Manager', () => {
+    const manager = actor({ role: 'LINE_MANAGER', employeeId: 'me', sub: 'u-me' });
+    const withState = (id: string, over: Record<string, any> = {}) =>
+      row(id, { employmentType: 'FULL_TIME', ...over });
+    const mgrOrg = [
+      withState('vp'),
+      withState('me', { reportingManagerId: 'vp' }),
+      withState('peer', { reportingManagerId: 'vp' }),
+      withState('r1', { reportingManagerId: 'me' }),
+      withState('r1a', { reportingManagerId: 'r1', lifecycleState: 'NOTICE_PERIOD' }),
+      withState('r-gone', { reportingManagerId: 'me', lifecycleState: 'SEPARATED' }),
+      withState('stranger', { lifecycleState: 'NOTICE_PERIOD' }),
+      withState('stranger-gone', { lifecycleState: 'SEPARATED' }),
+    ];
+
+    it('sees the whole company directory, with the same My team relations', async () => {
+      const { service } = setup(mgrOrg);
+
+      const list = await service.list(manager);
+
+      const rel = Object.fromEntries(list.map((e: any) => [e.id, e.teamRelation]));
+      expect(rel).toEqual({
+        vp: 'BOSS',
+        me: 'SELF',
+        peer: 'TEAMMATE',
+        r1: 'REPORT',
+        r1a: 'REPORT',
+        'r-gone': 'REPORT',
+        stranger: null,
+      });
+    });
+
+    it('keeps status and employment type for themself and their reports only', async () => {
+      const { service } = setup(mgrOrg);
+
+      const byId = Object.fromEntries((await service.list(manager)).map((e: any) => [e.id, e]));
+
+      expect(byId.r1a).toMatchObject({
+        lifecycleState: 'NOTICE_PERIOD',
+        employmentType: 'FULL_TIME',
+      });
+      expect(byId.me).toHaveProperty('lifecycleState');
+      expect(byId.peer).not.toHaveProperty('lifecycleState');
+      expect(byId.peer).not.toHaveProperty('employmentType');
+      expect(byId.stranger).not.toHaveProperty('lifecycleState');
+      expect(byId.vp).not.toHaveProperty('lifecycleState');
+    });
+
+    it('still shows reports who have left, but never other people who have left', async () => {
+      const { service } = setup(mgrOrg);
+
+      const ids = (await service.list(manager)).map((e: any) => e.id);
+
+      expect(ids).toContain('r-gone');
+      expect(ids).not.toContain('stranger-gone');
+    });
+
+    it('does not send compensation or personal details either', async () => {
+      const { service, tenantPrisma } = setup(mgrOrg);
+
+      await service.list(manager);
+
+      const select = tenantPrisma.client.employee.findMany.mock.calls[0][0].select;
+      for (const forbidden of [
+        'ctcAnnual',
+        'dateOfBirth',
+        'personalEmail',
+        'panMasked',
+        'payGrade',
+      ]) {
+        expect(select).not.toHaveProperty(forbidden);
+      }
+    });
+  });
+
+  it('leaves HR, Admin and Auditor on the full list', async () => {
+    const { service, tenantPrisma } = setup([]);
+
+    await service.list(actor({ role: 'HR_MANAGER' }));
+
+    expect(tenantPrisma.client.employee.findMany.mock.calls[0][0]).toHaveProperty('include');
+  });
+});
+
+describe('EmployeesService login email sync', () => {
+  const hr = actor();
+  const login = {
+    id: 'user-1',
+    tenantId: 'tenant-1',
+    email: 'old@test.com',
+    firebaseUid: 'fb-1',
+  };
+
+  function setup(employee: Record<string, any> = {}, userRow: Record<string, any> | null = login) {
+    const built = buildService({
+      id: 'emp-1',
+      employeeCode: 'LUM-1',
+      firstName: 'Ani',
+      lastName: 'G',
+      userId: 'user-1',
+      personalEmail: 'new@test.com',
+      lifecycleState: 'PROBATION',
+      ...employee,
+    });
+    built.tenantPrisma.client.user.findUnique.mockResolvedValue(userRow);
+    built.tenantPrisma.client.user.update.mockResolvedValue({});
+    return built;
+  }
+
+  describe('update()', () => {
+    it('moves the login to the new email when HR edits the employee email', async () => {
+      const { service, tenantPrisma, firebaseAuth } = setup();
+
+      await service.update('emp-1', { personalEmail: 'new@test.com' }, hr);
+
+      expect((firebaseAuth as any).updateUser).toHaveBeenCalledWith('fb-1', {
+        email: 'new@test.com',
+      });
+      expect(tenantPrisma.client.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: { email: 'new@test.com' },
+      });
+      expect(tenantPrisma.client.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'access.user_email_changed',
+          metadata: expect.objectContaining({
+            targetEmail: 'new@test.com',
+            before: 'old@test.com',
+            after: 'new@test.com',
+          }),
+        }),
+      });
+    });
+
+    it('does not touch the login when the employee has none', async () => {
+      const { service, firebaseAuth } = setup({ userId: null });
+
+      await service.update('emp-1', { personalEmail: 'new@test.com' }, hr);
+
+      expect((firebaseAuth as any).updateUser).not.toHaveBeenCalled();
+    });
+
+    it('does not touch the login when the email is not part of the edit', async () => {
+      const { service, firebaseAuth } = setup();
+
+      await service.update('emp-1', { phone: '999' }, hr);
+
+      expect((firebaseAuth as any).updateUser).not.toHaveBeenCalled();
+    });
+
+    it('rejects the whole edit, writing nothing, when the email belongs to another login', async () => {
+      const { service, tenantPrisma, firebaseAuth } = setup();
+      (firebaseAuth as any).updateUser.mockRejectedValue({ code: 'auth/email-already-exists' });
+
+      await expect(
+        service.update('emp-1', { personalEmail: 'taken@test.com', phone: '999' }, hr),
+      ).rejects.toThrow(BadRequestException);
+      expect(tenantPrisma.client.employee.update).not.toHaveBeenCalled();
+    });
+
+    it('ignores an email sent by the employee themselves (HR only)', async () => {
+      const { service, tenantPrisma, firebaseAuth } = setup();
+      const self = actor({ sub: 'user-1', role: 'EMPLOYEE', employeeId: 'emp-1' });
+
+      await service.update('emp-1', { personalEmail: 'mine@test.com', phone: '999' }, self);
+
+      expect(tenantPrisma.client.employee.update).toHaveBeenCalledWith({
+        where: { id: 'emp-1' },
+        data: expect.not.objectContaining({ personalEmail: expect.anything() }),
+      });
+      expect((firebaseAuth as any).updateUser).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('syncLoginEmail()', () => {
+    it('sets the login email to the employee email and audits it', async () => {
+      const { service, tenantPrisma, firebaseAuth } = setup();
+
+      await expect(service.syncLoginEmail('emp-1', hr)).resolves.toEqual({
+        employeeId: 'emp-1',
+        email: 'new@test.com',
+        changed: true,
+      });
+      expect((firebaseAuth as any).updateUser).toHaveBeenCalledWith('fb-1', {
+        email: 'new@test.com',
+      });
+      expect(tenantPrisma.client.auditLog.create).toHaveBeenCalled();
+    });
+
+    it('reports changed: false and writes nothing when already in sync', async () => {
+      const { service, tenantPrisma, firebaseAuth } = setup({ personalEmail: 'OLD@test.com' });
+
+      await expect(service.syncLoginEmail('emp-1', hr)).resolves.toMatchObject({ changed: false });
+      expect((firebaseAuth as any).updateUser).not.toHaveBeenCalled();
+      expect(tenantPrisma.client.user.update).not.toHaveBeenCalled();
+      expect(tenantPrisma.client.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('404s an unknown employee', async () => {
+      const { service, tenantPrisma } = setup();
+      tenantPrisma.client.employee.findUnique.mockResolvedValue(null);
+
+      await expect(service.syncLoginEmail('emp-x', hr)).rejects.toThrow(NotFoundException);
+    });
+
+    it('rejects an employee with no login', async () => {
+      const { service } = setup({ userId: null });
+
+      await expect(service.syncLoginEmail('emp-1', hr)).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects an employee with no email set', async () => {
+      const { service, firebaseAuth } = setup({ personalEmail: null });
+
+      await expect(service.syncLoginEmail('emp-1', hr)).rejects.toThrow(BadRequestException);
+      expect((firebaseAuth as any).updateUser).not.toHaveBeenCalled();
+    });
+
+    it('treats a login from another tenant as not found', async () => {
+      const { service, firebaseAuth } = setup({}, { ...login, tenantId: 'tenant-2' });
+
+      await expect(service.syncLoginEmail('emp-1', hr)).rejects.toThrow(NotFoundException);
+      expect((firebaseAuth as any).updateUser).not.toHaveBeenCalled();
+    });
+
+    it('rolls Firebase back and 400s when the email is taken in this workspace', async () => {
+      const { service, tenantPrisma, firebaseAuth } = setup();
+      tenantPrisma.client.user.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+        }),
+      );
+
+      await expect(service.syncLoginEmail('emp-1', hr)).rejects.toThrow(BadRequestException);
+      expect((firebaseAuth as any).updateUser).toHaveBeenLastCalledWith('fb-1', {
+        email: 'old@test.com',
+      });
+      expect(tenantPrisma.client.auditLog.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('get()', () => {
+    it('shows the login email to HR but not to a line manager', async () => {
+      const { service, tenantPrisma } = setup();
+      tenantPrisma.client.employee.findFirst.mockResolvedValue({
+        id: 'emp-1',
+        userId: 'user-1',
+        user: { email: 'old@test.com' },
+      });
+      // The line-manager scope lookup needs subordinates.
+      tenantPrisma.client.employee.findMany.mockResolvedValue([]);
+
+      await expect(service.get('emp-1', hr)).resolves.toMatchObject({ loginEmail: 'old@test.com' });
+      const manager = actor({ role: 'LINE_MANAGER', employeeId: 'emp-lm' });
+      const seen = await service.get('emp-1', manager);
+      expect(seen).not.toHaveProperty('loginEmail');
+      expect(seen).not.toHaveProperty('user');
+    });
+  });
+});
+
+describe('EmployeesService.createLogin', () => {
+  const hr = actor();
+  const companyAdmin = actor({ sub: 'user-admin', role: 'COMPANY_ADMIN' });
+  const dto = { loginEmail: 'ani@test.com' };
+
+  function setup(employee: Record<string, any> = {}) {
+    const built = buildService(
+      {
+        id: 'emp-1',
+        employeeCode: 'LUM-1',
+        firstName: 'Ani',
+        lastName: 'G',
+        userId: null,
+        lifecycleState: 'PROBATION',
+        ...employee,
+      },
+      {
+        createUser: jest.fn().mockResolvedValue({ uid: 'fb-1' }),
+        setCustomUserClaims: jest.fn().mockResolvedValue(undefined),
+        deleteUser: jest.fn().mockResolvedValue(undefined),
+      },
+    );
+    const { client } = built.tenantPrisma;
+    client.user.create = jest.fn().mockResolvedValue({ id: 'user-new' });
+    client.employee.updateMany.mockResolvedValue({ count: 1 });
+    return built;
+  }
+
+  it('creates the Firebase user, DB user and link, audits it, and emails the credentials', async () => {
+    const { service, tenantPrisma, firebaseAuth, authEmails } = setup();
+
+    const result = await service.createLogin('emp-1', dto, hr);
+
+    expect(result).toEqual({
+      employeeId: 'emp-1',
+      userId: 'user-new',
+      email: 'ani@test.com',
+      emailSent: true,
+    });
+    const password = (firebaseAuth as any).createUser.mock.calls[0][0].password;
+    expect(password).toMatch(/^[A-Za-z0-9]{12}$/);
+    expect(password).toMatch(/[A-Z]/);
+    expect(password).toMatch(/[a-z]/);
+    expect(password).toMatch(/\d/);
+    expect((firebaseAuth as any).setCustomUserClaims).toHaveBeenCalledWith('fb-1', {
+      tenantId: 'tenant-1',
+      role: 'EMPLOYEE',
+    });
+    expect(tenantPrisma.client.user.create).toHaveBeenCalledWith({
+      data: { tenantId: 'tenant-1', email: 'ani@test.com', firebaseUid: 'fb-1', role: 'EMPLOYEE' },
+    });
+    expect(tenantPrisma.client.employee.updateMany).toHaveBeenCalledWith({
+      where: { id: 'emp-1', userId: null },
+      data: { userId: 'user-new', personalEmail: 'ani@test.com' },
+    });
+    expect(tenantPrisma.client.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: 'access.user_created', targetId: 'user-new' }),
+    });
+    expect(authEmails.sendLoginCredentials).toHaveBeenCalledWith({
+      email: 'ani@test.com',
+      tenantId: 'tenant-1',
+      employeeCode: 'LUM-1',
+      tempPassword: password,
+      recipientName: 'Ani G',
+    });
+  });
+
+  it('never returns the temporary password', async () => {
+    const { service, firebaseAuth } = setup();
+
+    const result = await service.createLogin('emp-1', dto, hr);
+
+    const password = (firebaseAuth as any).createUser.mock.calls[0][0].password;
+    expect(JSON.stringify(result)).not.toContain(password);
+  });
+
+  it('keeps the login and reports emailSent: false when the email fails', async () => {
+    const { service, authEmails, firebaseAuth } = setup();
+    authEmails.sendLoginCredentials.mockRejectedValue(new Error('SES down'));
+
+    await expect(service.createLogin('emp-1', dto, hr)).resolves.toMatchObject({
+      userId: 'user-new',
+      emailSent: false,
+    });
+    expect((firebaseAuth as any).deleteUser).not.toHaveBeenCalled();
+  });
+
+  it('404s an unknown employee before touching Firebase', async () => {
+    const { service, tenantPrisma, firebaseAuth } = setup();
+    tenantPrisma.client.employee.findUnique.mockResolvedValue(null);
+
+    await expect(service.createLogin('emp-x', dto, hr)).rejects.toThrow(NotFoundException);
+    expect((firebaseAuth as any).createUser).not.toHaveBeenCalled();
+  });
+
+  it('rejects an employee that already has a login', async () => {
+    const { service, firebaseAuth } = setup({ userId: 'user-x' });
+
+    await expect(service.createLogin('emp-1', dto, hr)).rejects.toThrow(BadRequestException);
+    expect((firebaseAuth as any).createUser).not.toHaveBeenCalled();
+  });
+
+  it('rejects a separated employee', async () => {
+    const { service, firebaseAuth } = setup({ lifecycleState: 'SEPARATED' });
+
+    await expect(service.createLogin('emp-1', dto, hr)).rejects.toThrow(BadRequestException);
+    expect((firebaseAuth as any).createUser).not.toHaveBeenCalled();
+  });
+
+  it('does not let an HR Manager grant Company Admin (RULE-2 ceiling)', async () => {
+    const { service, firebaseAuth } = setup();
+
+    await expect(
+      service.createLogin('emp-1', { ...dto, loginRole: 'COMPANY_ADMIN' }, hr),
+    ).rejects.toThrow(ForbiddenException);
+    expect((firebaseAuth as any).createUser).not.toHaveBeenCalled();
+  });
+
+  it('lets a Company Admin grant any role', async () => {
+    const { service, tenantPrisma } = setup();
+
+    await service.createLogin('emp-1', { ...dto, loginRole: 'HR_MANAGER' }, companyAdmin);
+
+    expect(tenantPrisma.client.user.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ role: 'HR_MANAGER' }),
+    });
+  });
+
+  it('maps an email already in Firebase to a 400 and writes nothing', async () => {
+    const { service, tenantPrisma, firebaseAuth, authEmails } = setup();
+    (firebaseAuth as any).createUser.mockRejectedValue({ code: 'auth/email-already-exists' });
+
+    await expect(service.createLogin('emp-1', dto, hr)).rejects.toThrow(BadRequestException);
+    expect(tenantPrisma.client.user.create).not.toHaveBeenCalled();
+    expect(authEmails.sendLoginCredentials).not.toHaveBeenCalled();
+  });
+
+  it('rolls back the Firebase user and sends nothing when the DB write fails', async () => {
+    const { service, tenantPrisma, firebaseAuth, authEmails } = setup();
+    tenantPrisma.client.employee.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(service.createLogin('emp-1', dto, hr)).rejects.toThrow(BadRequestException);
+    expect((firebaseAuth as any).deleteUser).toHaveBeenCalledWith('fb-1');
+    expect(tenantPrisma.client.auditLog.create).not.toHaveBeenCalled();
+    expect(authEmails.sendLoginCredentials).not.toHaveBeenCalled();
+  });
+
+  it('maps a duplicate email in this workspace to a 400 and rolls back Firebase', async () => {
+    const { service, tenantPrisma, firebaseAuth } = setup();
+    tenantPrisma.client.user.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+      }),
+    );
+
+    await expect(service.createLogin('emp-1', dto, hr)).rejects.toThrow(BadRequestException);
+    expect((firebaseAuth as any).deleteUser).toHaveBeenCalledWith('fb-1');
+  });
+});
+
+describe('EmployeesService login linking', () => {
+  const unlinkedAdminLogin = {
+    id: 'user-admin',
+    tenantId: 'tenant-1',
+    email: 'founder@test.com',
+    role: 'COMPANY_ADMIN',
+    employee: null,
+  };
+  const newEmployee = { employeeCode: 'LUM-1', firstName: 'Ani', lastName: 'G' };
+  const companyAdmin = actor({
+    sub: 'user-admin',
+    role: 'COMPANY_ADMIN',
+    email: 'founder@test.com',
+    employeeId: null,
+  });
+
+  function setup(login: Record<string, any> | null, employee: Record<string, any> = {}) {
+    const built = buildService(
+      {
+        id: 'emp-1',
+        employeeCode: 'LUM-1',
+        firstName: 'Ani',
+        lastName: 'G',
+        userId: null,
+        lifecycleState: 'PROBATION',
+        ...employee,
+      },
+      { createUser: jest.fn() },
+    );
+    const { client } = built.tenantPrisma;
+    client.user.findUnique.mockResolvedValue(login);
+    client.user.create = jest.fn();
+    client.employee.create = jest.fn((args: any) => ({ id: 'emp-new', ...args.data }));
+    client.employee.updateMany.mockResolvedValue({ count: 1 });
+    return built;
+  }
+
+  describe('create() leave policy', () => {
+    it('applies the leave policy to the new employee', async () => {
+      const { service, entitlement } = setup(null);
+
+      const created = await service.create(newEmployee, companyAdmin);
+
+      expect(entitlement.applyPolicyDefaults).toHaveBeenCalledWith(
+        expect.anything(),
+        'tenant-1',
+        expect.any(Date),
+        { employeeIds: [created.id] },
+      );
+    });
+
+    it('still creates the employee when applying leave policy fails', async () => {
+      const { service, entitlement } = setup(null);
+      entitlement.applyPolicyDefaults.mockRejectedValue(new Error('db hiccup'));
+
+      await expect(service.create(newEmployee, companyAdmin)).resolves.toMatchObject({
+        id: 'emp-new',
+      });
+    });
+  });
+
+  describe('create() with existingUserId', () => {
+    it('creates the employee linked to the existing login, without provisioning a new one', async () => {
+      const { service, tenantPrisma, firebaseAuth } = setup(unlinkedAdminLogin);
+
+      const created = await service.create(
+        { ...newEmployee, existingUserId: 'user-admin' },
+        companyAdmin,
+      );
+
+      expect(created.userId).toBe('user-admin');
+      expect((firebaseAuth as any).createUser).not.toHaveBeenCalled();
+      expect(tenantPrisma.client.user.create).not.toHaveBeenCalled();
+      expect(tenantPrisma.client.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'access.user_linked',
+          targetId: 'user-admin',
+          metadata: expect.objectContaining({
+            targetEmail: 'founder@test.com',
+            after: 'Ani G (LUM-1)',
+          }),
+        }),
+      });
+    });
+
+    it('rejects existingUserId together with a new-login email/password, before writing anything', async () => {
+      const { service, tenantPrisma, firebaseAuth } = setup(unlinkedAdminLogin);
+
+      await expect(
+        service.create(
+          {
+            ...newEmployee,
+            existingUserId: 'user-admin',
+            loginEmail: 'x@test.com',
+            loginTempPassword: 'temp-pass-1',
+          },
+          companyAdmin,
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect((firebaseAuth as any).createUser).not.toHaveBeenCalled();
+      expect(tenantPrisma.client.employee.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a login that is already linked to another employee', async () => {
+      const { service, tenantPrisma } = setup({
+        ...unlinkedAdminLogin,
+        employee: { id: 'emp-other' },
+      });
+
+      await expect(
+        service.create({ ...newEmployee, existingUserId: 'user-admin' }, companyAdmin),
+      ).rejects.toThrow(BadRequestException);
+      expect(tenantPrisma.client.employee.create).not.toHaveBeenCalled();
+    });
+
+    it('treats a login from another tenant as not found', async () => {
+      const { service, tenantPrisma } = setup({ ...unlinkedAdminLogin, tenantId: 'tenant-2' });
+
+      await expect(
+        service.create({ ...newEmployee, existingUserId: 'user-admin' }, companyAdmin),
+      ).rejects.toThrow(NotFoundException);
+      expect(tenantPrisma.client.employee.create).not.toHaveBeenCalled();
+    });
+
+    it('404s an unknown login', async () => {
+      const { service } = setup(null);
+
+      await expect(
+        service.create({ ...newEmployee, existingUserId: 'user-missing' }, companyAdmin),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('does not let an HR Manager link a Company Admin login (RULE-2 ceiling)', async () => {
+      const { service, tenantPrisma } = setup(unlinkedAdminLogin);
+
+      await expect(
+        service.create({ ...newEmployee, existingUserId: 'user-admin' }, actor()),
+      ).rejects.toThrow(ForbiddenException);
+      expect(tenantPrisma.client.employee.create).not.toHaveBeenCalled();
+      expect(tenantPrisma.client.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses to link without an authenticated actor', async () => {
+      const { service } = setup(unlinkedAdminLogin);
+
+      await expect(
+        service.create({ ...newEmployee, existingUserId: 'user-admin' }),
+      ).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('linkLogin()', () => {
+    it('links a Company Admin’s own login to an existing employee and audits it', async () => {
+      const { service, tenantPrisma } = setup(unlinkedAdminLogin);
+
+      const result = await service.linkLogin('emp-1', { userId: 'user-admin' }, companyAdmin);
+
+      expect(result).toEqual({ employeeId: 'emp-1', userId: 'user-admin' });
+      expect(tenantPrisma.client.employee.updateMany).toHaveBeenCalledWith({
+        where: { id: 'emp-1', userId: null },
+        data: { userId: 'user-admin' },
+      });
+      expect(tenantPrisma.client.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ action: 'access.user_linked', actorUserId: 'user-admin' }),
+      });
+    });
+
+    it('lets an HR Manager link an Employee-role login', async () => {
+      const { service, tenantPrisma } = setup({
+        ...unlinkedAdminLogin,
+        id: 'user-emp',
+        role: 'EMPLOYEE',
+      });
+
+      await service.linkLogin('emp-1', { userId: 'user-emp' }, actor());
+
+      expect(tenantPrisma.client.employee.updateMany).toHaveBeenCalled();
+    });
+
+    it('does not let an HR Manager link a Company Admin login', async () => {
+      const { service, tenantPrisma } = setup(unlinkedAdminLogin);
+
+      await expect(service.linkLogin('emp-1', { userId: 'user-admin' }, actor())).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(tenantPrisma.client.employee.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects an employee that already has a login', async () => {
+      const { service, tenantPrisma } = setup(unlinkedAdminLogin, { userId: 'user-x' });
+
+      await expect(
+        service.linkLogin('emp-1', { userId: 'user-admin' }, companyAdmin),
+      ).rejects.toThrow(BadRequestException);
+      expect(tenantPrisma.client.employee.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects a separated employee', async () => {
+      const { service, tenantPrisma } = setup(unlinkedAdminLogin, { lifecycleState: 'SEPARATED' });
+
+      await expect(
+        service.linkLogin('emp-1', { userId: 'user-admin' }, companyAdmin),
+      ).rejects.toThrow(BadRequestException);
+      expect(tenantPrisma.client.employee.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects a login already linked to another employee', async () => {
+      const { service, tenantPrisma } = setup({
+        ...unlinkedAdminLogin,
+        employee: { id: 'emp-other' },
+      });
+
+      await expect(
+        service.linkLogin('emp-1', { userId: 'user-admin' }, companyAdmin),
+      ).rejects.toThrow(BadRequestException);
+      expect(tenantPrisma.client.employee.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('treats a login from another tenant as not found', async () => {
+      const { service, tenantPrisma } = setup({ ...unlinkedAdminLogin, tenantId: 'tenant-2' });
+
+      await expect(
+        service.linkLogin('emp-1', { userId: 'user-admin' }, companyAdmin),
+      ).rejects.toThrow(NotFoundException);
+      expect(tenantPrisma.client.employee.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('404s an unknown employee', async () => {
+      const { service, tenantPrisma } = setup(unlinkedAdminLogin);
+      tenantPrisma.client.employee.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.linkLogin('emp-missing', { userId: 'user-admin' }, companyAdmin),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('loses a race cleanly when the employee was linked concurrently (no audit row)', async () => {
+      const { service, tenantPrisma } = setup(unlinkedAdminLogin);
+      tenantPrisma.client.employee.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.linkLogin('emp-1', { userId: 'user-admin' }, companyAdmin),
+      ).rejects.toThrow(BadRequestException);
+      expect(tenantPrisma.client.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('maps a unique-index violation (login linked concurrently elsewhere) to a 400', async () => {
+      const { service, tenantPrisma } = setup(unlinkedAdminLogin);
+      tenantPrisma.client.employee.updateMany.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+        }),
+      );
+
+      await expect(
+        service.linkLogin('emp-1', { userId: 'user-admin' }, companyAdmin),
+      ).rejects.toThrow(BadRequestException);
+      expect(tenantPrisma.client.auditLog.create).not.toHaveBeenCalled();
+    });
   });
 });

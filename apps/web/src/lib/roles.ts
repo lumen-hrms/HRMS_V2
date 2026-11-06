@@ -83,3 +83,16 @@ export function assignableRoles(actor: { role: Role } | null | undefined): Role[
   const ceiling = actor ? ROLE_RANK[actor.role] : -1;
   return all.filter((r) => r !== 'COMPANY_ADMIN' && ROLE_RANK[r] <= ceiling);
 }
+
+// --- Payroll module (see docs/modules/07_PAYROLL_ENGINE.md §8) ---
+// Line Manager has no Payroll access at all (not in any of the lists below).
+
+/** Runs payroll, maintains structures/config, approves/processes/disburses, FnF. */
+export const PAYROLL_ADMIN_ROLES: Role[] = ['COMPANY_ADMIN', 'HR_MANAGER'];
+/** Sees Payroll at all — Admin roles plus the read-only Auditor. */
+export const PAYROLL_VIEW_ROLES: Role[] = ['COMPANY_ADMIN', 'HR_MANAGER', 'AUDITOR'];
+
+export const isPayrollAdmin = (u: { role: Role } | null | undefined) =>
+  hasRole(u, PAYROLL_ADMIN_ROLES);
+export const canViewPayrollModule = (u: { role: Role } | null | undefined) =>
+  hasRole(u, PAYROLL_VIEW_ROLES) || u?.role === 'EMPLOYEE';

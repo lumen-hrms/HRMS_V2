@@ -1,9 +1,18 @@
 import { ForbiddenException, BadRequestException } from '@nestjs/common';
 import { LeaveService } from './leave.service';
+import { LeaveEntitlementService } from './leave-entitlement.service';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
 
 /** Nested relations `toRequestDto` always reads off a LeaveRequest row —
  *  every fake `leaveRequest.create`/`update` below must return these. */
+/** Scalars a real `update` returns even when `data` doesn't touch them. */
+const FAKE_REQUEST_SCALARS = {
+  startDate: new Date('2026-01-05'),
+  endDate: new Date('2026-01-07'),
+  days: 3,
+  reason: null,
+};
+
 const FAKE_REQUEST_RELS = {
   employee: { id: 'emp-1', firstName: 'Test', lastName: 'User', department: null },
   leaveType: { id: 'lt-1', name: 'Test Type', code: 'TT', colorToken: '#000000' },
@@ -32,8 +41,14 @@ function buildFakeTenantPrisma(overrides: Record<string, any> = {}) {
     },
     leaveRequest: {
       create: jest.fn((args: any) => ({ id: 'req-1', ...args.data, ...FAKE_REQUEST_RELS })),
-      update: jest.fn((args: any) => ({ id: args.where.id, ...args.data, ...FAKE_REQUEST_RELS })),
+      update: jest.fn((args: any) => ({
+        id: args.where.id,
+        ...FAKE_REQUEST_SCALARS,
+        ...args.data,
+        ...FAKE_REQUEST_RELS,
+      })),
       findUniqueOrThrow: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
       groupBy: jest.fn().mockResolvedValue([]),
     },
     leaveApproval: { create: jest.fn() },
@@ -60,9 +75,17 @@ function buildFakeTenantPrisma(overrides: Record<string, any> = {}) {
   };
 }
 
-/** LeaveService only needs storage for the attachment endpoint (untested here) and a BullMQ queue stub. */
-function buildFakeStorage() {
-  return {} as any;
+/** DocumentsService stub — no request in these tests carries an attachment. */
+function buildFakeDocuments(overrides: Record<string, any> = {}) {
+  return {
+    attachmentsFor: jest.fn().mockResolvedValue(new Map()),
+    upload: jest.fn(),
+    ...overrides,
+  } as any;
+}
+
+function buildFakeNotifications(): any {
+  return { notify: jest.fn().mockResolvedValue(undefined) };
 }
 
 function buildFakeQueue() {
@@ -93,7 +116,13 @@ describe('LeaveService', () => {
           findUnique: jest.fn().mockResolvedValue({ accrued: 2, used: 0 }), // only 2 days available
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
 
       const result = await service.apply(
         { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-07' }, // 3 inclusive days
@@ -114,7 +143,13 @@ describe('LeaveService', () => {
           findUnique: jest.fn().mockResolvedValue({ accrued: 18, used: 2 }),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
 
       const result = await service.apply(
         { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-05' }, // 1 day
@@ -126,9 +161,104 @@ describe('LeaveService', () => {
       expect(result.status).toBe('PENDING_L2'); // no reporting manager to give L1
     });
 
+    it('never flags a half-day request as LOP, even with zero balance (Payroll decision 15)', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        employee: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'emp-1', reportingManagerId: null }),
+        },
+        leaveBalance: {
+          findUnique: jest.fn().mockResolvedValue({ accrued: 0, used: 0 }), // no balance at all
+        },
+      });
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
+
+      const result = await service.apply(
+        { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-05', halfDay: true },
+        user(),
+      );
+
+      expect(result.days).toBe(0.5);
+      expect(result.isLop).toBe(false);
+    });
+  });
+
+  describe('getApprovedLopDaysBatch()', () => {
+    it('counts only approved+isLop requests overlapping the window, clipped to it', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        leaveRequest: {
+          findMany: jest.fn().mockResolvedValue([
+            // Fully inside March: Mon 2026-03-02 .. Wed 2026-03-04 = 3 working days.
+            {
+              employeeId: 'emp-1',
+              startDate: new Date('2026-03-02'),
+              endDate: new Date('2026-03-04'),
+            },
+            // Spans into April: Fri 2026-03-27 .. Tue 2026-03-31 clipped at
+            // month end = Fri,Sat(off),Sun(off),Mon,Tue -> 3 working days.
+            {
+              employeeId: 'emp-1',
+              startDate: new Date('2026-03-27'),
+              endDate: new Date('2026-04-02'),
+            },
+          ]),
+        },
+      });
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
+
+      const result = await service.getApprovedLopDaysBatch(
+        new Date('2026-03-01'),
+        new Date('2026-04-01'),
+      );
+
+      expect(result.get('emp-1')).toBe(6);
+      // Only approved+isLop rows are ever queried.
+      expect(tenantPrisma.client.leaveRequest.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: 'APPROVED', isLop: true }),
+        }),
+      );
+    });
+
+    it('returns an empty map when nothing overlaps the window', async () => {
+      const tenantPrisma = buildFakeTenantPrisma();
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
+
+      const result = await service.getApprovedLopDaysBatch(
+        new Date('2026-03-01'),
+        new Date('2026-04-01'),
+      );
+      expect(result.size).toBe(0);
+    });
+  });
+
+  describe('apply() — more', () => {
     it('rejects an end date before the start date', async () => {
       const tenantPrisma = buildFakeTenantPrisma();
-      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
       await expect(
         service.apply(
           { leaveTypeId: 'lt-1', startDate: '2026-01-10', endDate: '2026-01-05' },
@@ -139,7 +269,13 @@ describe('LeaveService', () => {
 
     it('rejects when the caller has no linked employee record', async () => {
       const tenantPrisma = buildFakeTenantPrisma();
-      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
       await expect(
         service.apply(
           { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-05' },
@@ -168,7 +304,13 @@ describe('LeaveService', () => {
           }),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
 
       await expect(
         service.apply(
@@ -197,7 +339,13 @@ describe('LeaveService', () => {
             .mockResolvedValue({ id: 'lt-1', name: 'Earned Leave', minNoticeDays: 30 }),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
 
       await expect(
         service.apply(
@@ -230,7 +378,13 @@ describe('LeaveService', () => {
           }),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
 
       await expect(
         service.apply(
@@ -262,7 +416,13 @@ describe('LeaveService', () => {
           }),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
 
       const result = await service.apply(
         { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-05' },
@@ -289,12 +449,19 @@ describe('LeaveService', () => {
           }),
           update: jest.fn((args: any) => ({
             id: args.where.id,
+            ...FAKE_REQUEST_SCALARS,
             ...args.data,
             ...FAKE_REQUEST_RELS,
           })),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
 
       // A random employee (not the manager) must be rejected.
       await expect(
@@ -325,12 +492,19 @@ describe('LeaveService', () => {
           }),
           update: jest.fn((args: any) => ({
             id: args.where.id,
+            ...FAKE_REQUEST_SCALARS,
             ...args.data,
             ...FAKE_REQUEST_RELS,
           })),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
 
       // A Line Manager cannot give L2 approval.
       await expect(
@@ -367,12 +541,19 @@ describe('LeaveService', () => {
           }),
           update: jest.fn((args: any) => ({
             id: args.where.id,
+            ...FAKE_REQUEST_SCALARS,
             ...args.data,
             ...FAKE_REQUEST_RELS,
           })),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
 
       await service.approve('req-1', user({ role: 'COMPANY_ADMIN' }));
       expect(tenantPrisma.client.leaveBalance.upsert).not.toHaveBeenCalled();
@@ -400,12 +581,19 @@ describe('LeaveService', () => {
           }),
           update: jest.fn((args: any) => ({
             id: args.where.id,
+            ...FAKE_REQUEST_SCALARS,
             ...args.data,
             ...FAKE_REQUEST_RELS,
           })),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
 
       const result = await service.cancel('req-1', user());
       expect(result.status).toBe('CANCELLED');
@@ -427,7 +615,13 @@ describe('LeaveService', () => {
           findUniqueOrThrow: jest.fn(),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
 
       await service.creditCompOff('emp-1', new Date('2026-01-10'), 'Republic Day');
       expect(tenantPrisma.client.leaveBalance.upsert).not.toHaveBeenCalled();
@@ -450,7 +644,13 @@ describe('LeaveService', () => {
             .mockResolvedValueOnce({ id: 'ledger-1' }), // second call: already credited
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
 
       await service.creditCompOff('emp-1', new Date('2026-01-10'), 'Republic Day');
       expect(tenantPrisma.client.leaveBalance.upsert).toHaveBeenCalledTimes(1);
@@ -465,14 +665,76 @@ describe('LeaveService', () => {
     });
   });
 
-  describe('assertCanViewEmployee() — Line Manager visibility', () => {
-    it('rejects a Line Manager who does not directly manage the target employee', async () => {
+  describe('creditOvertimeCompOff() (module 07 Phase 4, decision 6)', () => {
+    it('no-ops when the tenant has no designated comp-off leave type', async () => {
       const tenantPrisma = buildFakeTenantPrisma({
-        employee: {
-          findUnique: jest.fn().mockResolvedValue({ reportingManagerId: 'someone-else' }),
+        leaveType: {
+          findMany: jest.fn(),
+          findFirst: jest.fn().mockResolvedValue(null),
+          create: jest.fn(),
+          findUniqueOrThrow: jest.fn(),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
+
+      await service.creditOvertimeCompOff('emp-1', 0.25, '2026-09');
+      expect(tenantPrisma.client.leaveBalance.upsert).not.toHaveBeenCalled();
+    });
+
+    it('credits a fractional day amount (hours / shift hours) to the comp-off balance', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        leaveType: {
+          findMany: jest.fn(),
+          findFirst: jest.fn().mockResolvedValue({ id: 'co-1' }),
+          create: jest.fn(),
+          findUniqueOrThrow: jest.fn(),
+        },
+      });
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
+
+      await service.creditOvertimeCompOff('emp-1', 0.25, '2026-09');
+      expect(tenantPrisma.client.leaveBalance.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({ accrued: 0.25 }),
+          update: { accrued: { increment: 0.25 } },
+        }),
+      );
+      expect(tenantPrisma.client.leaveLedgerEntry.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ source: 'COMP_OFF_CREDIT', delta: 0.25 }),
+        }),
+      );
+    });
+  });
+
+  describe('assertCanViewEmployee() — Line Manager recursive-subtree visibility', () => {
+    it('rejects a Line Manager who is not anywhere in the target employee’s management chain', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        employee: {
+          findMany: jest
+            .fn()
+            .mockResolvedValue([{ id: 'target-emp', reportingManagerId: 'someone-else' }]),
+        },
+      });
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
 
       await expect(
         service.getBalances(
@@ -486,11 +748,19 @@ describe('LeaveService', () => {
     it('allows a Line Manager who directly manages the target employee', async () => {
       const tenantPrisma = buildFakeTenantPrisma({
         employee: {
-          findUnique: jest.fn().mockResolvedValue({ reportingManagerId: 'mgr-1' }),
+          findMany: jest
+            .fn()
+            .mockResolvedValue([{ id: 'target-emp', reportingManagerId: 'mgr-1' }]),
         },
         leaveBalance: { findMany: jest.fn().mockResolvedValue([]) },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
 
       await expect(
         service.getBalances(
@@ -499,6 +769,173 @@ describe('LeaveService', () => {
           2026,
         ),
       ).resolves.toEqual([]);
+    });
+
+    it('allows a Line Manager to view an INDIRECT report (skip-level) — the module 03 mirroring fix', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        employee: {
+          findMany: jest.fn().mockResolvedValue([
+            { id: 'sub-mgr', reportingManagerId: 'mgr-1' },
+            { id: 'target-emp', reportingManagerId: 'sub-mgr' },
+          ]),
+        },
+        leaveBalance: { findMany: jest.fn().mockResolvedValue([]) },
+      });
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
+
+      await expect(
+        service.getBalances(
+          'target-emp',
+          user({ role: 'LINE_MANAGER', employeeId: 'mgr-1' }),
+          2026,
+        ),
+      ).resolves.toEqual([]);
+    });
+  });
+
+  describe('getEncashableBalance() (module 07 Phase 8 Full & Final contract)', () => {
+    it('sums accrued-used across isEncashable leave types only, for the resolved year', async () => {
+      const findMany = jest.fn().mockResolvedValue([
+        { accrued: 12, used: 2 }, // 10
+        { accrued: 5, used: 1 }, // 4
+      ]);
+      const tenantPrisma = buildFakeTenantPrisma({ leaveBalance: { findMany } });
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
+
+      const result = await service.getEncashableBalance('emp-1', new Date('2026-06-15'));
+
+      expect(result).toBe(14);
+      expect(findMany).toHaveBeenCalledWith({
+        where: { employeeId: 'emp-1', year: 2026, leaveType: { isEncashable: true } },
+      });
+    });
+
+    it('is 0 when nothing is encashable', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        leaveBalance: { findMany: jest.fn().mockResolvedValue([]) },
+      });
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
+
+      expect(await service.getEncashableBalance('emp-1', new Date('2026-06-15'))).toBe(0);
+    });
+
+    it("resolves the FY from the separation date's month, not the calendar year, when fyStartMonth != 1", async () => {
+      const findMany = jest.fn().mockResolvedValue([]);
+      const tenantPrisma = buildFakeTenantPrisma({
+        leaveBalance: { findMany },
+        tenantSettings: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            leaveApprovalLevels: 2,
+            leaveEscalationDays: 3,
+            weeklyOffDays: [0, 6],
+            allowLopRequests: true,
+            fyStartMonth: 4,
+          }),
+        },
+      });
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
+
+      // February 2027 is still FY2026 (April 2026 -> March 2027) when fyStartMonth = 4.
+      await service.getEncashableBalance('emp-1', new Date('2027-02-10'));
+
+      expect(findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ year: 2026 }) }),
+      );
+    });
+  });
+
+  describe('teamBalances() / teamCalendar() — recursive-subtree scoping', () => {
+    it('teamBalances includes a skip-level (indirect) report for a Line Manager', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        employee: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 'sub-mgr',
+              reportingManagerId: 'mgr-1',
+              firstName: 'Sub',
+              lastName: 'Mgr',
+              department: null,
+              leaveBalances: [],
+            },
+            {
+              id: 'indirect-report',
+              reportingManagerId: 'sub-mgr',
+              firstName: 'Indirect',
+              lastName: 'Report',
+              department: null,
+              leaveBalances: [],
+            },
+          ]),
+        },
+        leaveRequest: { groupBy: jest.fn().mockResolvedValue([]) },
+        leaveLedgerEntry: { groupBy: jest.fn().mockResolvedValue([]) },
+      });
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
+
+      const result = await service.teamBalances(
+        user({ role: 'LINE_MANAGER', employeeId: 'mgr-1' }),
+        2026,
+      );
+
+      expect(result.map((r) => r.employeeId)).toEqual(['sub-mgr', 'indirect-report']);
+    });
+
+    it('teamCalendar scopes to the full recursive subtree, not just direct reports', async () => {
+      const findMany = jest.fn().mockResolvedValue([
+        { id: 'sub-mgr', reportingManagerId: 'mgr-1' },
+        { id: 'indirect-report', reportingManagerId: 'sub-mgr' },
+      ]);
+      const tenantPrisma = buildFakeTenantPrisma({
+        employee: { findMany },
+        leaveRequest: { findMany: jest.fn().mockResolvedValue([]) },
+      });
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
+
+      await service.teamCalendar(
+        user({ role: 'LINE_MANAGER', employeeId: 'mgr-1' }),
+        '2026-01-01',
+        '2026-01-31',
+      );
+
+      const requestWhere = ((tenantPrisma.client.leaveRequest as any).findMany as jest.Mock).mock
+        .calls[0][0].where;
+      expect(requestWhere.employeeId).toEqual({ in: ['sub-mgr', 'indirect-report'] });
     });
   });
 
@@ -529,7 +966,13 @@ describe('LeaveService', () => {
           findMany: jest.fn().mockResolvedValue([{ date: new Date('2026-01-07') }]),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
 
       const result = await service.apply(
         { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-10' },
@@ -561,7 +1004,13 @@ describe('LeaveService', () => {
           }),
         },
       });
-      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), buildFakeQueue());
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
 
       const result = await service.apply(
         { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-05' },
@@ -571,6 +1020,105 @@ describe('LeaveService', () => {
       // Monday — even though the employee has a reporting manager, a
       // single-level tenant skips L1 entirely.
       expect(result.status).toBe('PENDING_L2');
+    });
+
+    const MANAGER_ONLY = {
+      leaveApprovalLevels: 1,
+      leaveSingleApprover: 'MANAGER',
+      leaveEscalationDays: 3,
+      weeklyOffDays: [0, 6],
+      allowLopRequests: true,
+      fyStartMonth: 1,
+    };
+
+    it.each([
+      ['mgr-1', 'PENDING_L1'],
+      [null, 'PENDING_L2'], // no reporting manager -> HR decides
+    ])(
+      'reporting-manager-only: an employee with manager %s starts at %s',
+      async (reportingManagerId, expected) => {
+        const tenantPrisma = buildFakeTenantPrisma({
+          employee: {
+            findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'emp-1', reportingManagerId }),
+          },
+          leaveBalance: { findUnique: jest.fn().mockResolvedValue({ accrued: 10, used: 0 }) },
+          tenantSettings: { findUniqueOrThrow: jest.fn().mockResolvedValue(MANAGER_ONLY) },
+        });
+        const service = new LeaveService(
+          tenantPrisma as any,
+          buildFakeDocuments(),
+          buildFakeQueue(),
+          buildFakeNotifications(),
+          new LeaveEntitlementService(),
+        );
+
+        const result = await service.apply(
+          { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-05' },
+          user(),
+        );
+        expect(result.status).toBe(expected);
+      },
+    );
+
+    it('reporting-manager-only: the manager’s L1 approval is final — balance, attendance, no HR step', async () => {
+      const tenantPrisma = buildFakeTenantPrisma({
+        leaveRequest: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            id: 'req-1',
+            status: 'PENDING_L1',
+            employeeId: 'emp-1',
+            leaveTypeId: 'lt-1',
+            days: 2,
+            isLop: false,
+            startDate: new Date('2026-01-05'),
+            endDate: new Date('2026-01-05'),
+            employee: { reportingManagerId: 'mgr-1' },
+          }),
+          update: jest.fn((args: any) => ({
+            id: args.where.id,
+            ...FAKE_REQUEST_SCALARS,
+            ...args.data,
+            ...FAKE_REQUEST_RELS,
+          })),
+        },
+        tenantSettings: { findUniqueOrThrow: jest.fn().mockResolvedValue(MANAGER_ONLY) },
+      });
+      const queue = buildFakeQueue();
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        queue,
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
+
+      // Someone who isn't the manager (or HR) still can't decide it.
+      await expect(
+        service.approve('req-1', user({ employeeId: 'someone-else', role: 'EMPLOYEE' })),
+      ).rejects.toThrow(ForbiddenException);
+
+      const result = await service.approve(
+        'req-1',
+        user({ employeeId: 'mgr-1', role: 'LINE_MANAGER' }),
+      );
+      expect(result.status).toBe('APPROVED');
+      expect(tenantPrisma.client.leaveRequest.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'APPROVED', l1ApproverId: 'mgr-1' }),
+        }),
+      );
+      expect(tenantPrisma.client.leaveApproval.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ level: 1, decision: 'APPROVED' }),
+        }),
+      );
+      expect(tenantPrisma.client.leaveBalance.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ update: expect.objectContaining({ used: { increment: 2 } }) }),
+      );
+      expect(tenantPrisma.client.attendanceRecord.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ create: expect.objectContaining({ status: 'ON_LEAVE' }) }),
+      );
+      expect(queue.add).not.toHaveBeenCalled(); // no L2 escalation timer
     });
   });
 
@@ -592,7 +1140,13 @@ describe('LeaveService', () => {
         },
       });
       const queue = buildFakeQueue();
-      const service = new LeaveService(tenantPrisma as any, buildFakeStorage(), queue);
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        queue,
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
 
       const result = await service.apply(
         { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-05' },
@@ -605,5 +1159,710 @@ describe('LeaveService', () => {
         expect.objectContaining({ delay: 5 * 24 * 60 * 60 * 1000 }),
       );
     });
+  });
+
+  describe('attach() — via module 09 DocumentsService', () => {
+    const pdf = { originalname: 'medical.pdf' } as Express.Multer.File;
+    const attachment = {
+      id: 'doc-9',
+      label: 'medical.pdf',
+      scanStatus: 'PENDING_SCAN',
+    };
+
+    function withRequest(row: Record<string, any>) {
+      return buildFakeTenantPrisma({
+        leaveRequest: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({ ...FAKE_REQUEST_RELS, ...row }),
+        },
+      });
+    }
+
+    it('uploads as a LEAVE_REQUEST document on the applicant and returns it on the DTO', async () => {
+      const documents = buildFakeDocuments({ upload: jest.fn().mockResolvedValue(attachment) });
+      const service = new LeaveService(
+        withRequest({ id: 'req-1', employeeId: 'emp-1', status: 'PENDING_L1' }) as any,
+        documents,
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
+
+      const dto = await service.attach('req-1', pdf, user());
+
+      expect(documents.upload).toHaveBeenCalledWith(
+        {
+          employeeId: 'emp-1',
+          ownerType: 'LEAVE_REQUEST',
+          ownerId: 'req-1',
+          file: pdf,
+          label: 'medical.pdf',
+        },
+        expect.objectContaining({ sub: 'user-1' }),
+      );
+      expect(dto.attachment).toBe(attachment);
+      expect(dto.attachmentName).toBe('medical.pdf');
+    });
+
+    it('lets HR attach on behalf of the applicant', async () => {
+      const documents = buildFakeDocuments({ upload: jest.fn().mockResolvedValue(attachment) });
+      const service = new LeaveService(
+        withRequest({ id: 'req-1', employeeId: 'emp-1', status: 'APPROVED' }) as any,
+        documents,
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
+      await service.attach('req-1', pdf, user({ role: 'HR_MANAGER', employeeId: 'emp-hr' }));
+      expect(documents.upload).toHaveBeenCalled();
+    });
+
+    it("forbids attaching to someone else's request", async () => {
+      const documents = buildFakeDocuments();
+      const service = new LeaveService(
+        withRequest({ id: 'req-1', employeeId: 'emp-2', status: 'PENDING_L1' }) as any,
+        documents,
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
+      await expect(
+        service.attach('req-1', pdf, user({ role: 'LINE_MANAGER' })),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(documents.upload).not.toHaveBeenCalled();
+    });
+
+    it.each(['CANCELLED', 'REJECTED'])('rejects attaching to a %s request', async (status) => {
+      const documents = buildFakeDocuments();
+      const service = new LeaveService(
+        withRequest({ id: 'req-1', employeeId: 'emp-1', status }) as any,
+        documents,
+        buildFakeQueue(),
+        buildFakeNotifications(),
+        new LeaveEntitlementService(),
+      );
+      await expect(service.attach('req-1', pdf, user())).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(documents.upload).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('email notifications (module 10)', () => {
+    function serviceFor(request: Record<string, any>, employee?: Record<string, any>) {
+      const notifications = buildFakeNotifications();
+      const rels = {
+        ...FAKE_REQUEST_RELS,
+        employee: { ...FAKE_REQUEST_RELS.employee, reportingManagerId: 'mgr-1' },
+      };
+      const tenantPrisma = buildFakeTenantPrisma({
+        employee: {
+          findMany: jest.fn().mockResolvedValue([]),
+          findUniqueOrThrow: jest
+            .fn()
+            .mockResolvedValue(employee ?? { id: 'emp-1', reportingManagerId: 'mgr-1' }),
+        },
+        leaveBalance: {
+          findUnique: jest.fn().mockResolvedValue({ accrued: 18, used: 0 }),
+          findMany: jest.fn(),
+          upsert: jest.fn().mockResolvedValue({ accrued: 18, used: 0 }),
+        },
+        leaveRequest: {
+          create: jest.fn((args: any) => ({ id: 'req-1', ...args.data, ...rels })),
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            id: 'req-1',
+            employeeId: 'emp-1',
+            leaveTypeId: 'lt-1',
+            days: 2,
+            isLop: false,
+            startDate: new Date('2026-01-05'),
+            endDate: new Date('2026-01-06'),
+            employee: { reportingManagerId: 'mgr-1' },
+            ...request,
+          }),
+          update: jest.fn((args: any) => ({
+            id: args.where.id,
+            ...FAKE_REQUEST_SCALARS,
+            ...args.data,
+            ...rels,
+          })),
+        },
+      });
+      const service = new LeaveService(
+        tenantPrisma as any,
+        buildFakeDocuments(),
+        buildFakeQueue(),
+        notifications,
+        new LeaveEntitlementService(),
+      );
+      return { service, notifications };
+    }
+
+    const apply = { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-06' };
+
+    it('apply → emails the reporting manager at L1, excluding the applicant', async () => {
+      const { service, notifications } = serviceFor({});
+      await service.apply(apply, user());
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tenant-1',
+          template: 'LEAVE_PENDING_APPROVAL',
+          dedupeKey: 'leave:req-1:pending:L1',
+          to: { employeeIds: ['mgr-1'] },
+          actorUserId: 'user-1',
+          context: expect.objectContaining({
+            level: 1,
+            applicantName: 'Test User',
+            leaveTypeName: 'Test Type',
+          }),
+        }),
+      );
+    });
+
+    it('apply with no manager → emails HR (Company Admin + HR Manager) at L2', async () => {
+      const { service, notifications } = serviceFor({}, { id: 'emp-1', reportingManagerId: null });
+      await service.apply(apply, user());
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          template: 'LEAVE_PENDING_APPROVAL',
+          dedupeKey: 'leave:req-1:pending:L2',
+          to: { roles: ['COMPANY_ADMIN', 'HR_MANAGER'] },
+          context: expect.objectContaining({ level: 2 }),
+        }),
+      );
+    });
+
+    it('L1 approval → tells the applicant and hands off to HR', async () => {
+      const { service, notifications } = serviceFor({ status: 'PENDING_L1' });
+      await service.approve('req-1', user({ employeeId: 'mgr-1', role: 'LINE_MANAGER' }), {
+        comment: 'ok',
+      });
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          template: 'LEAVE_DECIDED',
+          dedupeKey: 'leave:req-1:decided:L1_APPROVED',
+          to: { employeeIds: ['emp-1'] },
+          context: expect.objectContaining({ outcome: 'L1_APPROVED', comment: 'ok' }),
+        }),
+      );
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          template: 'LEAVE_PENDING_APPROVAL',
+          dedupeKey: 'leave:req-1:pending:L2',
+          to: { roles: ['COMPANY_ADMIN', 'HR_MANAGER'] },
+        }),
+      );
+    });
+
+    it('final approval → tells the applicant', async () => {
+      const { service, notifications } = serviceFor({ status: 'PENDING_L2' });
+      await service.approve('req-1', user({ role: 'HR_MANAGER', employeeId: 'emp-hr' }));
+      expect(notifications.notify).toHaveBeenCalledTimes(1);
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          template: 'LEAVE_DECIDED',
+          dedupeKey: 'leave:req-1:decided:APPROVED',
+          to: { employeeIds: ['emp-1'] },
+          context: expect.objectContaining({ outcome: 'APPROVED' }),
+        }),
+      );
+    });
+
+    it('rejection → tells the applicant, with the comment', async () => {
+      const { service, notifications } = serviceFor({ status: 'PENDING_L1' });
+      await service.reject('req-1', user({ employeeId: 'mgr-1', role: 'LINE_MANAGER' }), {
+        comment: 'Busy week',
+      });
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          template: 'LEAVE_DECIDED',
+          dedupeKey: 'leave:req-1:decided:REJECTED',
+          context: expect.objectContaining({ outcome: 'REJECTED', comment: 'Busy week' }),
+        }),
+      );
+    });
+
+    it('a failed authorization sends nothing', async () => {
+      const { service, notifications } = serviceFor({ status: 'PENDING_L2' });
+      await expect(
+        service.approve('req-1', user({ employeeId: 'mgr-1', role: 'LINE_MANAGER' })),
+      ).rejects.toThrow(ForbiddenException);
+      expect(notifications.notify).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['PENDING_L1', { employeeIds: ['mgr-1'] }, false],
+      ['PENDING_L2', { roles: ['COMPANY_ADMIN', 'HR_MANAGER'] }, false],
+      ['APPROVED', { roles: ['COMPANY_ADMIN', 'HR_MANAGER'] }, true],
+    ])('cancelling a %s request tells whoever held it', async (status, to, wasApproved) => {
+      const { service, notifications } = serviceFor({ status });
+      await service.cancel('req-1', user());
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          template: 'LEAVE_CANCELLED',
+          dedupeKey: 'leave:req-1:cancelled',
+          to,
+          context: expect.objectContaining({ wasApproved }),
+        }),
+      );
+    });
+  });
+});
+
+describe('LeaveService — holidays, restricted holiday leave, policy', () => {
+  const build = (
+    overrides: Record<string, any> = {},
+    entitlement: any = new LeaveEntitlementService(),
+  ) => {
+    const tenantPrisma = buildFakeTenantPrisma(overrides);
+    const service = new LeaveService(
+      tenantPrisma as any,
+      buildFakeDocuments(),
+      buildFakeQueue(),
+      buildFakeNotifications(),
+      entitlement,
+    );
+    return { service, tenantPrisma };
+  };
+  const aprilSettings = {
+    tenantSettings: {
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        leaveApprovalLevels: 2,
+        weeklyOffDays: [0, 6],
+        allowLopRequests: true,
+        fyStartMonth: 4,
+      }),
+    },
+  };
+
+  it('counts optional holidays as working days when computing leave days', async () => {
+    const { service, tenantPrisma } = build({
+      employee: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'emp-1', reportingManagerId: null }),
+      },
+      leaveBalance: { findUnique: jest.fn().mockResolvedValue({ accrued: 10, used: 0 }) },
+    });
+
+    await service.apply(
+      { leaveTypeId: 'lt-1', startDate: '2026-01-05', endDate: '2026-01-07' },
+      user(),
+    );
+
+    expect(tenantPrisma.client.holiday.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ isOptional: false }) }),
+    );
+  });
+
+  describe('Restricted Holiday leave', () => {
+    const rhType = {
+      leaveType: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 'lt-rh',
+          name: 'Restricted Holiday',
+          minNoticeDays: 0,
+          genderRestriction: 'ANY',
+          isRestrictedHoliday: true,
+        }),
+      },
+      employee: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'emp-1', reportingManagerId: null }),
+      },
+      leaveBalance: { findUnique: jest.fn().mockResolvedValue({ accrued: 2, used: 0 }) },
+    };
+
+    it('is allowed on an optional holiday', async () => {
+      const { service } = build({
+        ...rhType,
+        holiday: {
+          findMany: jest.fn(async ({ where }: any) =>
+            where.isOptional ? [{ date: new Date('2026-03-04') }] : [],
+          ),
+        },
+      });
+
+      const result = await service.apply(
+        { leaveTypeId: 'lt-rh', startDate: '2026-03-04', endDate: '2026-03-04' },
+        user(),
+      );
+      expect(result.days).toBe(1);
+    });
+
+    it('is refused on an ordinary working day', async () => {
+      const { service, tenantPrisma } = build({ ...rhType });
+
+      await expect(
+        service.apply(
+          { leaveTypeId: 'lt-rh', startDate: '2026-03-05', endDate: '2026-03-05' },
+          user(),
+        ),
+      ).rejects.toThrow(/only be taken on optional holidays/);
+      expect(tenantPrisma.client.leaveRequest.create).not.toHaveBeenCalled();
+    });
+  });
+
+  it('lists holidays by leave year (April–March) unless a date range is given', async () => {
+    const { service, tenantPrisma } = build(aprilSettings);
+
+    await service.listHolidays(2026);
+    expect(tenantPrisma.client.holiday.findMany.mock.calls[0][0].where.date).toEqual({
+      gte: new Date('2026-04-01T00:00:00Z'),
+      lt: new Date('2027-04-01T00:00:00Z'),
+    });
+
+    await service.listHolidays(undefined, { from: '2027-02-01', to: '2027-02-28' });
+    expect(tenantPrisma.client.holiday.findMany.mock.calls[1][0].where.date).toEqual({
+      gte: new Date('2027-02-01'),
+      lt: new Date('2027-03-01'),
+    });
+  });
+
+  describe('initializeYearlyBalances (apply policy now)', () => {
+    it('goes through the entitlement engine for the current leave year and one type', async () => {
+      const entitlement = {
+        applyPolicyDefaults: jest.fn().mockResolvedValue({ balancesCreated: 4, credited: 4 }),
+      };
+      const { service } = build({}, entitlement);
+      const year = new Date().getUTCFullYear(); // fyStartMonth 1 in the default fake
+
+      await expect(service.initializeYearlyBalances('lt-1', year)).resolves.toEqual({
+        initialized: 4,
+        credited: 4,
+      });
+      expect(entitlement.applyPolicyDefaults).toHaveBeenCalledWith(
+        expect.anything(),
+        'tenant-1',
+        expect.any(Date),
+        { leaveTypeIds: ['lt-1'] },
+      );
+    });
+
+    it('refuses any year other than the current leave year', async () => {
+      const entitlement = { applyPolicyDefaults: jest.fn() };
+      const { service } = build({}, entitlement);
+
+      await expect(service.initializeYearlyBalances('lt-1', 2001)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(entitlement.applyPolicyDefaults).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('importHolidays', () => {
+    const csv = (body: string) => Buffer.from(`date,name,type\n${body}`);
+    const withLeaveYear = (extra: Record<string, any> = {}) => {
+      const settings = {
+        tenantSettings: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            weeklyOffDays: [0, 6],
+            fyStartMonth: 1,
+          }),
+        },
+        payrollRun: { findMany: jest.fn().mockResolvedValue([]) },
+        holiday: {
+          findMany: jest
+            .fn()
+            .mockResolvedValue([
+              { date: new Date(`${new Date().getUTCFullYear()}-12-25`), name: 'Christmas' },
+            ]),
+          upsert: jest.fn().mockResolvedValue({}),
+        },
+        ...extra,
+      };
+      return build(settings);
+    };
+    const y = new Date().getUTCFullYear();
+
+    it('previews without writing, marking new vs already-saved rows', async () => {
+      const { service, tenantPrisma } = withLeaveYear();
+
+      const report = await service.importHolidays(
+        csv(
+          `${y}-12-25,Christmas,PUBLIC\n${y}-12-24,Christmas Eve,OPTIONAL\n03/04/${y},Ambiguous,`,
+        ),
+        true,
+      );
+
+      expect(report.results.map((r) => [r.action, r.success])).toEqual([
+        ['update', true],
+        ['create', true],
+        [null, false],
+      ]);
+      expect((tenantPrisma.client.holiday as any).upsert).not.toHaveBeenCalled();
+    });
+
+    it('commits only the valid rows, upserting by date + name', async () => {
+      const { service, tenantPrisma } = withLeaveYear();
+
+      await service.importHolidays(
+        csv(`${y}-12-24,Christmas Eve,OPTIONAL\nnot-a-date,Bad,`),
+        false,
+      );
+
+      expect((tenantPrisma.client.holiday as any).upsert).toHaveBeenCalledTimes(1);
+      expect((tenantPrisma.client.holiday as any).upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            tenantId_date_name: {
+              tenantId: 'tenant-1',
+              date: new Date(`${y}-12-24`),
+              name: 'Christmas Eve',
+            },
+          },
+          create: expect.objectContaining({ isOptional: true }),
+        }),
+      );
+    });
+  });
+});
+
+describe('LeaveService — event-based leave (maternity, paternity, marriage)', () => {
+  const marriageType = {
+    id: 'lt-mrl',
+    name: 'Marriage Leave',
+    minNoticeDays: 0,
+    genderRestriction: 'ANY',
+    grantMode: 'ON_EVENT',
+    daysPerEvent: 7,
+    reducedDaysPerEvent: null,
+    reducedAfterEvents: null,
+    countCalendarDays: false,
+    maxEventsPerEmployment: 1,
+    eventLabel: 'Marriage date',
+    eventWindowDaysBefore: 15,
+    eventWindowDaysAfter: 30,
+    minServiceDays: 0,
+    requiresDocument: false,
+    statutoryMaternity: false,
+  };
+  const build = (overrides: Record<string, any> = {}, documents = buildFakeDocuments()) => {
+    const tenantPrisma = buildFakeTenantPrisma({
+      leaveType: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue(marriageType),
+        findMany: jest.fn().mockResolvedValue([marriageType]),
+        create: jest.fn((args: any) => args.data),
+      },
+      employee: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 'emp-1',
+          reportingManagerId: null,
+          gender: 'Female',
+          dateOfJoining: new Date('2020-01-01'),
+          esicNumber: null,
+        }),
+      },
+      // No balance at all — event leave mustn't need one.
+      leaveBalance: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+        upsert: jest.fn().mockResolvedValue({ accrued: 7, used: 7 }),
+      },
+      ...overrides,
+    });
+    const service = new LeaveService(
+      tenantPrisma as any,
+      documents,
+      buildFakeQueue(),
+      buildFakeNotifications(),
+      new LeaveEntitlementService(),
+    );
+    return { service, tenantPrisma };
+  };
+
+  it('applies with the event date, never as LOP, with no balance needed', async () => {
+    const { service, tenantPrisma } = build();
+
+    await service.apply(
+      {
+        leaveTypeId: 'lt-mrl',
+        startDate: '2026-12-07',
+        endDate: '2026-12-15',
+        eventDate: '2026-12-10',
+      },
+      user(),
+    );
+
+    expect(tenantPrisma.client.leaveRequest.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ days: 7, isLop: false, eventDate: new Date('2026-12-10') }),
+      }),
+    );
+  });
+
+  it('refuses a second marriage leave — once per employment', async () => {
+    const { service, tenantPrisma } = build();
+    tenantPrisma.client.leaveRequest.findMany.mockResolvedValue([
+      { eventDate: new Date('2024-02-14'), days: 7 },
+    ]);
+
+    await expect(
+      service.apply(
+        {
+          leaveTypeId: 'lt-mrl',
+          startDate: '2026-12-07',
+          endDate: '2026-12-08',
+          eventDate: '2026-12-10',
+        },
+        user(),
+      ),
+    ).rejects.toThrow(/once during your employment/);
+    expect(tenantPrisma.client.leaveRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses without the event date', async () => {
+    const { service } = build();
+    await expect(
+      service.apply(
+        { leaveTypeId: 'lt-mrl', startDate: '2026-12-07', endDate: '2026-12-08' },
+        user(),
+      ),
+    ).rejects.toThrow(/marriage date/);
+  });
+
+  it('counts calendar days for a maternity-type leave', async () => {
+    const { service, tenantPrisma } = build({
+      leaveType: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          ...marriageType,
+          name: 'Maternity Leave',
+          genderRestriction: 'FEMALE',
+          daysPerEvent: 182,
+          countCalendarDays: true,
+          maxEventsPerEmployment: null,
+          eventWindowDaysBefore: 56,
+        }),
+      },
+    });
+
+    await service.apply(
+      {
+        leaveTypeId: 'lt-ml',
+        startDate: '2026-12-01',
+        endDate: '2026-12-14',
+        eventDate: '2026-12-10',
+      },
+      user(),
+    );
+
+    expect(tenantPrisma.client.leaveRequest.create.mock.calls[0][0].data.days).toBe(14);
+  });
+
+  describe('final approval and cancel', () => {
+    const pendingL2 = {
+      id: 'req-1',
+      status: 'PENDING_L2',
+      employeeId: 'emp-1',
+      leaveTypeId: 'lt-mrl',
+      days: 7,
+      isLop: false,
+      eventDate: new Date('2026-12-10'),
+      startDate: new Date('2026-12-07'),
+      endDate: new Date('2026-12-15'),
+      employee: { reportingManagerId: null },
+    };
+    const requestFake = (row: Record<string, unknown>) => ({
+      leaveRequest: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue(row),
+        update: jest.fn((args: any) => ({
+          id: 'req-1',
+          ...FAKE_REQUEST_SCALARS,
+          ...args.data,
+          ...FAKE_REQUEST_RELS,
+        })),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    });
+
+    it('grants the event days, then records them as used', async () => {
+      const { service, tenantPrisma } = build(requestFake(pendingL2));
+
+      await service.approve('req-1', user({ role: 'HR_MANAGER', employeeId: 'emp-hr' }));
+
+      const sources = tenantPrisma.client.leaveLedgerEntry.create.mock.calls.map(
+        (c: any) => c[0].data.source,
+      );
+      expect(sources).toEqual(['EVENT_GRANT', 'REQUEST_APPROVED']);
+    });
+
+    it('refuses final approval while a required document is missing', async () => {
+      const { service, tenantPrisma } = build({
+        ...requestFake(pendingL2),
+        leaveType: {
+          findUniqueOrThrow: jest
+            .fn()
+            .mockResolvedValue({ ...marriageType, requiresDocument: true }),
+        },
+      });
+
+      await expect(
+        service.approve('req-1', user({ role: 'HR_MANAGER', employeeId: 'emp-hr' })),
+      ).rejects.toThrow(/needs a supporting document/);
+      expect(tenantPrisma.client.leaveLedgerEntry.create).not.toHaveBeenCalled();
+    });
+
+    it('takes the grant back when an approved request is cancelled', async () => {
+      const { service, tenantPrisma } = build(requestFake({ ...pendingL2, status: 'APPROVED' }));
+
+      await service.cancel('req-1', user({ role: 'HR_MANAGER', employeeId: 'emp-hr' }));
+
+      const entries = tenantPrisma.client.leaveLedgerEntry.create.mock.calls.map((c: any) => [
+        c[0].data.source,
+        c[0].data.delta,
+      ]);
+      expect(entries).toEqual([
+        ['REQUEST_CANCELLED', 7],
+        ['EVENT_GRANT', -7],
+      ]);
+    });
+  });
+
+  it('lists what an employee can still take, hiding other-gender types', async () => {
+    const paternity = {
+      ...marriageType,
+      id: 'lt-pl',
+      name: 'Paternity Leave',
+      genderRestriction: 'MALE',
+      maxEventsPerEmployment: 2,
+    };
+    const { service, tenantPrisma } = build({
+      leaveType: { findMany: jest.fn().mockResolvedValue([marriageType, paternity]) },
+    });
+    tenantPrisma.client.leaveRequest.findMany.mockResolvedValue([
+      { leaveTypeId: 'lt-mrl', eventDate: new Date('2024-02-14') },
+    ]);
+
+    const result = await service.eventLeave('emp-1', user());
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        leaveType: expect.objectContaining({ id: 'lt-mrl' }),
+        eventsUsed: 1,
+        nextAllowanceDays: 0,
+      }),
+    ]);
+  });
+
+  it('keeps event-based types out of the balances list', async () => {
+    const { service, tenantPrisma } = build();
+
+    await service.getBalances('emp-1', user(), 2026);
+
+    expect(tenantPrisma.client.leaveBalance.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ leaveType: { grantMode: 'ACCRUED' } }),
+      }),
+    );
+  });
+
+  it('rejects an event-based type with no days or no event label', async () => {
+    const { service, tenantPrisma } = build();
+    expect(() =>
+      service.createType({
+        name: 'Bad',
+        code: 'BAD',
+        annualQuota: 0,
+        grantMode: 'ON_EVENT',
+        daysPerEvent: 0,
+      }),
+    ).toThrow(BadRequestException);
+    expect(tenantPrisma.client.leaveType.create).not.toHaveBeenCalled();
   });
 });

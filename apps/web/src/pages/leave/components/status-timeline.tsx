@@ -95,7 +95,7 @@ function Step({
         <p className="text-sm font-medium">{title}</p>
         <p className="text-xs text-muted-foreground">{sub}</p>
         {comment && (
-          <p className="mt-1 rounded-md bg-muted px-2 py-1 text-xs text-foreground">“{comment}”</p>
+          <p className="mt-1 rounded-xl bg-muted px-2 py-1 text-xs text-foreground">“{comment}”</p>
         )}
       </div>
     </li>

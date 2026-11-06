@@ -46,6 +46,10 @@ team testing. If you want to remove that hop, launch the box in
 ap-northeast-1 instead (everything else in this guide is unchanged
 either way — only the EC2 region picked in §2a moves).
 
+> **Planned:** the shared DB is moving to Mumbai so the box and the DB
+> share a region. Measured today, the Tokyo hop costs ~0.6–0.8 s per query
+> and 5–7 s per screen. Runbook: `docs/DB_REGION_MOVE.md`.
+
 ---
 
 ## 0. One-time prerequisites
@@ -153,34 +157,136 @@ verbatim, just strip any surrounding quotes.)
 
 ### 2c. Build + run
 
+**Redis is required to boot, not optional** — `LeaveAccrualProcessor.onModuleInit()`
+(`apps/api/src/leave/leave-accrual.processor.ts`) does
+`await this.leaveQueue.upsertJobScheduler(...)` against BullMQ, which hangs
+`onModuleInit` forever (never resolves, never throws) if `REDIS_URL` isn't
+reachable — `app.listen()` never gets called and the API just sits there,
+looking "up" in `docker ps` while `curl`ing it fails with `Connection reset
+by peer`. Start Redis and put both containers on one Docker network first:
+
 ```bash
 cd ~/hrms
+docker network create hrms
+docker run -d --name redis --restart unless-stopped --network hrms redis:7-alpine
+
 # BuildKit isn't installed on a fresh AL2023 Docker — force the legacy builder.
 DOCKER_BUILDKIT=0 docker build -f apps/api/Dockerfile -t hrms-api .
 
+# .env must include: REDIS_URL=redis://redis:6379
 docker run -d --name hrms-api --restart unless-stopped \
-  --env-file apps/api/.env -p 80:3000 hrms-api
+  --env-file apps/api/.env -p 80:3000 --network hrms hrms-api
 
 curl http://localhost/api/health          # -> {"status":"ok",...}
 ```
 
 From your laptop: `curl http://<elastic-ip>/api/health`.
 
-### Optional extras
+(TODO for the team: wrap that `upsertJobScheduler` call with a timeout/catch
+so a missing Redis degrades gracefully instead of hanging the whole API —
+this doc works around the bug, it doesn't fix it.)
 
-- **Redis / scheduled Leave jobs.** The Leave BullMQ queue
-  (`leave-escalation` / `leave-accrual`) reads `REDIS_URL` (default
-  `redis://localhost:6379`). Without a reachable Redis the API still boots
-  and every request-path feature works — only the *timed* jobs don't run
-  (you'll see ioredis reconnect logs). To enable: `docker run -d --name
-  redis --restart unless-stopped redis:7-alpine`, add
-  `REDIS_URL=redis://redis:6379` to `.env`, and put both containers on one
-  network (`docker network create hrms && docker network connect hrms
-  redis && ...--network hrms` on the api run).
-- **S3 / document uploads.** `StorageService` fails soft without it — the
-  rest of the API is fine. To enable, add `S3_ENDPOINT` / `S3_REGION` /
-  `S3_ACCESS_KEY` / `S3_SECRET_KEY` / `S3_BUCKET` to `.env` (any
-  S3-compatible bucket, incl. Supabase Storage's S3 endpoint).
+### Optional extras
+- **S3 / document uploads.** Without it every upload 500s (the API falls
+  back to `localhost:9000`, i.e. a laptop's MinIO, which doesn't exist in
+  the container); the rest of the API is fine. Set it via **GitHub repo
+  secrets** — `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`
+  (+ optional `S3_BUCKET`, default `hrms-documents`) — which the CD
+  workflow forwards to the container on the next deploy, no SSH needed.
+  Any S3-compatible bucket works; the simplest is **Supabase Storage**
+  (Storage → create a *private* `hrms-documents` bucket; Storage → S3
+  Connection → enable + create an access key; endpoint
+  `https://<project-ref>.supabase.co/storage/v1/s3`, region = the
+  project's region). Path-style addressing is already the default
+  (`S3_FORCE_PATH_STYLE=true`). Tip: put the same values in each
+  developer's `apps/api/.env` so local uploads land in the same shared
+  bucket instead of per-laptop MinIO (the dev DB is shared, so per-laptop
+  files are unreachable from anywhere else).
+- **Background workers run only on this box.** The CD workflow starts the
+  API with `WORKERS_ENABLED=true`; laptops default to off
+  (`NODE_ENV=development`). Rows queued by a laptop (emails, uploads to
+  scan) are picked up here by the 10–15-minute sweeps. The API logs
+  `Background workers: ON/OFF` at startup.
+- **Email (notifications, module 10 — AWS SES v2).** Without it every
+  workflow email is recorded as `FAILED` ("SES_FROM_ADDRESS is unset") in
+  the app's **Email log** — nothing else breaks. To turn it on:
+  1. SES console, region `ap-south-1`: verify a sender identity (a domain,
+     or a single address for testing). While the account is in the SES
+     *sandbox*, mail only reaches verified recipient addresses too — request
+     production access before real users rely on it.
+  2. IAM: a user with only `ses:SendEmail` (and `ses:SendRawEmail`), plus
+     `ses:DeleteSuppressedDestination` (the operator's "Lift suppression"
+     also clears SES's own list); create an access key.
+  3. GitHub repo secrets: `SES_FROM_ADDRESS`, `SES_REGION` (optional,
+     default `ap-south-1`), `SES_AWS_ACCESS_KEY_ID`,
+     `SES_AWS_SECRET_ACCESS_KEY`, and `APP_BASE_URL` (the Vercel URL, used
+     for links in emails). The CD workflow forwards them to the container.
+  4. Redeploy, then use **Email log → Retry** on anything that failed while
+     it was unconfigured.
+  5. Firebase console → Authentication → Settings → **Authorized domains**:
+     add your app domain (e.g. `www.lumenhrms.work`). Password-reset and
+     invite emails (also sent via SES) use it as the "back to sign-in" link
+     after a password is set; without it they still work, just without the
+     redirect.
+  6. **Bounce / complaint handling** (module 10 §4.4 — needed before
+     production access, and to protect the sender reputation):
+     - SES → Configuration → **Suppression list**: enable account-level
+       suppression for *Bounces and complaints*.
+     - SNS (same region): create a Standard topic, e.g. `ses-events`.
+     arn:aws:sns:ap-south-1:282477853730:ses-events, mail-bounce
+     - SES → **Configuration sets** → create one (e.g. `lumen-hrms`) → Event
+       destinations → add an **SNS** destination for event types *Hard
+       bounces* and *Complaints* (soft bounces optional — those fail the row
+       in the Email log but don't suppress) → the topic above.
+     - GitHub secrets `SES_CONFIGURATION_SET` (the set's name) and
+       `SES_EVENTS_TOPIC_ARN` (the topic's ARN); redeploy.
+     - SNS → the topic → **Create subscription**: protocol HTTPS, endpoint
+       `https://<web host>/api/notifications/ses-events` (the Vercel URL,
+       which proxies `/api/*` to the box over HTTPS on the public leg). The
+       API confirms the subscription itself — it should show *Confirmed*
+       within seconds; if not, check the API log for a 403 (topic ARN
+       mismatch / secret not deployed yet) and use *Request confirmation*.
+     - Test: send to `bounce@simulator.amazonses.com` (e.g. set it as a test
+       user's email and trigger a password reset) — it should appear under
+       Platform Admin › Settings › *Suppressed email addresses*.
+- **Billing (module 14 — Razorpay).** Without keys the Billing card's
+  "Create payment link" refuses and the webhook rejects every call; nothing
+  else breaks. To turn it on:
+  1. Razorpay dashboard (test mode first) → Settings → API keys: generate a
+     key ID + secret.
+  2. Settings → Webhooks → add `https://<api-host>/api/billing/webhooks/razorpay`
+     (the API box, not Vercel — the webhook is server-to-server), choose a
+     secret, and tick: `subscription.activated`, `subscription.charged`,
+     `subscription.pending`, `subscription.halted`, `subscription.cancelled`.
+  3. GitHub repo secrets: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`,
+     `RAZORPAY_WEBHOOK_SECRET` (the CD workflow forwards them). Redeploy.
+  4. Apply migration `20261006120000_billing_payments` (schema owner).
+  5. Test: Platform Admin → tenant → Billing → Create payment link, pay with a
+     Razorpay test card, and confirm the payment appears and the tenant turns
+     Active. Switch to live keys + a live webhook only after that.
+  The webhook endpoint must be reachable over HTTPS from Razorpay; the preview
+  box serves plain HTTP on port 80, so Razorpay will only deliver once it sits
+  behind HTTPS (e.g. the Cloudflare Tunnel noted below).
+- **ClamAV (document scanning, module 09).** Every upload stays
+  `PENDING_SCAN` — shown as "Scanning…", not downloadable — until clamd has
+  scanned it; scanning fails closed. The CD workflow
+  (`.github/workflows/deploy-api.yml`) runs clamd as a sibling container
+  named `clamav` on the `hrms` network (created once, kept across deploys,
+  signature DB in the `hrms_clamav_data` volume) and starts the API with
+  `CLAMAV_HOST=clamav`. clamd wants ~1–1.5 GB for its signatures, more than
+  this 1 GiB box has, so it's capped at `--memory=700m` and spills into the
+  2 GiB swap — scans are slower than on a bigger box, and if memory runs
+  out the kernel kills clamd (it restarts), not the API. First start
+  downloads signatures for a few minutes; the documents sweep scans any
+  backlog once clamd is listening. **No clamd at all?** Set the GitHub repo
+  *variable* `DOCUMENT_SCANNING_ENABLED=false` (and in `apps/api/.env`): the
+  workflow then skips (and stops) ClamAV, uploads skip the scan and are
+  downloadable as "Not scanned". To turn scanning back on, set it to `true`,
+  point `CLAMAV_HOST`/`CLAMAV_PORT` at a clamd, and redeploy — the next
+  15-minute sweep scans everything uploaded in the meantime. If the box struggles (`free -m`,
+  `docker stats`, API restarts), move to a `t3.small` or a separate clamd
+  host and point `CLAMAV_HOST` at it. Production (ECS) runs clamd as its
+  own service.
 
 ---
 
@@ -241,15 +347,43 @@ needed. A clean reseed is an owner action from a laptop:
 
 ## 6. Redeploying
 
-**API** (SSH to the box):
+**API — automatic.** `.github/workflows/deploy-api.yml` SSHes into the box
+and re-runs the build/run steps below on every push to `dev`. Needs two
+repo secrets (Settings → Secrets and variables → Actions): `EC2_HOST` (the
+Elastic IP) and `EC2_SSH_KEY` (the full contents of the `.pem` key) — add
+these directly in the GitHub UI, never paste a private key elsewhere.
+
+**API — manual** (SSH to the box, same thing the workflow runs):
 
 ```bash
 cd ~/hrms && git pull
 DOCKER_BUILDKIT=0 docker build -f apps/api/Dockerfile -t hrms-api .
 docker rm -f hrms-api
 docker run -d --name hrms-api --restart unless-stopped \
-  --env-file apps/api/.env -p 80:3000 hrms-api
+  --env-file apps/api/.env -p 80:3000 --network hrms hrms-api
 ```
+
+**Changing an env var on the box — no SSH session or AWS console needed.**
+`scripts/api-env.sh` edits `apps/api/.env` on the box over SSH and recreates
+the API container with the new value (Docker only reads `--env-file` at
+create time, so `docker restart` wouldn't pick it up). The new container
+keeps everything the running one had — including the GitHub-forwarded
+secrets — is health-checked, and is rolled back to the previous one if it
+doesn't come up. The box's `.env` keeps its last 5 backups.
+
+```bash
+./scripts/api-env.sh list                          # names only, never values
+./scripts/api-env.sh set FIELD_ENCRYPTION_KEY       # prompts for the value (hidden)
+./scripts/api-env.sh set FIELD_ENCRYPTION_KEY --local   # also writes your local apps/api/.env
+./scripts/api-env.sh unset SOME_OLD_VAR
+./scripts/api-env.sh set A --no-restart && ./scripts/api-env.sh set B --no-restart && ./scripts/api-env.sh restart
+```
+
+Uses `~/.ssh/hrms-key.pem` and the box address from `apps/web/vercel.json`
+(override with `HRMS_SSH_KEY` / `HRMS_EC2_HOST`). Variables that
+`deploy-api.yml` forwards from GitHub secrets (S3_*, SES_*, RAZORPAY_*,
+APP_BASE_URL) are re-applied from GitHub on the next deploy, so change those
+in GitHub — the script warns when you touch one.
 
 **Web:** push to the tracked branch → Vercel auto-builds. Or `vercel --prod`
 from `apps/web`.

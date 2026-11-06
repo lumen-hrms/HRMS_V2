@@ -230,7 +230,7 @@ export function TenantsPage() {
             </THead>
             <TBody>
               {pageRows.map((t) => {
-                const until = fmtUntil(t.subscription?.renewsAt ?? null);
+                const until = fmtUntil(t.subscription?.trialEndsAt ?? null);
                 const trialChip =
                   t.status === 'TRIAL' && until && until.days >= 0 && until.days <= 7
                     ? `ends ${until.text}`
@@ -262,7 +262,7 @@ export function TenantsPage() {
                     <TD className="text-right" onClick={(e) => e.stopPropagation()}>
                       <DropdownMenu
                         trigger={
-                          <span className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
+                          <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl text-muted-foreground hover:bg-accent hover:text-foreground">
                             <MoreHorizontal className="h-4 w-4" />
                           </span>
                         }
@@ -379,7 +379,7 @@ function Stat({
         {label}
       </span>
       {value == null ? (
-        <div className="mt-1 h-8 w-12 animate-pulse rounded bg-muted" />
+        <div className="mt-1 h-8 w-12 animate-pulse rounded-xl bg-muted" />
       ) : (
         <span className={`text-2xl font-semibold ${cls}`}>{value}</span>
       )}

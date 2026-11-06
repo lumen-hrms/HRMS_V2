@@ -1,8 +1,12 @@
+import { IsValidPhone } from '../../common/phone';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsDateString,
   IsEmail,
+  IsEnum,
   IsIn,
   IsNumber,
   IsOptional,
@@ -12,6 +16,9 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { IndianState } from '@prisma/client';
+
+export const SEPARATION_REASONS = ['VOLUNTARY', 'INVOLUNTARY', 'OTHER'] as const;
 
 export const LIFECYCLE_STATES = [
   'PRE_JOINING',
@@ -22,9 +29,9 @@ export const LIFECYCLE_STATES = [
   'SEPARATED',
 ] as const;
 
-const EMPLOYMENT_TYPES = ['FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERN', 'CONSULTANT'];
-const TAX_REGIMES = ['OLD', 'NEW'];
-const BANK_ACCOUNT_TYPES = ['SAVINGS', 'CURRENT'];
+export const EMPLOYMENT_TYPES = ['FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERN', 'CONSULTANT'];
+export const TAX_REGIMES = ['OLD', 'NEW'];
+export const BANK_ACCOUNT_TYPES = ['SAVINGS', 'CURRENT'];
 export const DOCUMENT_CATEGORIES = [
   'OFFER_LETTER',
   'ID_PROOF',
@@ -34,9 +41,9 @@ export const DOCUMENT_CATEGORIES = [
   'OTHER',
 ] as const;
 
-const PAN_PATTERN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
-const IFSC_PATTERN = /^[A-Z]{4}0[A-Z0-9]{6}$/;
-const AADHAAR_LAST4_PATTERN = /^\d{4}$/;
+export const PAN_PATTERN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+export const IFSC_PATTERN = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+export const AADHAAR_LAST4_PATTERN = /^\d{4}$/;
 
 export class CreateEmployeeDto {
   @IsString()
@@ -57,6 +64,7 @@ export class CreateEmployeeDto {
 
   @IsOptional()
   @IsString()
+  @IsValidPhone()
   phone?: string;
 
   @IsOptional()
@@ -96,6 +104,32 @@ export class CreateEmployeeDto {
   @IsOptional()
   @IsIn(['COMPANY_ADMIN', 'HR_MANAGER', 'LINE_MANAGER', 'EMPLOYEE', 'AUDITOR'])
   loginRole?: string;
+
+  // Alternative to loginEmail/loginTempPassword: link a login that already
+  // exists in this tenant and has no employee yet (e.g. the Company Admin
+  // created at onboarding). Never both.
+  @IsOptional()
+  @IsUUID()
+  existingUserId?: string;
+}
+
+/**
+ * `POST /employees/:id/login` — create a brand-new login for an employee that
+ * has none. The temporary password is generated server-side and emailed.
+ */
+export class CreateLoginDto {
+  @IsEmail()
+  loginEmail!: string;
+
+  @IsOptional()
+  @IsIn(['COMPANY_ADMIN', 'HR_MANAGER', 'LINE_MANAGER', 'EMPLOYEE', 'AUDITOR'])
+  loginRole?: string;
+}
+
+/** `PATCH /employees/:id/login` — link an existing, unlinked login to this employee. */
+export class LinkLoginDto {
+  @IsUUID()
+  userId!: string;
 }
 
 export class UpdateEmployeeDto {
@@ -113,6 +147,7 @@ export class UpdateEmployeeDto {
 
   @IsOptional()
   @IsString()
+  @IsValidPhone()
   phone?: string;
 
   @IsOptional()
@@ -127,9 +162,10 @@ export class UpdateEmployeeDto {
   @IsString()
   designation?: string;
 
+  /** `null` clears the manager; omitted leaves it unchanged. */
   @IsOptional()
   @IsUUID()
-  reportingManagerId?: string;
+  reportingManagerId?: string | null;
 
   // Identity & personal extras (module 03 §4.2).
   @IsOptional()
@@ -144,9 +180,8 @@ export class UpdateEmployeeDto {
   @IsString()
   nationality?: string;
 
-  @IsOptional()
-  @IsString()
-  photoUrl?: string;
+  // Photo is set via `POST /employees/:id/photo` (a real upload, not a
+  // pasted URL) — not part of the generic PATCH surface.
 
   // Employment extras.
   @IsOptional()
@@ -156,6 +191,19 @@ export class UpdateEmployeeDto {
   @IsOptional()
   @IsString()
   workLocation?: string;
+
+  // Drives Professional Tax slab selection in Payroll (module 07).
+  @IsOptional()
+  @IsEnum(IndianState)
+  workState?: IndianState;
+
+  // Overrides the tenant's weekly off-days for this employee, for
+  // rotational shift staff (Payroll module 07, decision 14).
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(7)
+  @IsIn([0, 1, 2, 3, 4, 5, 6], { each: true })
+  weeklyOffDaysOverride?: number[];
 
   // Compensation-adjacent — a headline reference figure; the salary
   // *structure* lives in Payroll (module 07), not here.
@@ -174,7 +222,7 @@ export class UpdateEmployeeDto {
 }
 
 // Statutory + bank fields are a dedicated endpoint, not the general PATCH,
-// because PAN/bank account need KMS field encryption (CLAUDE.md) on write —
+// because PAN/bank account need field encryption (CLAUDE.md) on write —
 // the general update path never touches ciphertext.
 export class UpdateSensitiveFieldsDto {
   @IsOptional()
@@ -247,10 +295,12 @@ export class UpsertEmergencyContactDto {
 
   @IsString()
   @MinLength(1)
+  @IsValidPhone()
   phone!: string;
 
   @IsOptional()
   @IsString()
+  @IsValidPhone()
   altPhone?: string;
 
   @IsOptional()
@@ -278,6 +328,13 @@ export class TransitionLifecycleDto {
   @IsString()
   @MinLength(1)
   reason!: string;
+
+  // Only meaningful for targetState=SEPARATED (the service rejects it for any
+  // other target). Optional so existing callers keep working; Reports groups
+  // the unset ones as "unspecified".
+  @IsOptional()
+  @IsIn(SEPARATION_REASONS)
+  separationReason?: (typeof SEPARATION_REASONS)[number];
 }
 
 export class CreateDepartmentDto {
@@ -304,9 +361,10 @@ export class UpdateDepartmentDto {
   @IsString()
   code?: string;
 
+  /** `null` clears the head; omitted leaves it unchanged. */
   @IsOptional()
   @IsUUID()
-  headEmployeeId?: string;
+  headEmployeeId?: string | null;
 }
 
 export class DeleteDepartmentDto {
@@ -315,11 +373,6 @@ export class DeleteDepartmentDto {
   @IsOptional()
   @IsUUID()
   reassignToDepartmentId?: string;
-}
-
-export class SetDocumentCategoryDto {
-  @IsIn(DOCUMENT_CATEGORIES)
-  category!: (typeof DOCUMENT_CATEGORIES)[number];
 }
 
 export class BulkImportRowResult {

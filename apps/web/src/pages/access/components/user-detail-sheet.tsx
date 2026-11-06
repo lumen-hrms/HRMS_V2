@@ -120,7 +120,7 @@ export function UserDetailSheet({
           )}
         </dl>
 
-        <div className="rounded-md border border-border bg-muted/40 p-3">
+        <div className="rounded-xl border border-border bg-muted/40 p-3">
           <p className="mb-1 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
             <ShieldCheck className="h-3.5 w-3.5" /> Security
           </p>

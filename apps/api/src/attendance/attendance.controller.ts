@@ -1,11 +1,39 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../common/guards/tenant.guard';
+import { EntitlementGuard } from '../common/guards/entitlement.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { RequiresModule } from '../common/decorators/requires-module.decorator';
 import { CurrentUser, AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import { AttendanceService } from './attendance.service';
-import { CreateRegularizationDto } from './dto/attendance.dto';
+import {
+  BulkDecideRegularizationDto,
+  CreateOvertimeClaimDto,
+  CreateRegularizationDto,
+  CreateShiftDto,
+  DecideOvertimeClaimDto,
+  DecideRegularizationDto,
+  MarkAttendanceDto,
+  UpdateAttendanceSettingsDto,
+  UpdateShiftDto,
+} from './dto/attendance.dto';
 
-@UseGuards(JwtAuthGuard, TenantGuard)
+@UseGuards(JwtAuthGuard, TenantGuard, EntitlementGuard, RolesGuard)
+@RequiresModule('ATTENDANCE')
 @Controller('attendance')
 export class AttendanceController {
   constructor(private readonly service: AttendanceService) {}
@@ -58,8 +86,137 @@ export class AttendanceController {
     return this.service.listRegularizations(user);
   }
 
+  @Get('regularization/pending')
+  pendingRegularizations(@CurrentUser() user: AuthenticatedUser) {
+    return this.service.pendingRegularizations(user);
+  }
+
+  @Post('regularization/:id/evidence')
+  @UseInterceptors(FileInterceptor('file'))
+  attachRegularizationEvidence(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.attachEvidence(id, file, user);
+  }
+
   @Post('regularization/:id/cancel')
   cancelRegularization(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.service.cancelRegularization(id, user);
+  }
+
+  @Post('regularization/:id/approve')
+  @Roles('LINE_MANAGER', 'HR_MANAGER', 'COMPANY_ADMIN')
+  approveRegularization(
+    @Param('id') id: string,
+    @Body() dto: DecideRegularizationDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.approveRegularization(id, user, dto?.comment);
+  }
+
+  @Post('regularization/:id/reject')
+  @Roles('LINE_MANAGER', 'HR_MANAGER', 'COMPANY_ADMIN')
+  rejectRegularization(
+    @Param('id') id: string,
+    @Body() dto: DecideRegularizationDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.rejectRegularization(id, user, dto?.comment);
+  }
+
+  @Post('regularization/bulk-approve')
+  @Roles('LINE_MANAGER', 'HR_MANAGER', 'COMPANY_ADMIN')
+  bulkApproveRegularizations(
+    @Body() dto: BulkDecideRegularizationDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.bulkApproveRegularizations(dto.ids, user);
+  }
+
+  // ---- Manager / HR views ----
+
+  @Get('team/roster')
+  teamRoster(@Query('date') date: string | undefined, @CurrentUser() user: AuthenticatedUser) {
+    return this.service.teamRoster(user, date);
+  }
+
+  @Post('mark')
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  markAttendance(@Body() dto: MarkAttendanceDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.service.markAttendance(dto, user);
+  }
+
+  @Get('lop-days')
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  async lopDays(@Query('employeeId') employeeId: string, @Query('month') month: string) {
+    const days = await this.service.getLopDays(employeeId, month);
+    return { employeeId, month, lopDays: days };
+  }
+
+  // ---- Overtime claims (module 07 Phase 4) ----
+
+  @Post('overtime-claims')
+  createOvertimeClaim(@Body() dto: CreateOvertimeClaimDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.service.createOvertimeClaim(dto, user);
+  }
+
+  @Get('overtime-claims')
+  listMyOvertimeClaims(@CurrentUser() user: AuthenticatedUser) {
+    return this.service.listMyOvertimeClaims(user);
+  }
+
+  @Post('overtime-claims/:id/approve')
+  @Roles('LINE_MANAGER', 'HR_MANAGER', 'COMPANY_ADMIN')
+  approveOvertimeClaim(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.service.decideOvertimeClaim(id, 'APPROVE', user);
+  }
+
+  @Post('overtime-claims/:id/reject')
+  @Roles('LINE_MANAGER', 'HR_MANAGER', 'COMPANY_ADMIN')
+  rejectOvertimeClaim(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto?: DecideOvertimeClaimDto,
+  ) {
+    return this.service.decideOvertimeClaim(id, 'REJECT', user, dto?.reason);
+  }
+
+  // ---- Tenant configuration: shifts + settings ----
+
+  @Get('shifts')
+  listShifts() {
+    return this.service.listShifts();
+  }
+
+  @Post('shifts')
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  createShift(@Body() dto: CreateShiftDto) {
+    return this.service.createShift(dto);
+  }
+
+  @Patch('shifts/:id')
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  updateShift(@Param('id') id: string, @Body() dto: UpdateShiftDto) {
+    return this.service.updateShift(id, dto);
+  }
+
+  @Delete('shifts/:id')
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER')
+  deleteShift(@Param('id') id: string) {
+    return this.service.deleteShift(id);
+  }
+
+  @Get('settings')
+  @Roles('COMPANY_ADMIN', 'HR_MANAGER', 'AUDITOR')
+  getSettings() {
+    return this.service.getAttendanceConfig();
+  }
+
+  @Patch('settings')
+  @Roles('COMPANY_ADMIN')
+  updateSettings(@Body() dto: UpdateAttendanceSettingsDto) {
+    return this.service.updateAttendanceConfig(dto);
   }
 }

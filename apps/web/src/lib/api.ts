@@ -36,7 +36,16 @@ export class ApiError extends Error {
   status: number;
   body: any;
   constructor(status: number, body: any) {
-    super(body?.message ?? `Request failed with status ${status}`);
+    // Nest validation errors arrive as an array of messages; show the first one
+    // rather than dumping them all as one huge comma-joined string.
+    const m = body?.message;
+    super(
+      Array.isArray(m)
+        ? m.length > 1
+          ? `${m[0]} (+${m.length - 1} more)`
+          : String(m[0] ?? `Request failed with status ${status}`)
+        : (m ?? `Request failed with status ${status}`),
+    );
     this.status = status;
     this.body = body;
   }
@@ -48,7 +57,8 @@ export function isApiError(err: unknown): err is ApiError {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
-  headers.set('Content-Type', 'application/json');
+  // FormData sets its own multipart Content-Type (with the boundary).
+  if (!(options.body instanceof FormData)) headers.set('Content-Type', 'application/json');
   if (currentTenantSubdomain) headers.set('X-Tenant-Subdomain', currentTenantSubdomain);
 
   const idToken = await auth.currentUser?.getIdToken();
@@ -71,6 +81,33 @@ export const api = {
     request<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined }),
   patch: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'PATCH', body: body ? JSON.stringify(body) : undefined }),
+  put: <T>(path: string, body?: unknown) =>
+    request<T>(path, { method: 'PUT', body: body ? JSON.stringify(body) : undefined }),
   delete: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'DELETE', body: body ? JSON.stringify(body) : undefined }),
+  /** Multipart upload of one file under the `file` field (every upload route uses that name). */
+  upload: <T>(path: string, file: File) => {
+    const body = new FormData();
+    body.append('file', file);
+    return request<T>(path, { method: 'POST', body });
+  },
 };
+
+/**
+ * Self-service "Forgot password?" for a tenant user — the server emails a
+ * branded reset link from the workspace's domain (module 10 auth emails).
+ * Pre-auth, so the tenant comes from the subdomain the user typed, not the
+ * stored one. Always resolves the same way whether or not the account
+ * exists; only a 429 (rate limit) or a bad subdomain surface as errors.
+ */
+export async function requestPasswordReset(subdomain: string, email: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/auth/password-reset`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Tenant-Subdomain': subdomain },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new ApiError(res.status, text ? JSON.parse(text) : null);
+  }
+}

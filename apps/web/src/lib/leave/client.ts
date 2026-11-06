@@ -27,12 +27,15 @@ import {
   type AllRequestsFilter,
   type BalanceAdjustmentInput,
   type CreateLeaveRequestInput,
+  type EventLeaveAllowance,
+  type PolicyRecalcResult,
   type Holiday,
   type LeaveBalance,
   type LeaveLedgerEntry,
   type LeaveRequest,
   type LeaveRequestPreview,
   type LeaveSettings,
+  type LeaveSingleApprover,
   type LeaveType,
   type TeamBalanceRow,
   type TeamCalendarEntry,
@@ -42,8 +45,9 @@ export const USE_MOCK = import.meta.env.VITE_LEAVE_MOCK === 'true';
 
 export interface LeaveCtx {
   role: Role;
-  /** The caller's own employee id (the real API reads this from the token). */
-  employeeId: string;
+  /** The caller's own employee id — null when their login isn't linked to an
+   *  employee record yet (e.g. the Company Admin created at onboarding). */
+  employeeId: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -57,6 +61,22 @@ const store = {
   settings: { ...MOCK_SETTINGS },
   adjustments: [] as { employeeId: string; leaveTypeId: string; year: number; delta: number }[],
 };
+
+/** `tenant_settings` as `/leave/settings` returns it (leave slice). */
+interface LeaveSettingsResponse {
+  leaveApprovalLevels: 1 | 2;
+  leaveSingleApprover: LeaveSingleApprover;
+  allowLopRequests: boolean;
+  fyStartMonth: number;
+}
+function toLeaveSettings(s: LeaveSettingsResponse): LeaveSettings {
+  return {
+    approvalLevels: s.leaveApprovalLevels,
+    singleApprover: s.leaveSingleApprover,
+    allowLopRequests: s.allowLopRequests,
+    fyStartMonth: s.fyStartMonth,
+  };
+}
 
 function delay<T>(value: T, ms = 260): Promise<T> {
   return new Promise((res) => setTimeout(() => res(value), ms));
@@ -114,8 +134,13 @@ function computeBalances(employeeId: string, year: number): LeaveBalance[] {
 function firstApproverName(employeeId: string): string | null {
   const me = scopeId(employeeId);
   const person = MOCK_PEOPLE.find((p) => p.id === me);
-  if (person?.managerId && store.settings.approvalLevels === 2) return personName(person.managerId);
+  if (person?.managerId && managerDecides()) return personName(person.managerId);
   return 'Meera Iyer'; // HR — L2 / sole approver
+}
+
+/** Mirrors LeaveService.apply(): the manager is L1 at two levels or when they're the sole approver. */
+function managerDecides(): boolean {
+  return store.settings.approvalLevels === 2 || store.settings.singleApprover === 'MANAGER';
 }
 
 function directReportIds(ctx: LeaveCtx): string[] {
@@ -156,6 +181,19 @@ export const leaveApi = {
       paid,
       requiresApproval,
       isCompOff,
+      isRestrictedHoliday,
+      grantMode,
+      daysPerEvent,
+      reducedDaysPerEvent,
+      reducedAfterEvents,
+      countCalendarDays,
+      maxEventsPerEmployment,
+      eventLabel,
+      eventWindowDaysBefore,
+      eventWindowDaysAfter,
+      minServiceDays,
+      requiresDocument,
+      statutoryMaternity,
     } = input;
     return api.post<LeaveType>('/leave/types', {
       name,
@@ -170,6 +208,19 @@ export const leaveApi = {
       paid,
       requiresApproval,
       isCompOff,
+      isRestrictedHoliday,
+      grantMode,
+      daysPerEvent,
+      reducedDaysPerEvent,
+      reducedAfterEvents,
+      countCalendarDays,
+      maxEventsPerEmployment,
+      eventLabel,
+      eventWindowDaysBefore,
+      eventWindowDaysAfter,
+      minServiceDays,
+      requiresDocument,
+      statutoryMaternity,
     });
   },
 
@@ -194,6 +245,19 @@ export const leaveApi = {
       paid,
       requiresApproval,
       isCompOff,
+      isRestrictedHoliday,
+      grantMode,
+      daysPerEvent,
+      reducedDaysPerEvent,
+      reducedAfterEvents,
+      countCalendarDays,
+      maxEventsPerEmployment,
+      eventLabel,
+      eventWindowDaysBefore,
+      eventWindowDaysAfter,
+      minServiceDays,
+      requiresDocument,
+      statutoryMaternity,
     } = patch;
     return api.patch<LeaveType>(`/leave/types/${id}`, {
       name,
@@ -208,13 +272,41 @@ export const leaveApi = {
       paid,
       requiresApproval,
       isCompOff,
+      isRestrictedHoliday,
+      grantMode,
+      daysPerEvent,
+      reducedDaysPerEvent,
+      reducedAfterEvents,
+      countCalendarDays,
+      maxEventsPerEmployment,
+      eventLabel,
+      eventWindowDaysBefore,
+      eventWindowDaysAfter,
+      minServiceDays,
+      requiresDocument,
+      statutoryMaternity,
     });
   },
 
-  /** `POST /api/leave/types/:id/initialize/:year` · Company Admin, HR Manager · live */
-  initializeBalances(typeId: string, year: number): Promise<{ initialized: number }> {
-    if (USE_MOCK) return delay({ initialized: MOCK_PEOPLE.length });
-    return api.post<{ initialized: number }>(`/leave/types/${typeId}/initialize/${year}`);
+  /** `POST /api/leave/types/:id/initialize/:year` — "apply policy now" for the current
+   *  leave year (the nightly job does the same) · Company Admin, HR Manager · live */
+  initializeBalances(typeId: string, year: number): Promise<{ initialized: number; credited: number }> {
+    if (USE_MOCK) return delay({ initialized: MOCK_PEOPLE.length, credited: MOCK_PEOPLE.length });
+    return api.post<{ initialized: number; credited: number }>(`/leave/types/${typeId}/initialize/${year}`);
+  },
+
+  /** `POST /api/leave/policy/recalculate` — reverse + re-apply this leave year's policy credits · Company Admin · live */
+  recalculatePolicy(input: { goLiveDate?: string; dryRun: boolean }): Promise<PolicyRecalcResult> {
+    if (USE_MOCK) {
+      return delay({ dryRun: input.dryRun, leaveYear: MOCK_CURRENT_YEAR, goLiveDate: input.goLiveDate ?? null, reversed: 0, credited: 0, changes: [], negativeBalances: 0 });
+    }
+    return api.post<PolicyRecalcResult>('/leave/policy/recalculate', input);
+  },
+
+  /** `GET /api/leave/event-leave/:employeeId` — maternity/paternity/marriage etc. still available · row-scoped · live */
+  eventLeave(employeeId: string): Promise<EventLeaveAllowance[]> {
+    if (USE_MOCK) return delay([]);
+    return api.get<EventLeaveAllowance[]>(`/leave/event-leave/${employeeId}`);
   },
 
   /** `GET /api/leave/balances/:employeeId` · row-scoped · live */
@@ -275,15 +367,15 @@ export const leaveApi = {
   createRequest(input: CreateLeaveRequestInput, ctx: LeaveCtx): Promise<LeaveRequest> {
     if (USE_MOCK) {
       const type = store.types.find((t) => t.id === input.leaveTypeId)!;
-      const preview = computeBalances(ctx.employeeId, new Date(input.startDate).getFullYear()).find(
+      const preview = computeBalances(ctx.employeeId ?? ME_ID, new Date(input.startDate).getFullYear()).find(
         (b) => b.leaveTypeId === input.leaveTypeId,
       );
       let days = daysBetween(input.startDate, input.endDate);
       if (input.halfDay) days = 0.5;
       const avail = preview ? availableDays(preview) : 0;
       const isLop = days > Math.max(avail, 0);
-      const person = MOCK_PEOPLE.find((p) => p.id === scopeId(ctx.employeeId))!;
-      const startsAtL2 = !person.managerId || store.settings.approvalLevels === 1;
+      const person = MOCK_PEOPLE.find((p) => p.id === scopeId(ctx.employeeId ?? ME_ID))!;
+      const startsAtL2 = !person.managerId || !managerDecides();
       const req: LeaveRequest = {
         id: uid('req'),
         employeeId: ME_ID,
@@ -307,6 +399,17 @@ export const leaveApi = {
       return delay(req);
     }
     return api.post<LeaveRequest>('/leave/requests', input);
+  },
+
+  /** `POST /api/leave/requests/:id/attachment` · applicant or HR/Admin · live (module 09 — replaces any earlier attachment) */
+  attachToRequest(id: string, file: File): Promise<LeaveRequest> {
+    if (USE_MOCK) {
+      const r = store.requests.find((x) => x.id === id)!;
+      r.attachmentName = file.name;
+      r.attachment = { id: uid('doc'), label: file.name, scanStatus: 'CLEAN' };
+      return delay(r);
+    }
+    return api.upload<LeaveRequest>(`/leave/requests/${id}/attachment`, file);
   },
 
   /** `POST /api/leave/requests/:id/cancel` · request owner · live */
@@ -424,7 +527,7 @@ export const leaveApi = {
     return api.get<LeaveRequest[]>(`/leave/requests${qs ? `?${qs}` : ''}`);
   },
 
-  /** `GET /api/leave/holidays?year=` · any tenant user · planned */
+  /** `GET /api/leave/holidays?year=` — `year` is a leave year (April start: 2026 = Apr 2026–Mar 2027) · any tenant user · live */
   listHolidays(year = MOCK_CURRENT_YEAR): Promise<Holiday[]> {
     if (USE_MOCK) {
       return delay(
@@ -434,6 +537,18 @@ export const leaveApi = {
       );
     }
     return api.get<Holiday[]>(`/leave/holidays?year=${year}`);
+  },
+
+  /** `GET /api/leave/holidays?from=&to=` — inclusive dates, for month calendars · any tenant user · live */
+  listHolidaysBetween(from: string, to: string): Promise<Holiday[]> {
+    if (USE_MOCK) {
+      return delay(
+        store.holidays
+          .filter((h) => h.date >= from && h.date <= to)
+          .sort((a, b) => a.date.localeCompare(b.date)),
+      );
+    }
+    return api.get<Holiday[]>(`/leave/holidays?from=${from}&to=${to}`);
   },
 
   /** `POST /api/leave/holidays` · Company Admin, HR Manager · planned */
@@ -509,18 +624,15 @@ export const leaveApi = {
 
   /** `GET /api/leave/settings` · Company Admin, HR Manager, Auditor · live.
    *  Backend field names differ from the frontend's (`leaveApprovalLevels`
-   *  vs `approvalLevels`) — mapped here rather than renaming either side. */
+   *  vs `approvalLevels`, `leaveSingleApprover` vs `singleApprover`) —
+   *  mapped here rather than renaming either side. */
   getSettings(): Promise<LeaveSettings> {
     if (USE_MOCK) return delay({ ...store.settings });
     return api
-      .get<{ leaveApprovalLevels: 1 | 2; allowLopRequests: boolean; fyStartMonth: number }>(
+      .get<LeaveSettingsResponse>(
         '/leave/settings',
       )
-      .then((s) => ({
-        approvalLevels: s.leaveApprovalLevels,
-        allowLopRequests: s.allowLopRequests,
-        fyStartMonth: s.fyStartMonth,
-      }));
+      .then(toLeaveSettings);
   },
 
   /** `PATCH /api/leave/settings` · Company Admin · live (see `getSettings` field mapping). */
@@ -530,19 +642,16 @@ export const leaveApi = {
       return delay({ ...store.settings });
     }
     return api
-      .patch<{ leaveApprovalLevels: 1 | 2; allowLopRequests: boolean; fyStartMonth: number }>(
+      .patch<LeaveSettingsResponse>(
         '/leave/settings',
         {
           leaveApprovalLevels: patch.approvalLevels,
+          leaveSingleApprover: patch.singleApprover,
           allowLopRequests: patch.allowLopRequests,
           fyStartMonth: patch.fyStartMonth,
         },
       )
-      .then((s) => ({
-        approvalLevels: s.leaveApprovalLevels,
-        allowLopRequests: s.allowLopRequests,
-        fyStartMonth: s.fyStartMonth,
-      }));
+      .then(toLeaveSettings);
   },
 
   /** Directory slice the admin screens need for pickers. Real screens will use

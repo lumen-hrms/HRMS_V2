@@ -110,7 +110,7 @@ export function TeamBalancesTab() {
                         <TD colSpan={types.length + 1}>
                           <div className="grid grid-cols-2 gap-3 py-1 sm:grid-cols-3 lg:grid-cols-4">
                             {row.balances.map((b) => (
-                              <div key={b.leaveTypeId} className="rounded-md border border-border bg-card p-2 text-xs">
+                              <div key={b.leaveTypeId} className="rounded-xl border border-border bg-card p-2 text-xs">
                                 <div className="mb-1 font-medium">{b.leaveType.name}</div>
                                 <dl className="grid grid-cols-2 gap-x-2 text-muted-foreground">
                                   <dt>Accrued</dt>

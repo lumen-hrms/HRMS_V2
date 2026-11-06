@@ -47,7 +47,7 @@ export function DropdownMenu({
           role="menu"
           onClick={() => setOpen(false)}
           className={cn(
-            'absolute z-50 mt-1 min-w-40 rounded-md border border-border bg-card p-1 shadow-lg',
+            'absolute z-50 mt-1 min-w-40 glass-strong rounded-xl p-1',
             align === 'end' ? 'right-0' : 'left-0',
             className,
           )}
@@ -69,7 +69,7 @@ export function DropdownMenuItem({
       type="button"
       role="menuitem"
       className={cn(
-        'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50',
+        'flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50',
         destructive && 'text-destructive hover:bg-destructive/10',
         className,
       )}

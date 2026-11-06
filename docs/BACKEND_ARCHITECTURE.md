@@ -109,7 +109,7 @@ This is the concrete mechanism behind "even the founder can't casually see tenan
 
 ### 2.6 One deliberate exception, and why it's safe
 
-`PlatformAdminService.seedCompanyAdmin()` and `.refreshHeadcount()` (in `src/platform-admin/platform-admin.service.ts`) need to write into a brand-new tenant's `public.users`/`public.employees` (to create the first Company Admin login, and to denormalize a headcount back into `platform.tenants.employeeCount`). These do **not** use the `hrms_platform` connection — they use the separate `hrms_app`-backed `TenantPrismaClientProvider`, scoped to one tenant via the same `withTenantContext()` helper as ordinary requests. So `hrms_platform` itself never touches `public` under any code path; the exception is implemented via a different, correctly-scoped connection, not a privilege escalation on the platform role.
+`PlatformAdminService.seedTenantRows()` and `.refreshHeadcount()` (in `src/platform-admin/platform-admin.service.ts`) need to write into a brand-new tenant's `public.users` + default settings / read `public.employees` (to create the first Company Admin and the tenant's defaults in one transaction, and to denormalize a headcount back into `platform.tenants.employeeCount`). These do **not** use the `hrms_platform` connection — they use the separate `hrms_app`-backed `TenantPrismaClientProvider`, scoped to one tenant via the same RLS session variable as ordinary requests (`withTenantContext()`, or set first inside `seedTenantRows`' transaction). So `hrms_platform` itself never touches `public` under any code path; the exception is implemented via a different, correctly-scoped connection, not a privilege escalation on the platform role.
 
 ## 3. Auth flow in detail
 
@@ -162,11 +162,21 @@ Mirrors the tenant auth flow (own bcrypt/lockout/MFA logic against `platform_adm
 - `GET /platform-admin/tenants` — list with subscription info, for the operator console.
 - `PATCH /platform-admin/tenants/:id/status` — `ACTIVE` / `SUSPENDED` / `TRIAL`. `SUSPENDED` is enforced at the tenant-resolution layer (§2.1), so suspending a tenant immediately locks out every user of that tenant, not just new logins.
 
-### `employees/` — `EmployeesService`, plus `EmployeesController` / `DocumentsController` / `DepartmentsController`
+### `employees/` — `EmployeesService`, plus `EmployeesController` / `DepartmentsController`
 - CRUD on `Employee` and `Department`, with the `scopeFor()` row-scoping described in §4.
-- `orgChart()` — fetches all employees for the tenant, builds a manager→reports tree in memory (not a recursive SQL CTE — fine at hundreds of employees, revisit if a tenant gets large).
-- Document upload: `uploadDocument()` writes the file to S3/MinIO under `tenants/<tenantId>/employees/<employeeId>/<uuid>-<filename>` (via `StorageService`) and records metadata in `public.documents`; downloads only ever hand back a 5-minute presigned URL (`getDocumentDownloadUrl`), never a direct object reference.
+- `orgChart()` — fetches all non-SEPARATED employees for the tenant (with department, linked-login email and a presigned photo URL for the hover card — never `personalEmail`), builds a manager→reports tree in memory with direct/total report counts, and prunes any `reportingManagerId` cycle (not a recursive SQL CTE — fine at hundreds of employees, revisit if a tenant gets large).
+- Document routes (`GET`/`POST /employees/:id/documents`) delegate to `DocumentsService` (below).
 - `bulkImport()` — parses an uploaded `.xlsx` (via `exceljs`), requires `employeeCode`/`firstName`/`lastName` columns, inserts row-by-row and returns a per-row success/error report rather than failing the whole batch on one bad row.
+
+### `documents/` — `DocumentsService`, `DocumentsController`, `DocumentScanProcessor`, `ClamAvScanner` (module 09)
+- `upload()` is the one pipeline for every user-uploaded file (employee profile, leave attachment, regularization evidence): MIME allow-list + magic-byte check + 10 MB cap **before** storage, object key `tenants/<tenantId>/employees/<employeeId>/<profile|leave/<id>|regularization/<id>>/<uuid>-<filename>`, row `PENDING_SCAN`, scan job enqueued. Owner modules (`LeaveService.attach`, `AttendanceService.attachEvidence`) do their own "may this user attach here" check first; Documents never imports them.
+- `DocumentScanProcessor` (BullMQ `documents` queue) streams the object to clamd (`zINSTREAM` over TCP, no npm dep) under `withTenantContext`; `INFECTED` deletes the object; a 15-minute `sweep` re-enqueues stale/failed scans across tenants.
+- `getDownloadUrl()` issues a 5-minute presigned URL with `Content-Disposition: attachment` only for a visible, non-deleted, `CLEAN` document (409 scanning / 410 infected), audit row written first. Visibility mirrors `scopeFor` (self / recursive subtree / tenant) via the shared `recursiveReportIds`.
+- Delete is soft (`deletedAt`); `hrms_app` has no `DELETE` grant on `documents`.
+
+### `notifications/` — `NotificationDispatcher`, `NotificationSendProcessor`, `SesEmailSender`, `NotificationsController` (module 10)
+- `NotificationDispatcher.notify({ tenantId, template, context, dedupeKey, to, actorUserId })` is a singleton (not request-scoped) so services *and* BullMQ processors call it identically; it queries through `withTenantContext` on `hrms_app`. Recipients (`userIds` / `employeeIds` / `roles`) resolve to active users with an email, minus the actor; one `notification_log` row per recipient via `createMany({ skipDuplicates })` on the `(tenant_id, dedupe_key, recipient_user_id)` unique index, then a `send` job each. It swallows its own errors — a mail problem never fails the caller's request.
+- `NotificationSendProcessor` renders `templates.ts` (HTML-escaped) and sends through `SesEmailSender` (`@aws-sdk/client-sesv2`); `SENT` + SES message id, or retry → `FAILED`. A 10-minute `sweep` re-enqueues stale `QUEUED` rows. `GET /notifications/log` + `POST /notifications/log/:id/retry` back the Email log screen. `hrms_app` has no `DELETE` on the log.
 
 ### `leave/` — `LeaveService`, `LeaveController`
 - Leave types (`LeaveType`) carry `annualQuota` and `carryForwardCap`; `initializeYearlyBalances()` upserts a `LeaveBalance` row per employee per year.
@@ -223,6 +233,6 @@ Every tenant table has `@@index([tenantId])` at minimum — necessary since RLS 
 - No holiday-aware leave day counting — `apply()` uses an inclusive calendar-day count, not a working-day calendar (documented as a deliberate MVP simplification in the code itself).
 - Login audit log (`FR-AUTH-008`): **wired.** `LoginAuditEntry` table + `AuthService.session()` writes one append-only row per server-observed `POST /api/auth/session` outcome (`SUCCESS` / `USER_INACTIVE` / `CLAIM_MISMATCH` / `TOKEN_EXPIRED`) with IP (`trust proxy` set in `main.ts`) + user-agent. `BAD_CREDENTIALS` (rejected in the Firebase client SDK) and `TENANT_SUSPENDED` (rejected in pre-auth middleware) are not server-observable — see `docs/modules/01_IDENTITY_AND_ACCESS.md` §9. Read via `GET /api/access/audit?feed=login`; the whole `access` surface is covered by `test/access.e2e-spec.ts`.
 - Bulk-import and team-calendar are API-only — no frontend screen calls them yet.
-- Payroll, Attendance, and Compliance-export modules haven't been started — they're the next slice per the 12-week plan, and payroll in particular should get the time budget protected (§9 of the blueprint flags it as the highest-effort, highest-risk module).
+- Attendance (module 05) reached 100% on 2026-09-18 (docs/MODULE_SPECS.md §5) — this line is stale as of that merge. Payroll and Compliance-export modules remain not started — they're the next slice per the 12-week plan, and payroll in particular should get the time budget protected (§9 of the blueprint flags it as the highest-effort, highest-risk module).
 
 This document reflects a point-in-time read of the code as of the merge; re-check §8 against the actual repo state as work continues.

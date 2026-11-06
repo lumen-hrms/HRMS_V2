@@ -3,7 +3,6 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
-  Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -11,8 +10,9 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma, type LoginOutcome } from '@prisma/client';
 import type * as admin from 'firebase-admin';
 import { FIREBASE_AUTH } from '../firebase/firebase-admin.provider';
-import { sendFirebasePasswordResetEmail } from '../firebase/send-reset-email';
+import { AuthEmailService } from '../notifications/auth-email.service';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service';
+import { AuditService } from '../audit/audit.service';
 import type { AppConfig } from '../config/configuration';
 import type { AppRole } from '../common/decorators/roles.decorator';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
@@ -58,12 +58,12 @@ type UserWithEmployee = Prisma.UserGetPayload<{ include: typeof userInclude }>;
  */
 @Injectable()
 export class AccessService {
-  private readonly logger = new Logger(AccessService.name);
-
   constructor(
     private readonly tenantPrisma: TenantPrismaService,
     private readonly config: ConfigService<AppConfig, true>,
     @Inject(FIREBASE_AUTH) private readonly firebaseAuth: admin.auth.Auth,
+    private readonly authEmails: AuthEmailService,
+    private readonly audit: AuditService,
   ) {}
 
   // ---- Users -------------------------------------------------------------
@@ -208,10 +208,18 @@ export class AccessService {
   }
 
   async sendPasswordReset(actor: AuthenticatedUser, targetId: string): Promise<{ email: string }> {
-    const target = await this.tenantPrisma.client.user.findUnique({ where: { id: targetId } });
+    const target = await this.tenantPrisma.client.user.findUnique({
+      where: { id: targetId },
+      include: { employee: { select: { firstName: true, lastName: true } } },
+    });
     if (!target) throw new NotFoundException('User not found');
 
-    await this.sendResetEmail(target.email);
+    await this.sendResetEmail(
+      target.email,
+      target.employee
+        ? `${target.employee.firstName} ${target.employee.lastName}`.trim()
+        : undefined,
+    );
     await this.writeAccessAudit(
       actor,
       'password_reset.sent',
@@ -410,39 +418,34 @@ export class AccessService {
     after: string | null,
     note: string | null,
   ): Promise<void> {
-    try {
-      const actorName = await this.resolveActorName(actor);
-      await this.tenantPrisma.client.auditLog.create({
-        data: buildAccessAuditData({
-          tenantId: this.tenantPrisma.tenantId,
-          actorUserId: actor.sub,
-          actorName,
-          actorRole: actor.role,
-          action,
-          targetUserId,
-          targetEmail,
-          before,
-          after,
-          note,
-        }),
-      });
-    } catch (err) {
-      this.logger.error(
-        `Failed to write access-change audit (${action}) for ${targetEmail}`,
-        err instanceof Error ? err.stack : String(err),
-      );
-    }
+    const actorName = await this.resolveActorName(actor);
+    const data = buildAccessAuditData({
+      tenantId: this.tenantPrisma.tenantId,
+      actorUserId: actor.sub,
+      actorName,
+      actorRole: actor.role,
+      action,
+      targetUserId,
+      targetEmail,
+      before,
+      after,
+      note,
+    });
+    await this.audit.log({ ...data, metadata: data.metadata as Record<string, unknown> });
   }
 
   /**
-   * Admin-triggered password reset for ANOTHER user — sends Firebase's hosted
-   * reset email (the Admin SDK can only generate a link, not send it).
+   * Admin-triggered password reset for ANOTHER user — a Firebase reset link,
+   * emailed from the workspace's own domain via SES (module 10's
+   * AuthEmailService; falls back to Firebase's own email if SES isn't set up).
    */
-  private sendResetEmail(email: string): Promise<void> {
-    return sendFirebasePasswordResetEmail(
-      this.config.get('firebase.webApiKey', { infer: true }),
+  private async sendResetEmail(email: string, recipientName?: string): Promise<void> {
+    await this.authEmails.sendPasswordReset({
       email,
-    );
+      kind: 'ADMIN_RESET',
+      tenantId: this.tenantPrisma.tenantId,
+      recipientName,
+    });
   }
 }
 
@@ -452,6 +455,8 @@ const ACTIVITY_ACTION_LABEL: Record<FrontendAuditAction, string> = {
   'user.deactivated': 'Login deactivated',
   'password_reset.sent': 'Password reset sent',
   'user.created': 'Login created',
+  'user.linked': 'Login linked to employee',
+  'user.email_changed': 'Login email changed',
 };
 
 function humanizeEmail(email: string): string {
