@@ -11,10 +11,50 @@ on:
     branches: [dev]
   workflow_dispatch: {}
 
+# One deploy at a time: an overlapping run could stop the box mid-deploy.
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      # The box is on-demand (docs/EC2_POWER.md). If it is stopped, start it
+      # through the power Lambda, deploy, then put it back to stopped. A box
+      # that was already running (or is being started by someone) is left on.
+      # Needs secrets EC2_POWER_URL (the Lambda Function URL) and EC2_POWER_TOKEN.
+      - name: Start the box if it is stopped
+        id: power
+        env:
+          EC2_POWER_URL: ${{ secrets.EC2_POWER_URL }}
+          EC2_POWER_TOKEN: ${{ secrets.EC2_POWER_TOKEN }}
+        run: |
+          call() { curl -fsS -m 30 -X POST "${EC2_POWER_URL%/}/$1" -H "x-token: $EC2_POWER_TOKEN"; }
+          state() { call status | jq -r .state; }
+          wait_for() { # <state> <seconds>
+            for _ in $(seq 1 $(( $2 / 10 ))); do
+              [ "$(state)" = "$1" ] && return 0
+              sleep 10
+            done
+            return 1
+          }
+
+          s="$(state)"
+          echo "Box state: $s"
+          case "$s" in
+            stopped|stopping) ;;                          # we will start it, and stop it again
+            *) echo "was_stopped=false" >> "$GITHUB_OUTPUT"; exit 0 ;;
+          esac
+          # Recorded before starting, so the final step restores it even if the start fails.
+          echo "was_stopped=true" >> "$GITHUB_OUTPUT"
+
+          if [ "$s" = "stopping" ]; then wait_for stopped 180 || { echo "Box never finished stopping"; exit 1; }; fi
+          r="$(call start)"; echo "start -> $r"
+          [ "$(echo "$r" | jq -r .state)" = "pending" ] || { echo "Could not start the box (capacity?). See the alert email."; exit 1; }
+          wait_for ready 600 || { echo "Box not healthy after 10 minutes"; exit 1; }
+          echo "Box is up"
+
       - name: SSH and redeploy
         uses: appleboy/ssh-action@v1.0.3
         # Object storage (module 09 documents) comes from repo secrets so the
@@ -136,3 +176,13 @@ jobs:
               fi
               docker start clamav >/dev/null
             fi
+
+      # Back to the original state. Runs even if the deploy failed. The Lambda
+      # only stops a running box, so this is a no-op if the start never happened.
+      - name: Stop the box again (it was stopped before this run)
+        if: always() && steps.power.outputs.was_stopped == 'true'
+        env:
+          EC2_POWER_URL: ${{ secrets.EC2_POWER_URL }}
+          EC2_POWER_TOKEN: ${{ secrets.EC2_POWER_TOKEN }}
+        run: |
+          curl -fsS -m 30 -X POST "${EC2_POWER_URL%/}/stop" -H "x-token: $EC2_POWER_TOKEN"

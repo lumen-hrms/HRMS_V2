@@ -31,5 +31,10 @@ container's default AWS credentials — the `mailsender` user — which needs
 
 ## Operations
 - Rotate the token: update the Lambda's `TOKEN` env var, share the new one.
-- CD (`deploy-api.yml`) SSHes to the box — start it first, or the deploy fails.
+- **CD handles a stopped box.** `deploy-api.yml` first asks the Lambda for the
+  state. If the box is stopped it starts it, waits until `/api/health` is up
+  (max 10 min), deploys, then stops it again (even if the deploy failed). A box
+  that was already running is left running. Needs repo secrets `EC2_POWER_URL`
+  (the Function URL) and `EC2_POWER_TOKEN`. Runs are serialized
+  (`concurrency: deploy-api`). The stop sends a "Stopped manually" email.
 - Billing while stopped: the Elastic IP and the EBS volume only (~$5.5/mo).
