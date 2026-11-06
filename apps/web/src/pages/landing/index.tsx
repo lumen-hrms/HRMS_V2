@@ -29,7 +29,7 @@ export function LandingPage() {
 
   React.useEffect(() => {
     const previous = document.title;
-    document.title = 'Lumen HRMS — People operations, illuminated.';
+    document.title = 'Lumen HRMS | People operations, illuminated.';
     return () => {
       document.title = previous;
     };

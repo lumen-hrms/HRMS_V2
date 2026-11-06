@@ -50,7 +50,7 @@ export function Contact() {
       setStatus('error');
       setError(
         isApiError(err) && err.status === 429
-          ? "You've sent a few of these already — please wait a few minutes and try again."
+          ? "You've sent a few of these already. Please wait a few minutes and try again."
           : 'Something went wrong sending your message. Please try again in a moment.',
       );
     }
