@@ -190,14 +190,14 @@ function MyAttendanceTab() {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex items-start justify-between">
-        <div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <h1 className="text-xl font-semibold">Attendance</h1>
           <p className="text-sm text-muted-foreground">
             Real-time shift tracking, verified punch telemetry, and monthly logbook.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => setDialogOpen(true)}>
             <PencilLine className="h-4 w-4" /> Request Regularization
           </Button>

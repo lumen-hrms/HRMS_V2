@@ -127,7 +127,7 @@ export function PlatformAuditPage() {
         ) : rows.length === 0 ? (
           <EmptyState icon={ScrollText} title="No audit entries match these filters" />
         ) : (
-          <Table>
+          <Table stack>
             <THead>
               <TR>
                 <TH>When</TH>
@@ -141,14 +141,14 @@ export function PlatformAuditPage() {
             <TBody>
               {rows.map((r) => (
                 <TR key={r.id}>
-                  <TD className="whitespace-nowrap text-muted-foreground">{fmtDateTime(r.at)}</TD>
-                  <TD className="font-medium">{r.actorEmail}</TD>
-                  <TD>{AUDIT_ACTION_LABEL[r.action]}</TD>
-                  <TD>{r.targetTenantName ?? '—'}</TD>
-                  <TD className="text-muted-foreground">
+                  <TD label="When" className="whitespace-nowrap text-muted-foreground">{fmtDateTime(r.at)}</TD>
+                  <TD label="Operator" className="break-all font-medium md:break-normal">{r.actorEmail}</TD>
+                  <TD className="font-medium max-md:-order-1">{AUDIT_ACTION_LABEL[r.action]}</TD>
+                  <TD label="Tenant">{r.targetTenantName ?? '—'}</TD>
+                  <TD label="Change" className="text-muted-foreground">
                     {r.before && r.after ? `${r.before} → ${r.after}` : '—'}
                   </TD>
-                  <TD className="max-w-xs text-xs text-muted-foreground">{r.note ?? '—'}</TD>
+                  <TD label="Note" className="max-w-xs text-xs text-muted-foreground">{r.note ?? '—'}</TD>
                 </TR>
               ))}
             </TBody>

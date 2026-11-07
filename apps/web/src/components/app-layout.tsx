@@ -1,4 +1,5 @@
 import { WorkspaceBanner } from '@/components/workspace-banner';
+import { BackButton } from '@/components/back-button';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -18,6 +19,8 @@ import {
   Sun,
   Monitor,
   ChartColumn,
+  Menu,
+  X,
 } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import { useTheme } from '@/context/theme-context';
@@ -97,6 +100,8 @@ export function AppLayout() {
   // Tagged with the pathname it was set on, so it lapses on its own once the
   // route actually changes (no reset effect needed).
   const [pending, setPending] = useState<{ to: string; at: string } | null>(null);
+  // Below `lg` the sidebar is an off-canvas drawer opened from the top bar.
+  const [navOpen, setNavOpen] = useState(false);
   const pendingTo = pending && pending.at === pathname ? pending.to : null;
 
   async function handleLogout() {
@@ -124,6 +129,13 @@ export function AppLayout() {
   }, [pathname, navKey]);
 
   useEffect(() => {
+    if (!navOpen) return;
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setNavOpen(false);
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [navOpen]);
+
+  useEffect(() => {
     if (lens && !lensAnimates) {
       const id = requestAnimationFrame(() => setLensAnimates(true));
       return () => cancelAnimationFrame(id);
@@ -131,14 +143,38 @@ export function AppLayout() {
   }, [lens, lensAnimates]);
 
   return (
-    <div className="flex min-h-screen text-foreground">
-      <aside className="glass flex w-60 shrink-0 flex-col rounded-none border-y-0 border-l-0">
+    <div className="flex min-h-dvh text-foreground">
+      {/* Drawer backdrop (below lg only) */}
+      {navOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-[#030812]/50 backdrop-blur-sm lg:hidden"
+          onClick={() => setNavOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+      <aside
+        className={cn(
+          'glass flex shrink-0 flex-col overflow-y-auto rounded-none border-y-0 border-l-0',
+          // Drawer below lg; a static 15rem column from lg up.
+          'fixed inset-y-0 left-0 z-50 w-64 max-w-[85vw] pb-[env(safe-area-inset-bottom)] transition-[transform,visibility] duration-200',
+          'lg:sticky lg:top-0 lg:z-auto lg:h-dvh lg:w-60 lg:max-w-none lg:translate-x-0 lg:visible lg:pb-0',
+          navOpen ? 'translate-x-0' : '-translate-x-full invisible',
+        )}
+      >
         <div className="flex items-center gap-2 px-5 py-5">
           <img src={lumenMarkDark} alt="" className="brand-mark-light h-7 w-7 shrink-0 object-contain" />
           <img src={lumenMarkWhite} alt="" className="brand-mark-dark h-7 w-7 shrink-0 object-contain" />
           <span className="text-lg font-semibold tracking-tight text-foreground">
             Lumen <span className="text-muted-foreground">HRMS</span>
           </span>
+          <button
+            type="button"
+            onClick={() => setNavOpen(false)}
+            className="-mr-2 ml-auto rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground lg:hidden"
+            aria-label="Close menu"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
         <nav ref={navRef} className="relative flex flex-1 flex-col gap-1 px-3">
           <span
@@ -156,6 +192,7 @@ export function AppLayout() {
               to={to}
               end={end}
               onClick={(e) => {
+                setNavOpen(false);
                 setPending({ to, at: pathname });
                 setLens({ top: e.currentTarget.offsetTop, height: e.currentTarget.offsetHeight });
               }}
@@ -199,6 +236,7 @@ export function AppLayout() {
           </div>
           <NavLink
             to="/account"
+            onClick={() => setNavOpen(false)}
             className={({ isActive }) =>
               cn(
                 'mb-2 flex items-center gap-2 rounded-xl px-1 py-1 text-xs transition-colors',
@@ -223,8 +261,25 @@ export function AppLayout() {
         </div>
       </aside>
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {/* Top bar - phones / tablets only; the sidebar covers this from lg up */}
+        <header className="glass sticky top-0 z-30 flex items-center gap-2 rounded-none border-x-0 border-t-0 px-2 pt-[env(safe-area-inset-top)] lg:hidden">
+          <button
+            type="button"
+            onClick={() => setNavOpen(true)}
+            className="rounded-xl p-3 text-muted-foreground hover:bg-accent hover:text-foreground"
+            aria-label="Open menu"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+          <img src={lumenMarkDark} alt="" className="brand-mark-light h-6 w-6 shrink-0 object-contain" />
+          <img src={lumenMarkWhite} alt="" className="brand-mark-dark h-6 w-6 shrink-0 object-contain" />
+          <span className="text-base font-semibold tracking-tight">
+            Lumen <span className="text-muted-foreground">HRMS</span>
+          </span>
+        </header>
         <WorkspaceBanner />
-        <main className="flex-1 overflow-y-auto p-8">
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+          {pathname !== '/' && <BackButton className="mb-3" />}
           <Outlet />
         </main>
       </div>

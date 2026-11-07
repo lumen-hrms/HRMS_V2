@@ -45,25 +45,26 @@ export function Sheet({
         role="dialog"
         aria-modal="true"
         className={cn(
-          'glass-strong absolute right-0 top-0 flex h-full w-full max-w-md flex-col rounded-l-xl',
+          'glass-strong absolute right-0 top-0 flex h-dvh w-full max-w-md flex-col rounded-l-xl max-sm:rounded-none',
           className,
         )}
       >
-        <div className="flex items-start justify-between gap-4 border-b border-border p-5">
-          <div>
-            <h2 className="text-base font-semibold leading-none">{title}</h2>
-            {description && <p className="mt-1.5 text-sm text-muted-foreground">{description}</p>}
-          </div>
+        <div className="flex items-start gap-3 border-b border-border p-5">
           <button
+            type="button"
             onClick={() => onOpenChange(false)}
-            className="rounded-full p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+            className="-ml-1 -mt-1 shrink-0 rounded-full p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
           </button>
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold leading-none">{title}</h2>
+            {description && <p className="mt-1.5 text-sm text-muted-foreground">{description}</p>}
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto p-5">{children}</div>
-        {footer && <div className="border-t border-border p-4">{footer}</div>}
+        {footer && <div className="border-t border-border p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">{footer}</div>}
       </div>
     </div>
   );

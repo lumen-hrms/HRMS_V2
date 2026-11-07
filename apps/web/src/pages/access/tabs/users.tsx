@@ -228,13 +228,15 @@ export function UsersTab({
       </Card>
 
       {!readOnly && (
-        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <UserRoundPlus className="h-3.5 w-3.5" />
-          Logins are created when an employee is added in{' '}
-          <Link to="/employees/new" className="font-medium text-primary hover:underline">
-            Employee Master
-          </Link>
-          . There is no standalone invite in V1.
+        <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+          <UserRoundPlus className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            Logins are created when an employee is added in{' '}
+            <Link to="/employees/new" className="font-medium text-primary hover:underline">
+              Employee Master
+            </Link>
+            . There is no standalone invite in V1.
+          </span>
         </p>
       )}
 

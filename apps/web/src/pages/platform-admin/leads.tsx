@@ -71,24 +71,30 @@ export function LeadsPage() {
         ) : filtered.length === 0 ? (
           <EmptyState icon={Inbox} title="No leads yet" description="Submissions from the contact form will show up here." />
         ) : (
-          <Table>
+          <Table stack>
             <THead>
               <TR>
                 <TH>When</TH>
                 <TH>Name</TH>
                 <TH>Email</TH>
-                <TH>Company</TH>
+                <TH className="md:max-xl:hidden">Company</TH>
                 <TH>Message</TH>
               </TR>
             </THead>
             <TBody>
               {filtered.map((r) => (
                 <TR key={r.id} className="cursor-pointer" onClick={() => setSelected(r)}>
-                  <TD className="whitespace-nowrap text-muted-foreground">{fmtDateTime(r.at)}</TD>
-                  <TD className="font-medium">{r.name}</TD>
-                  <TD>{r.email}</TD>
-                  <TD>{r.company ?? '—'}</TD>
-                  <TD className="max-w-sm truncate text-muted-foreground">{r.message}</TD>
+                  <TD label="When" className="whitespace-nowrap text-muted-foreground">{fmtDateTime(r.at)}</TD>
+                  <TD className="whitespace-nowrap font-medium max-md:-order-1">{r.name}</TD>
+                  <TD label="Email">
+                    <div className="max-w-[14rem] truncate">{r.email}</div>
+                  </TD>
+                  <TD label="Company" className="md:max-xl:hidden">
+                    <div className="max-w-[12rem] truncate">{r.company ?? '—'}</div>
+                  </TD>
+                  <TD className="text-muted-foreground">
+                    <div className="line-clamp-2 md:min-w-48 md:max-w-sm">{r.message}</div>
+                  </TD>
                 </TR>
               ))}
             </TBody>

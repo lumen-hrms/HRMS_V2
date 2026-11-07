@@ -148,7 +148,7 @@ function NodeCard({
         ref={ref}
         type="button"
         data-org-node={node.id}
-        onPointerDown={(e) => h.onDragStart(e, node)}
+        onPointerDown={(e) => e.pointerType !== 'touch' && h.onDragStart(e, node)}
         onClick={() => {
           if (h.wasDragging()) return;
           h.onHoverEnd();

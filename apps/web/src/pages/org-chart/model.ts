@@ -60,6 +60,23 @@ export function ancestorsOf(index: OrgIndex, id: string): OrgNode[] {
   return path;
 }
 
+/**
+ * What the phone "Focus" view shows for `focusId`: the focused person, the
+ * manager above them (when that manager is inside the visible tree), the trail
+ * from the top, and the people listed below. `focusId` null = the top level,
+ * i.e. the roots themselves; an id that isn't in the tree falls back to that.
+ */
+export function focusState(index: OrgIndex, roots: OrgNode[], focusId: string | null) {
+  const node = focusId ? (index.byId.get(focusId) ?? null) : null;
+  const parentId = node ? index.parentOf.get(node.id) : undefined;
+  return {
+    node,
+    parent: parentId ? (index.byId.get(parentId) ?? null) : null,
+    trail: node ? [...ancestorsOf(index, node.id), node] : [],
+    items: node ? node.directReports : roots,
+  };
+}
+
 export function fullName(p: { firstName: string; lastName: string }) {
   return `${p.firstName} ${p.lastName}`.trim();
 }

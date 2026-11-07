@@ -30,6 +30,9 @@ export function usePanZoom({ onInteract }: { onInteract?: () => void } = {}) {
   const viewRef = React.useRef(view);
   const draggedRef = React.useRef(false);
   const onInteractRef = React.useRef(onInteract);
+  // Fingers currently down, and the in-progress pinch (start distance / midpoint / view).
+  const touches = React.useRef(new Map<number, { x: number; y: number }>());
+  const pinch = React.useRef<{ dist: number; mid: { x: number; y: number }; view: View } | null>(null);
 
   React.useEffect(() => {
     onInteractRef.current = onInteract;
@@ -113,14 +116,48 @@ export function usePanZoom({ onInteract }: { onInteract?: () => void } = {}) {
   const onPointerDown = React.useCallback(
     (e: React.PointerEvent) => {
       if (e.button !== 0) return;
-      draggedRef.current = false;
-      // A press on a card drags the card (see use-node-drag), not the canvas.
-      if ((e.target as HTMLElement).closest('[data-org-node]')) return;
+      const vp = viewportRef.current;
+      if (e.pointerType === 'touch' && vp) {
+        touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (touches.current.size === 2) {
+          // Second finger down: switch from panning to pinch-zooming.
+          const [a, b] = [...touches.current.values()];
+          pinch.current = {
+            dist: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+            mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+            view: viewRef.current,
+          };
+          draggedRef.current = true;
+          onInteractRef.current?.();
+        }
+      }
+      if (touches.current.size < 2) draggedRef.current = false;
+      if (pinch.current) return;
+      // A mouse press on a card drags the card (see use-node-drag); a finger
+      // can't drag cards, so it pans from anywhere.
+      if (e.pointerType !== 'touch' && (e.target as HTMLElement).closest('[data-org-node]')) return;
       const startX = e.clientX;
       const startY = e.clientY;
       const origin = viewRef.current;
 
       const move = (ev: PointerEvent) => {
+        if (ev.pointerType === 'touch' && touches.current.has(ev.pointerId)) {
+          touches.current.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+          const p = pinch.current;
+          if (p && vp && touches.current.size >= 2) {
+            const [a, b] = [...touches.current.values()];
+            const scale = clamp(p.view.scale * (Math.hypot(a.x - b.x, a.y - b.y) / p.dist), MIN_SCALE, MAX_SCALE);
+            const k = scale / p.view.scale;
+            const r = vp.getBoundingClientRect();
+            const mx = (a.x + b.x) / 2 - r.left;
+            const my = (a.y + b.y) / 2 - r.top;
+            const sx = p.mid.x - r.left;
+            const sy = p.mid.y - r.top;
+            apply({ scale, x: mx - (sx - p.view.x) * k, y: my - (sy - p.view.y) * k }, false);
+            return;
+          }
+        }
+        if (pinch.current) return;
         const dx = ev.clientX - startX;
         const dy = ev.clientY - startY;
         if (!draggedRef.current) {
@@ -131,7 +168,9 @@ export function usePanZoom({ onInteract }: { onInteract?: () => void } = {}) {
         }
         apply({ ...origin, x: origin.x + dx, y: origin.y + dy }, false);
       };
-      const up = () => {
+      const up = (ev: PointerEvent) => {
+        touches.current.delete(ev.pointerId);
+        if (touches.current.size < 2) pinch.current = null;
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', up);
         window.removeEventListener('pointercancel', up);

@@ -3,6 +3,8 @@ import {
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
+  Focus,
+  ListTree,
   Maximize2,
   Minus,
   Network,
@@ -35,11 +37,41 @@ import { useNodeDrag } from './use-node-drag';
 import { PersonHoverCard } from './hover-card';
 import { useHoverCard } from './use-hover-card';
 import { PersonSheet } from './person-sheet';
+import { FocusView, OutlineView } from './mobile-views';
 import { usePanZoom } from './use-pan-zoom';
 
 /** Levels open on first load: the root's team is shown, everyone below is one click away. */
 const DEFAULT_OPEN_DEPTH = 1;
 const HIGHLIGHT_MS = 2600;
+
+/** Below this container width the list views are the default (and the canvas is opt-in). */
+const NARROW_PX = 700;
+type ViewMode = 'chart' | 'outline' | 'focus';
+const VIEW_KEY = 'hrms.orgChart.view';
+
+function readStoredView(): ViewMode | null {
+  try {
+    const v = localStorage.getItem(VIEW_KEY);
+    return v === 'chart' || v === 'outline' || v === 'focus' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** True while the element is narrower than `px` - the container, not the device, so a fold's inner screen or a split-screen window behaves too. */
+function useNarrow(ref: React.RefObject<HTMLElement | null>, px: number) {
+  const [narrow, setNarrow] = React.useState(false);
+  React.useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => setNarrow(el.clientWidth < px);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref, px]);
+  return narrow;
+}
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -55,6 +87,12 @@ export function OrgChartPage() {
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [highlightId, setHighlightId] = React.useState<string | null>(null);
   const [deptId, setDeptId] = React.useState('');
+  const pageRef = React.useRef<HTMLDivElement>(null);
+  const narrow = useNarrow(pageRef, NARROW_PX);
+  const [chosenView, setChosenView] = React.useState<ViewMode | null>(readStoredView);
+  const view: ViewMode = chosenView ?? (narrow ? 'focus' : 'chart');
+  /** Focus view: whose team is listed (null = the top level). */
+  const [listFocusId, setListFocusId] = React.useState<string | null>(null);
   const highlightTimer = React.useRef<number | undefined>(undefined);
 
   const hover = useHoverCard();
@@ -91,6 +129,8 @@ export function OrgChartPage() {
           new Set(idx.all.filter((n) => idx.depthOf.get(n.id)! < DEFAULT_OPEN_DEPTH).map((n) => n.id)),
         );
         setRoots(data);
+        // A single root (the CEO, or a manager's own chart) is shown opened up.
+        setListFocusId(data.length === 1 ? data[0].id : null);
         afterLayout(() => fit(0.6));
       })
       .catch((e) => setError(isApiError(e) ? e.message : 'Could not load the org chart.'));
@@ -107,6 +147,20 @@ export function OrgChartPage() {
   }
 
   React.useEffect(() => () => window.clearTimeout(highlightTimer.current), []);
+
+  function chooseView(next: ViewMode) {
+    setChosenView(next);
+    try {
+      localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      // Private mode etc. - the choice just won't survive a reload.
+    }
+  }
+
+  // Coming back to the canvas: it was unmounted, so re-fit it once it has laid out.
+  React.useEffect(() => {
+    if (view === 'chart' && roots) afterLayout(() => fit(0.6));
+  }, [view, roots, fit]);
 
   const focusNode = focusId ? index.byId.get(focusId) ?? null : null;
   const visibleRoots = React.useMemo(() => (focusNode ? [focusNode] : roots ?? []), [focusNode, roots]);
@@ -154,6 +208,10 @@ export function OrgChartPage() {
 
   /** Open the path to `node`, pan to it and pulse it. */
   function reveal(node: OrgNode) {
+    if (view === 'focus') {
+      // List the person's team-mates, with them highlighted.
+      setListFocusId(index.parentOf.get(node.id) ?? (roots?.length === 1 ? node.id : null));
+    }
     if (focusId && !isWithin(node.id, focusId)) setFocusId(null);
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -168,6 +226,14 @@ export function OrgChartPage() {
 
   function focusTeam(node: OrgNode) {
     hover.hideNow();
+    if (view === 'focus') {
+      setListFocusId(node.id);
+      return;
+    }
+    if (view === 'outline') {
+      setExpanded((prev) => new Set(prev).add(node.id));
+      return;
+    }
     setFocusId(node.id);
     setExpanded((prev) => new Set(prev).add(node.id));
     afterLayout(() => fit(0.5));
@@ -211,6 +277,8 @@ export function OrgChartPage() {
     onSelect: (node) => setSelectedId(node.id),
     onFocusTeam: focusTeam,
     onHoverStart: (node, el, immediate) => {
+      // Touch screens emulate mouseenter on tap - the tap opens the quick view instead.
+      if (window.matchMedia('(hover: none)').matches) return;
       if (!nodeDrag.isDragging()) hover.show(node, el, immediate);
     },
     onHoverEnd: hover.hide,
@@ -223,7 +291,7 @@ export function OrgChartPage() {
   const levels = index.all.length ? Math.max(...index.depthOf.values()) + 1 : 0;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div ref={pageRef} className="flex flex-col gap-4">
       <PageHeader
         title="Org chart"
         description={
@@ -235,7 +303,8 @@ export function OrgChartPage() {
         }
         actions={
           roots &&
-          roots.length > 0 && (
+          roots.length > 0 &&
+          view !== 'focus' && (
             <>
               <Button
                 size="sm"
@@ -265,8 +334,9 @@ export function OrgChartPage() {
       {roots && roots.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           <PeopleSearch nodes={index.all} onPick={reveal} />
+          <ViewToggle value={view} onChange={chooseView} />
           {departments.length > 1 && (
-            <div className="w-56">
+            <div className="w-full sm:w-56">
               <Select
                 value={deptId}
                 onChange={(e) => changeDept(e.target.value)}
@@ -289,11 +359,67 @@ export function OrgChartPage() {
         </div>
       )}
 
+      {view !== 'chart' ? (
+        <div className="rounded-xl border border-border bg-card p-3 sm:p-4">
+          {error ? (
+            <EmptyState
+              icon={Network}
+              title="Couldn't load the org chart"
+              description={error}
+              action={
+                <Button size="sm" variant="outline" onClick={retry}>
+                  <RotateCcw className="h-3.5 w-3.5" /> Try again
+                </Button>
+              }
+            />
+          ) : !roots ? (
+            <div className="flex flex-col gap-2" aria-label="Loading org chart">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <Skeleton key={i} className="h-14 w-full rounded-xl" />
+              ))}
+            </div>
+          ) : roots.length === 0 ? (
+            <EmptyState
+              icon={Network}
+              title="No one in the org chart yet"
+              description="Add employees and set their reporting managers to build the hierarchy."
+            />
+          ) : view === 'focus' ? (
+            <FocusView
+              index={index}
+              roots={roots}
+              focusId={listFocusId}
+              rootLabel={scoped ? 'My chart' : 'Whole company'}
+              onFocus={setListFocusId}
+              matchIds={matchIds}
+              highlightId={highlightId}
+              onSelect={(n) => setSelectedId(n.id)}
+            />
+          ) : (
+            <OutlineView
+              index={index}
+              roots={roots}
+              expanded={expanded}
+              onToggle={(id) =>
+                setExpanded((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(id)) next.delete(id);
+                  else next.add(id);
+                  return next;
+                })
+              }
+              matchIds={matchIds}
+              highlightId={highlightId}
+              onSelect={(n) => setSelectedId(n.id)}
+            />
+          )}
+        </div>
+      ) : (
       <div
         ref={viewportRef}
         onPointerDown={roots && roots.length ? onPointerDown : undefined}
         className={cn(
-          'relative h-[calc(100vh-15rem)] min-h-[520px] select-none overflow-hidden rounded-xl border border-border bg-card',
+          'relative h-[calc(100dvh-15rem)] min-h-[420px] touch-none select-none overflow-hidden rounded-xl border border-border bg-card',
           roots && roots.length > 0 && (dragging ? 'cursor-grabbing' : 'cursor-grab'),
         )}
         style={{
@@ -409,6 +535,7 @@ export function OrgChartPage() {
           </>
         )}
       </div>
+      )}
 
       <PersonHoverCard
         target={hover.target}
@@ -431,6 +558,34 @@ export function OrgChartPage() {
         }}
         onShowTeam={focusTeam}
       />
+    </div>
+  );
+}
+
+const VIEWS: { value: ViewMode; label: string; icon: typeof Network }[] = [
+  { value: 'focus', label: 'Focus', icon: Focus },
+  { value: 'outline', label: 'Outline', icon: ListTree },
+  { value: 'chart', label: 'Chart', icon: Network },
+];
+
+/** Focus (one team at a time) / Outline (collapsible tree) / Chart (the canvas). */
+function ViewToggle({ value, onChange }: { value: ViewMode; onChange: (v: ViewMode) => void }) {
+  return (
+    <div role="group" aria-label="Org chart view" className="flex items-center gap-0.5 rounded-xl bg-muted p-0.5">
+      {VIEWS.map(({ value: v, label, icon: Icon }) => (
+        <button
+          key={v}
+          type="button"
+          onClick={() => onChange(v)}
+          aria-pressed={value === v}
+          className={cn(
+            'inline-flex min-h-9 items-center gap-1.5 rounded-xl px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground',
+            value === v && 'bg-card text-foreground shadow-sm',
+          )}
+        >
+          <Icon className="h-3.5 w-3.5" /> {label}
+        </button>
+      ))}
     </div>
   );
 }
