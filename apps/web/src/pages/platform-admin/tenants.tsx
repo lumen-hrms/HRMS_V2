@@ -216,15 +216,15 @@ export function TenantsPage() {
             }
           />
         ) : (
-          <Table>
+          <Table stack>
             <THead>
               <TR>
-                <TH>Tenant</TH>
+                <TH className="min-w-52">Tenant</TH>
                 <TH>Status</TH>
                 <TH>Plan</TH>
-                <TH className="w-52">Seats</TH>
-                <TH>Renews / Trial ends</TH>
-                <TH>Created</TH>
+                <TH className="min-w-40">Seats</TH>
+                <TH className="whitespace-nowrap">Renews / trial ends</TH>
+                <TH className="max-[1399px]:hidden">Created</TH>
                 <TH className="text-right">Actions</TH>
               </TR>
             </THead>
@@ -245,21 +245,22 @@ export function TenantsPage() {
                       <div className="font-medium">{t.name}</div>
                       <div className="font-mono text-xs text-muted-foreground">{t.subdomain}</div>
                     </TD>
-                    <TD>
+                    <TD label="Status">
                       <TenantStatusPill status={t.status} sub={trialChip} />
                     </TD>
-                    <TD>{PLAN_LABEL[effectivePlan(t)]}</TD>
-                    <TD>
+                    <TD label="Plan">{PLAN_LABEL[effectivePlan(t)]}</TD>
+                    <TD label="Seats" className="max-md:items-center">
                       <SeatPressureBar
+                        className="max-md:w-44"
                         employeeCount={t.employeeCount}
                         seats={t.subscription?.seats}
                       />
                     </TD>
-                    <TD className="text-muted-foreground">
+                    <TD label="Renews / trial ends" className="whitespace-nowrap text-muted-foreground">
                       {t.subscription?.renewsAt ? fmtDate(t.subscription.renewsAt) : '—'}
                     </TD>
-                    <TD className="text-muted-foreground">{fmtDate(t.createdAt)}</TD>
-                    <TD className="text-right" onClick={(e) => e.stopPropagation()}>
+                    <TD label="Created" className="whitespace-nowrap text-muted-foreground max-[1399px]:md:hidden">{fmtDate(t.createdAt)}</TD>
+                    <TD actions className="text-right" onClick={(e) => e.stopPropagation()}>
                       <DropdownMenu
                         trigger={
                           <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl text-muted-foreground hover:bg-accent hover:text-foreground">

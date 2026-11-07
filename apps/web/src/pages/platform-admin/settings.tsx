@@ -204,7 +204,7 @@ function SuppressionsCard() {
           description="Bounces and complaints reported by SES will show up here."
         />
       ) : (
-        <Table>
+        <Table stack>
           <THead>
             <TR>
               <TH>Email</TH>
@@ -217,20 +217,22 @@ function SuppressionsCard() {
           <TBody>
             {rows.map((r) => (
               <TR key={r.email}>
-                <TD className="font-medium">{r.email}</TD>
-                <TD>
+                <TD className="break-all font-medium">{r.email}</TD>
+                <TD label="Reason">
                   <Badge variant={r.reason === 'COMPLAINT' ? 'warning' : 'destructive'}>
                     {r.reason === 'COMPLAINT' ? 'Complaint' : 'Bounce'}
                   </Badge>
                 </TD>
-                <TD className="max-w-sm truncate text-muted-foreground" title={r.detail ?? ''}>
-                  {r.detail ?? '—'}
-                  {r.eventCount > 1 && ` (×${r.eventCount})`}
+                <TD label="Detail" className="text-muted-foreground" title={r.detail ?? ''}>
+                  <div className="max-w-[12rem] truncate">
+                    {r.detail ?? '—'}
+                    {r.eventCount > 1 && ` (×${r.eventCount})`}
+                  </div>
                 </TD>
-                <TD className="whitespace-nowrap text-muted-foreground">
+                <TD label="Last event" className="whitespace-nowrap text-muted-foreground">
                   {fmtDateTime(r.lastEventAt)}
                 </TD>
-                <TD className="text-right">
+                <TD actions className="text-right">
                   <Button variant="outline" size="sm" onClick={() => setLifting(r)}>
                     Lift
                   </Button>

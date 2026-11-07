@@ -7,10 +7,21 @@ import { cn } from '@/lib/utils';
  * look used across the app (see employees/list.tsx).
  */
 
-export function Table({ className, ...props }: React.TableHTMLAttributes<HTMLTableElement>) {
+/**
+ * `stack` - below `md` each row becomes a labelled card instead of a sideways-
+ * scrolling grid (rules in index.css, `table[data-stack]`). Opt in per table:
+ * give each <TD> a `label` (the first, label-less cell is the card's title) and
+ * mark a row's kebab/buttons cell `actions` to pin it to the card's corner.
+ * Without `stack` the table just scrolls horizontally, as before.
+ */
+export function Table({
+  className,
+  stack,
+  ...props
+}: React.TableHTMLAttributes<HTMLTableElement> & { stack?: boolean }) {
   return (
     <div className="w-full overflow-x-auto">
-      <table className={cn('w-full text-sm', className)} {...props} />
+      <table data-stack={stack ? '' : undefined} className={cn('w-full text-sm', className)} {...props} />
     </div>
   );
 }
@@ -31,6 +42,23 @@ export function TH({ className, ...props }: React.ThHTMLAttributes<HTMLTableCell
   return <th className={cn('px-4 py-2.5 text-left font-medium', className)} {...props} />;
 }
 
-export function TD({ className, ...props }: React.TdHTMLAttributes<HTMLTableCellElement>) {
-  return <td className={cn('px-4 py-2.5 align-middle', className)} {...props} />;
+export function TD({
+  className,
+  label,
+  actions,
+  ...props
+}: React.TdHTMLAttributes<HTMLTableCellElement> & {
+  /** Caption shown beside the value when the table is stacked into cards. */
+  label?: string;
+  /** Pins the cell to the card's top-right corner when stacked. */
+  actions?: boolean;
+}) {
+  return (
+    <td
+      data-label={label}
+      data-actions={actions ? '' : undefined}
+      className={cn('px-4 py-2.5 align-middle', className)}
+      {...props}
+    />
+  );
 }

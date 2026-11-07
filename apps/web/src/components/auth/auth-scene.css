@@ -1,0 +1,126 @@
+/* Auth screens (sign-in, Platform Admin sign-in, password reset). Same
+   colour world as the landing page: midnight, gold light, a slow ring.
+   Fixed, not theme-driven; it is a brand surface like landing.css. The
+   --lumen-* tokens are pinned to their dark values here so AuthField,
+   AuthBanner and the screens' own inline styles read correctly on it. */
+
+.auth-scene {
+  --lumen-gold: #e0b23e;
+  --lumen-gold-light: #f5deaa;
+  --lumen-gold-soft: rgba(224, 178, 62, 0.14);
+  --lumen-bg: #030812;
+  --lumen-surface: rgba(3, 8, 18, 0.55);
+  --lumen-text: #eef1f7;
+  --lumen-text-secondary: #a9b5ca;
+  --lumen-text-muted: #7586a3;
+  --lumen-border: #223a63;
+  --lumen-border-strong: #2f4d80;
+  --lumen-success: #4fbf8c;
+  --lumen-success-soft: #0f2c24;
+  --lumen-error: #ea7168;
+  --lumen-error-soft: #321c20;
+  --line: rgba(224, 178, 62, 0.18);
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  min-height: 100dvh;
+  flex-direction: column;
+  overflow: clip;
+  background: #030812;
+  color: var(--lumen-text);
+  color-scheme: dark;
+}
+.auth-scene :focus-visible {
+  outline: 2px solid var(--lumen-gold);
+  outline-offset: 3px;
+}
+.auth-scene .lumen-auth-input:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(224, 178, 62, 0.25);
+}
+
+.auth-glow {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(70% 50% at 50% 112%, rgba(224, 178, 62, 0.3), transparent 70%),
+    radial-gradient(40% 34% at 50% 34%, rgba(29, 66, 117, 0.42), transparent 72%);
+}
+.auth-ring {
+  position: absolute;
+  top: 40%;
+  left: 50%;
+  z-index: -1;
+  width: min(120vmin, 980px);
+  height: min(120vmin, 980px);
+  margin: calc(min(120vmin, 980px) / -2) 0 0 calc(min(120vmin, 980px) / -2);
+  opacity: 0.5;
+  pointer-events: none;
+  animation: auth-spin 60s linear infinite;
+}
+.auth-ring circle {
+  fill: none;
+  stroke: url(#authRingGold);
+  stroke-width: 0.4;
+}
+@keyframes auth-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.auth-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.auth-back {
+  color: var(--lumen-text-secondary);
+  font-size: 13px;
+  transition: color 200ms ease;
+}
+.auth-back:hover {
+  color: var(--lumen-text);
+}
+
+.auth-card {
+  position: relative;
+  width: 100%;
+  max-width: 440px;
+  padding: 2rem;
+  border: 1px solid var(--line);
+  border-radius: 1.5rem;
+  background: linear-gradient(160deg, rgba(14, 33, 66, 0.78), rgba(7, 18, 42, 0.78));
+  box-shadow:
+    0 0 90px -30px rgba(224, 178, 62, 0.35),
+    0 50px 110px -50px rgba(0, 0, 0, 0.9);
+  backdrop-filter: blur(10px);
+}
+.auth-rise {
+  animation: auth-rise 1000ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes auth-rise {
+  from {
+    opacity: 0;
+    transform: translateY(22px);
+  }
+}
+
+@media (max-width: 639.98px) {
+  .auth-card {
+    padding: 1.5rem 1.25rem;
+    border-radius: 1.25rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-ring,
+  .auth-rise {
+    animation: none;
+  }
+}

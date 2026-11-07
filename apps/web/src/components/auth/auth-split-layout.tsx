@@ -1,14 +1,16 @@
 import * as React from 'react';
-// Brand panel is a fixed navy constant — always the white mark (transparent PNG).
-import lumenMark from '@/assets/brand/lumen-mark-white.png';
+import { Link } from 'react-router-dom';
+// Same mark the landing nav uses on its midnight background.
+import lumenMark from '@/assets/brand/lumen-mark-dark.png';
+import './auth-scene.css';
 
 /**
  * Shared shell for every auth screen (tenant sign-in, Platform Admin
- * sign-in, and both their password-reset sub-views) — a fixed-navy brand
- * panel on the left (deliberately NOT theme-driven, same navy in light or
- * dark mode — it's a brand constant, not a surface) and a theme-aware form
- * panel on the right. See the approved Lumen login design (Claude Design
- * canvas) for the full spec this implements.
+ * sign-in, and both their password-reset sub-views). Same look as the
+ * landing page: midnight with gold light and a slow ring, the form on a
+ * single centred card. Deliberately NOT theme-driven; see auth-scene.css.
+ * The name is historical (it used to be a split panel); the props are kept
+ * so the four callers don't change.
  */
 export function AuthSplitLayout({
   taglineLines,
@@ -20,88 +22,48 @@ export function AuthSplitLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-screen">
-      <div
-        data-brand-panel
-        className="relative isolate flex w-[45%] max-md:w-full flex-col justify-center overflow-hidden px-12 py-14 max-md:px-6 max-md:py-9"
-        style={{ background: '#030810' }}
-      >
-        {/* Ambient motion — slow-drifting aurora blobs + a fine dot grid. */}
-        <span aria-hidden="true" className="brand-aurora brand-aurora--gold" />
-        <span aria-hidden="true" className="brand-aurora brand-aurora--blue" />
-        <span aria-hidden="true" className="brand-grid" />
+    <div className="auth-scene">
+      <div aria-hidden="true" className="auth-glow" />
+      <svg aria-hidden="true" viewBox="0 0 100 100" className="auth-ring">
+        <defs>
+          <linearGradient id="authRingGold" x1="0" y1="1" x2="1" y2="0">
+            <stop offset="0%" stopColor="#e0b23e" stopOpacity="0" />
+            <stop offset="100%" stopColor="#e0b23e" />
+          </linearGradient>
+        </defs>
+        <circle cx="50" cy="50" r="49" />
+      </svg>
+
+      <header className="flex h-14 items-center justify-between px-5 sm:px-8">
+        <Link to="/" className="auth-brand">
+          <img src={lumenMark} alt="" className="h-6 w-6 object-contain" />
+          Lumen
+        </Link>
+        <Link to="/" className="auth-back">
+          Back to home
+        </Link>
+      </header>
+
+      <main className="flex flex-1 flex-col items-center justify-center px-4 pb-10 pt-4 sm:px-6">
+        <div className="auth-card auth-rise">{children}</div>
 
         <div
-          className="brand-hairline pointer-events-none absolute inset-x-0 top-[18%] h-px"
-          style={{ background: '#e0b23e' }}
-        />
-        <div
-          className="brand-hairline pointer-events-none absolute inset-x-0 top-[52%] h-px"
-          style={{ background: '#e0b23e', animationDelay: '-4s' }}
-        />
-        <div
-          className="brand-hairline pointer-events-none absolute inset-x-0 top-[82%] h-px"
-          style={{ background: '#e0b23e', animationDelay: '-8s' }}
-        />
-
-        <div className="brand-in relative z-[2] mb-12 flex flex-col items-start gap-5">
-          <div className="relative">
-            <span aria-hidden="true" className="brand-mark-halo" />
-            <img
-              src={lumenMark}
-              alt=""
-              className="relative h-24 w-24 shrink-0 object-contain max-md:h-16 max-md:w-16"
-            />
-          </div>
-          <div className="flex flex-col">
-            <span
-              className="text-[34px] font-bold leading-none tracking-tight max-md:text-[28px]"
-              style={{ color: '#f3f5fa' }}
-            >
-              Lumen
-            </span>
-            <span
-              className="mt-2.5 text-[11px] font-semibold uppercase"
-              style={{ color: '#8fa0bb', letterSpacing: '0.36em' }}
-            >
-              Enterprise Suite
-            </span>
-          </div>
-        </div>
-
-        <h2
-          className="brand-in relative z-[2] mb-5 max-w-[360px] text-[26px] font-bold leading-[1.3]"
-          style={{ color: '#f3f5fa', animationDelay: '80ms' }}
+          className="auth-rise mt-6 flex max-w-[440px] flex-col items-center gap-2 text-center text-[13.5px] leading-relaxed"
+          style={{ '--d': '200ms', color: 'var(--lumen-text-secondary)' } as React.CSSProperties}
         >
-          People operations, illuminated.
-        </h2>
-        {taglineLines.map((line, i) => (
-          <p
-            key={line}
-            className="brand-in relative z-[2] mb-2.5 max-w-[360px] text-[15px] leading-relaxed"
-            style={{ color: '#b3bfd3', animationDelay: `${140 + i * 60}ms` }}
-          >
-            {line}
-          </p>
-        ))}
-
-        {operatorBadge && (
-          <div
-            className="brand-in relative z-[2] mt-6 w-fit rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide"
-            style={{ background: 'rgba(224,178,62,0.12)', color: '#e0b23e', animationDelay: '260ms' }}
-          >
-            Operator access
-          </div>
-        )}
-      </div>
-
-      <div
-        data-form-col
-        className="flex w-[55%] max-md:w-full items-center justify-center px-8 py-12"
-        style={{ background: 'var(--lumen-bg)' }}
-      >
-        <div className="w-full max-w-[400px]">{children}</div>
-      </div>
+          {operatorBadge && (
+            <span
+              className="rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide"
+              style={{ background: 'rgba(224, 178, 62, 0.12)', color: 'var(--lumen-gold)' }}
+            >
+              Operator access
+            </span>
+          )}
+          {taglineLines.map((line) => (
+            <p key={line}>{line}</p>
+          ))}
+        </div>
+      </main>
     </div>
   );
 }
@@ -216,10 +178,11 @@ export function AuthSubmitButton({ loading, children }: { loading: boolean; chil
     <button
       type="submit"
       disabled={loading}
-      className="mt-1.5 flex h-[46px] w-full items-center justify-center rounded-xl text-[15px] font-bold transition-[background,transform] duration-150 active:scale-[0.98] disabled:cursor-not-allowed"
+      className="mt-1.5 flex h-[46px] w-full items-center justify-center rounded-xl text-[15px] font-bold transition-[background,box-shadow,transform] duration-150 active:scale-[0.98] disabled:cursor-not-allowed"
       style={{
         background: loading ? 'var(--lumen-gold-light)' : 'var(--lumen-gold)',
         color: '#030812',
+        boxShadow: '0 0 34px -6px rgba(224, 178, 62, 0.65)',
       }}
       onMouseEnter={(e) => {
         if (!loading) e.currentTarget.style.background = 'var(--lumen-gold-light)';

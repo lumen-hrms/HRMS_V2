@@ -298,8 +298,8 @@ export function EmployeeListPage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <h1 className="text-xl font-semibold">Employees</h1>
           <p className="text-sm text-muted-foreground">
             {isManager
@@ -310,7 +310,7 @@ export function EmployeeListPage() {
           </p>
         </div>
         {user && CAN_CREATE.includes(user.role) && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Link to="/employees/import" className={buttonVariants({ variant: 'outline' })}>
               <Upload className="h-4 w-4" /> Bulk import
             </Link>
@@ -476,7 +476,7 @@ export function EmployeeListPage() {
           </div>
         )}
         {employees && (
-        <table className="w-full text-sm">
+        <table data-stack className="w-full text-sm">
           <thead className="bg-muted text-muted-foreground">
             <tr>
               <SortableTh label="Name" k="name" view={view} onSort={toggleSort} />
@@ -511,20 +511,20 @@ export function EmployeeListPage() {
                     </button>
                   )}
                 </td>
-                <td className="px-4 py-2.5 text-muted-foreground">{e.employeeCode}</td>
-                <td className="px-4 py-2.5">{e.department?.name ?? '—'}</td>
-                <td className="px-4 py-2.5">{e.designation ?? '—'}</td>
-                <td className="px-4 py-2.5">
+                <td data-label="Code" className="px-4 py-2.5 text-muted-foreground">{e.employeeCode}</td>
+                <td data-label="Department" className="px-4 py-2.5">{e.department?.name ?? '—'}</td>
+                <td data-label="Designation" className="px-4 py-2.5">{e.designation ?? '—'}</td>
+                <td data-label="Manager" className="px-4 py-2.5">
                   {e.reportingManager ? `${e.reportingManager.firstName} ${e.reportingManager.lastName}` : '—'}
                 </td>
-                <td className="px-4 py-2.5 text-muted-foreground">{formatJoined(e.dateOfJoining)}</td>
+                <td data-label="Joined" className="px-4 py-2.5 text-muted-foreground">{formatJoined(e.dateOfJoining)}</td>
                 {isDirectory && (
-                  <td className="px-4 py-2.5">
+                  <td data-label="Relation" className="px-4 py-2.5">
                     {e.teamRelation && <Badge variant="outline">{RELATION_LABEL[e.teamRelation]}</Badge>}
                   </td>
                 )}
                 {showStatus && (
-                  <td className="px-4 py-2.5">
+                  <td data-label="Status" className="px-4 py-2.5">
                     {e.lifecycleState && (
                       <Badge variant={STATE_BADGE_VARIANT[e.lifecycleState] ?? 'outline'}>
                         {STATE_LABEL[e.lifecycleState] ?? e.lifecycleState}
@@ -532,7 +532,7 @@ export function EmployeeListPage() {
                     )}
                   </td>
                 )}
-                <td className="px-4 py-2.5 text-right">
+                <td data-actions className="px-4 py-2.5 text-right">
                   <Button size="sm" variant="ghost" title="Quick view" onClick={() => setQuickViewId(e.id)}>
                     <Eye className="h-3.5 w-3.5" />
                   </Button>
